@@ -113,7 +113,7 @@ class KFAC(Optimizer):
         g = weight.grad.data
         s = g.shape
         if group['layer_type'] == 'Conv2d':
-            g = g.contiguous().view(s[0], s[1]*s[2]*s[3])
+            g = g.contiguous().reshape(s[0], s[1]*s[2]*s[3])
         if bias is not None:
             gb = bias.grad.data
             g = torch.cat([g, gb.view(gb.shape[0], 1)], dim=1)
@@ -121,11 +121,11 @@ class KFAC(Optimizer):
         if group['layer_type'] == 'Conv2d':
             g /= state['num_locations']
         if bias is not None:
-            gb = g[:, -1].contiguous().view(*bias.shape)
+            gb = g[:, -1].contiguous().reshape(*bias.shape)
             g = g[:, :-1]
         else:
             gb = None
-        g = g.contiguous().view(*s)
+        g = g.contiguous().reshape(*s)
         return g, gb
 
     def _precond_sua(self, weight, bias, group, state):
