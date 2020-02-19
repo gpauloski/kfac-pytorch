@@ -10,6 +10,8 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, transforms, models
 import torch.utils.data.distributed
+from torchsummary import summary
+import pytorch_resnet_cifar_model as resnet
 import horovod.torch as hvd
 
 # Training settings
@@ -90,7 +92,7 @@ test_sampler = torch.utils.data.distributed.DistributedSampler(
 test_loader = torch.utils.data.DataLoader(test_dataset, 
         batch_size=args.test_batch_size, sampler=test_sampler, **kwargs)
 
-model = models.resnet34(pretrained=False, num_classes=10)
+model = resnet.resnet56()
 
 if args.cuda:
     # Move model to GPU.
@@ -100,7 +102,7 @@ if args.cuda:
         lr_scaler = hvd.local_size()
 
 if verbose:
-    print(model)
+    summary(model, (3, 32, 32))
 
 criterion = nn.CrossEntropyLoss()
 
@@ -186,13 +188,13 @@ def adjust_learning_rate(epoch, batch_idx):
         epoch += float(batch_idx + 1) / len(train_loader)
         lr_adj = 1. / hvd.size() * (epoch * (hvd.size() - 1) /
                                     args.warmup_epochs + 1)
-    elif epoch < 20:
+    elif epoch < 60:
         lr_adj = 1.
-    elif epoch < 80:
+    elif epoch < 100:
         lr_adj = 1e-1
-    elif epoch < 160:
+    elif epoch < 140:
         lr_adj = 1e-2
-    elif epoch < 200:
+    elif epoch < 160:
         lr_adj = 1e-3
     else:
         lr_adj = 1e-4
