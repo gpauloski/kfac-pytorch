@@ -90,7 +90,7 @@ test_sampler = torch.utils.data.distributed.DistributedSampler(
 test_loader = torch.utils.data.DataLoader(test_dataset, 
         batch_size=args.test_batch_size, sampler=test_sampler, **kwargs)
 
-model = models.resnet50(pretrained=False, num_classes=10)
+model = models.resnet34(pretrained=False, num_classes=10)
 
 if args.cuda:
     # Move model to GPU.
