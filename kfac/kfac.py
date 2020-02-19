@@ -1,7 +1,12 @@
 import torch.optim as optim
 
 def KFac(optim.Optimizer):
-    """Distributed KFac Gradient Preconditioner."""
+    """Distributed KFac Gradient Preconditioner.
+
+    This is largely inspired by other KFac implementations:
+        https://github.com/Thrandis/EKFAC-pytorch
+        https://github.com/tensorflow/kfac
+    """
     def __init__(self, model, damping=0.01, update_freq=10, alpha=1.0,
                  norm_constraint=None, distribute_inverse=True):
         """Initialize a KFac Gradient Preconditioner.
