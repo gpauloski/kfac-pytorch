@@ -2,17 +2,24 @@ from __future__ import print_function
 import argparse
 import time
 import os
+import sys
 from datetime import timedelta
-from tqdm import tqdm
+
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import datasets, transforms, models
 import torch.utils.data.distributed
+
 from torchsummary import summary
-import pytorch_resnet_cifar_model as resnet
+import cifar_resnet as resnet
 import horovod.torch as hvd
+from tqdm import tqdm
+
+sys.path.append("./kfac")
+import kfac
+
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Example')
@@ -21,7 +28,7 @@ parser.add_argument('--batch-size', type=int, default=128, metavar='N',
 parser.add_argument('--test-batch-size', type=int, default=128, metavar='N',
                     help='input batch size for testing (default: 128)')
 parser.add_argument('--epochs', type=int, default=140, metavar='N',
-                    help='number of epochs to train (default: 10)')
+                    help='number of epochs to train (default: 140)')
 parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
                     help='number of warmup epochs (default: 5)')
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
@@ -116,12 +123,21 @@ hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
 # Horovod: (optional) compression algorithm.
 compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
+
+# Cross compatibility w/ Horovod versions, if hvd.Average exists then it
+# is version >=0.19
+if hasattr(hvd, "Average"):
+    hvd_kwargs = {"op": hvd.Adasum if args.use_adasum else hvd.Average}
+else:
+    hvd_kwargs = {}
     
 # Horovod: wrap optimizer with DistributedOptimizer.
 optimizer = hvd.DistributedOptimizer(optimizer,
                                      named_parameters=model.named_parameters(),
                                      compression=compression,
-                                     op=hvd.Adasum if args.use_adasum else hvd.Average)
+                                     **hvd_kwargs)
+
+preconditioner = kfac.KFAC(model)
 
 def train(epoch):
     model.train()
@@ -141,6 +157,7 @@ def train(epoch):
             output = model(data)
             loss = criterion(output, target)
             loss.backward()
+            preconditioner.step()
             optimizer.step()
 
             train_accuracy.update(accuracy(output, target))
@@ -190,11 +207,11 @@ def adjust_learning_rate(epoch, batch_idx):
                                     args.warmup_epochs + 1)
     elif epoch < 60:
         lr_adj = 1.
-    elif epoch < 100:
+    elif epoch < 90:
         lr_adj = 1e-1
-    elif epoch < 140:
+    elif epoch < 110:
         lr_adj = 1e-2
-    elif epoch < 160:
+    elif epoch < 130:
         lr_adj = 1e-3
     else:
         lr_adj = 1e-4
@@ -231,5 +248,5 @@ for epoch in range(args.epochs):
     test(epoch)
 
 if verbose:
-    print("Training time:", str(timedelta(seconds=time.time() - start)))
+    print("\nTraining time:", str(timedelta(seconds=time.time() - start)))
 

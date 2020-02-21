@@ -1,4 +1,3 @@
-from collections import defaultdict
 import torch
 from torch.optim.optimizer import Optimizer
 
@@ -44,27 +43,16 @@ class KFAC(Optimizer):
             raise ValueError("Invalid norm constraint: {}.".format(
                              norm_constraint) + " Expected > 0 or None.")
 
-        #self.damping = damping
-        #self.update_freq = update_freq
-        ##self.alpha = alpha
-        #self.norm_constraint = norm_constraint
-        #self.distribute_inverse = distribute_inverse
-
-        #self.params = []
-        #self.modules = []
-        self.param_to_module = {}
-        self.model = model
-        self.state = defaultdict(dict)
         # Save references to hooks in case we want to delete them
         self.layer_input_hooks = []
         self.layer_grad_output_hooks = []
 
-        self._register_modules(model)
+        #params = self._register_modules(model)
 
         defaults = dict(damping=damping, update_freq=update_freq, alpha=alpha,
                         norm_constraint=norm_constraint, 
                         distribute_inverse=distribute_inverse)
-
+ 
         super(KFAC, self).__init__(model.parameters(), defaults)
 
     def step(self):
@@ -73,57 +61,40 @@ class KFAC(Optimizer):
         Computes the new covariance statistics and if iter % update_freq == 0,
         computes the FIM and applys the update the model gradients.
         """
+
         for group in self.param_groups:
-            for p in group['params']:
-                #if p.grad is None or p not in self.param_to_module.keys():
-                if p.grad is None:
-                    continue
-                p.grad.data *= 0
-                
-                #print(self.param_to_module[p])
+            #print("GROUP", group)
+            for p in group["params"]:
+                #print("p", p)
+                p.grad *= 0
         return
 
-        with torch.no_grad():
-            for module in self.state:
-                state = self.state[module]
-                weight = state["weight"]
-                #print(state.keys())
-                #print(state["weight"])
-                if weight.grad is not None:
-                    print("hereh")
-                    weight.grad *= 0
-                 #print(module.parameters())
-                 #for p in module.parameters():
-                 #    print(p.name)
-                 #    p.grad *= 0.0
-                 #    #module.weight.grad *= 0
-                 #    #if module.bias is not None:
-                 #    #    module.bias.grad *= 0
-
-
-        return
         with torch.no_grad():
             for group in self.param_groups:
                 if len(group["params"]) == 2:
                     weight, bias = group["params"]
                 else:
                     weight, bias = group["params"][0], None
-                weight.grad *= 0.0
+                weight.grad.mul_(0.0)
                 if bias is not None:
-                    bias.grad *= 0.0
+                    bias.grad.mul_(0.0)
 
                 if "input" in self.state[group["module"]]:
                     del self.state[group["module"]]["input"]
                 if "grad_output" in self.state[group["module"]]:
                     del self.state[group["module"]]["grad_output"]
 
-    def _register_modules(self, model):
+    def ___________register_modules(self, model):
         """Register hooks for all sub-modules.
 
         Args:
           model (torch.nn.Module): Parent module to register all supported
               sub modules for.
+        
+        Returns:
+          params dictionary of module to update in step()
         """
+        params = []
         for module in model.modules():
             if module.__class__.__name__ in SUPPORTED_LAYERS:
                 handle = module.register_forward_pre_hook(self._save_input)
@@ -131,15 +102,12 @@ class KFAC(Optimizer):
                 handle = module.register_backward_hook(self._save_grad_output)
                 self.layer_grad_output_hooks.append(handle)
 
-                #self.state[module] = module.state_dict()
-                for param in module.parameters():
-                    self.param_to_module[param] = module
-
-                #p = [module.weight]
-                #if module.bias is not None:
-                #    p.append(module.bias)
-                #param = {"params": p, "module": module}
-                #self.params.append(param)
+                p = [module.weight]
+                if module.bias is not None:
+                    p.append(module.bias)
+                param = {"params": p, "module": module}
+                params.append(param)
+        return params
 
     def _save_input(self, module, layer_input):
         """Hook for saving module inputs."""
