@@ -137,7 +137,8 @@ optimizer = hvd.DistributedOptimizer(optimizer,
                                      compression=compression,
                                      **hvd_kwargs)
 
-preconditioner = kfac.KFAC(model)
+#preconditioner = kfac.KFAC(model)
+preconditioner = kfac.KFAC2(model, 0.03, update_freq=10)
 
 def train(epoch):
     model.train()
@@ -157,7 +158,7 @@ def train(epoch):
             output = model(data)
             loss = criterion(output, target)
             loss.backward()
-            preconditioner.step()
+            #preconditioner.step()
             optimizer.step()
 
             train_accuracy.update(accuracy(output, target))
@@ -205,13 +206,13 @@ def adjust_learning_rate(epoch, batch_idx):
         epoch += float(batch_idx + 1) / len(train_loader)
         lr_adj = 1. / hvd.size() * (epoch * (hvd.size() - 1) /
                                     args.warmup_epochs + 1)
-    elif epoch < 60:
+    elif epoch < 60: #40: #60:
         lr_adj = 1.
-    elif epoch < 90:
+    elif epoch < 90: #60: #90:
         lr_adj = 1e-1
-    elif epoch < 110:
+    elif epoch < 110: #70: #110:
         lr_adj = 1e-2
-    elif epoch < 130:
+    elif epoch < 130: #80: #130:
         lr_adj = 1e-3
     else:
         lr_adj = 1e-4
