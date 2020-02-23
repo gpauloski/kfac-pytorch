@@ -45,6 +45,10 @@ parser.add_argument('--fp16-allreduce', action='store_true', default=False,
                     help='use fp16 compression during allreduce')
 parser.add_argument('--use-adasum', action='store_true', default=False,
                     help='use adasum algorithm to do reduction')
+parser.add_argument('--kfac-update-freq', type=int, default=10,
+                    help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
+parser.add_argument('--lr-decay', nargs='+', type=int, default=None,
+                    help='epoch intervals to decay lr')
 parser.add_argument('--log-dir', default='./logs',
                     help='TensorBoard log directory')
 parser.add_argument('--dir', type=str, default='/tmp/cifar10', metavar='D',
@@ -131,14 +135,25 @@ if hasattr(hvd, "Average"):
 else:
     hvd_kwargs = {}
     
-# Horovod: wrap optimizer with DistributedOptimizer.
-optimizer = hvd.DistributedOptimizer(optimizer,
-                                     named_parameters=model.named_parameters(),
-                                     compression=compression,
-                                     **hvd_kwargs)
 
-#preconditioner = kfac.KFAC(model)
-preconditioner = kfac.KFAC2(model, 0.03, update_freq=10)
+if args.kfac_update_freq > 0:
+    preconditioner = kfac.KFAC2(model, 0.03, update_freq=10)
+    if args.lr_decay is None:
+        args.lr_decay = [40, 60, 70, 80]
+else:
+    # Horovod: wrap optimizer with DistributedOptimizer.
+    # NOTE: Horovod distributed opt does not worh with gradient preconditioner
+    # because they write grads to a buffer in .backwards() and allreduce in .step()
+    # so intermediate grad ops are lost
+    optimizer = hvd.DistributedOptimizer(optimizer,
+                                         named_parameters=model.named_parameters(),
+                                         compression=compression,
+                                         **hvd_kwargs)
+    preconditioner = None
+    if args.lr_decay is None:
+        args.lr_decay = [60, 90, 110, 130]
+
+args.lr_decay.reverse() # lr_decay schedule needs to be in reverse order
 
 def train(epoch):
     model.train()
@@ -150,16 +165,18 @@ def train(epoch):
               desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
               disable=not verbose) as t:
         for batch_idx, (data, target) in enumerate(train_loader):
-            adjust_learning_rate(epoch, batch_idx)
-            
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, target)
             loss.backward()
-            #preconditioner.step()
+            if preconditioner is not None:
+                preconditioner.step()
             optimizer.step()
+            #for i, param in enumerate(model.parameters()):
+            #    if param.grad is not None and i == 1:
+            #        print("after op", hvd.rank(), torch.flatten(param.grad)[0:8])
 
             train_accuracy.update(accuracy(output, target))
             train_loss.update(loss)
@@ -201,21 +218,15 @@ def test(epoch):
         log_writer.add_scalar('test/accuracy', test_accuracy.avg, epoch)
 
 
-def adjust_learning_rate(epoch, batch_idx):
+def adjust_learning_rate(epoch):
     if epoch < args.warmup_epochs:
-        epoch += float(batch_idx + 1) / len(train_loader)
-        lr_adj = 1. / hvd.size() * (epoch * (hvd.size() - 1) /
-                                    args.warmup_epochs + 1)
-    elif epoch < 60: #40: #60:
-        lr_adj = 1.
-    elif epoch < 90: #60: #90:
-        lr_adj = 1e-1
-    elif epoch < 110: #70: #110:
-        lr_adj = 1e-2
-    elif epoch < 130: #80: #130:
-        lr_adj = 1e-3
+        lr_adj = 1. / hvd.size() * (epoch * (hvd.size() - 1) / args.warmup_epochs + 1)
     else:
-        lr_adj = 1e-4
+        lr_adj = 1.
+        for e in args.lr_decay:
+            if epoch > e:
+                lr_adj *= 0.1
+         
     for param_group in optimizer.param_groups:
         param_group['lr'] = args.lr * hvd.size() * lr_adj
 
@@ -245,6 +256,7 @@ class Metric(object):
 start = time.time()
 
 for epoch in range(args.epochs):
+    adjust_learning_rate(epoch)
     train(epoch)
     test(epoch)
 

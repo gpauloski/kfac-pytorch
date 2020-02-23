@@ -168,6 +168,7 @@ class KFAC2(Optimizer):
     def step(self, update_stats=True, update_params=True):
         """Performs one step of preconditioning."""
         fisher_norm = 0.
+        handles = []
         for group in self.param_groups:
             # Getting parameters
             if len(group['params']) == 2:
@@ -198,17 +199,27 @@ class KFAC2(Optimizer):
                     if self.constraint_norm:
                         fisher_norm += (bias.grad * gb).sum()
                     bias.grad = gb.clone()
+
+            # register allreduce grads
+            handles.append(hvd.allreduce_async_(weight.grad))
+            if bias is not None:
+                handles.append(hvd.allreduce_async_(bias.grad))
+
             # Cleaning
             if 'x' in self.state[group['mod']]:
                 del self.state[group['mod']]['x']
             if 'gy' in self.state[group['mod']]:
                 del self.state[group['mod']]['gy']
+
         # Eventually scale the norm of the gradients
         if update_params and self.constraint_norm:
             scale = (1. / fisher_norm) ** 0.5
             for group in self.param_groups:
                 for param in group['params']:
                     param.grad.data *= scale
+
+        for handle in handles:
+            hvd.synchronize(handle)
         if update_stats:
             self._iteration_counter += 1
 

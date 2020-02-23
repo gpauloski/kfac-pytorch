@@ -1,4 +1,5 @@
 logs/
+sbatch_logs/
 
 
 # Byte-compiled / optimized / DLL files
