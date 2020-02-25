@@ -17,7 +17,6 @@ import cifar_resnet as resnet
 import horovod.torch as hvd
 from tqdm import tqdm
 
-sys.path.append("./kfac")
 import kfac
 
 
@@ -27,12 +26,12 @@ parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                     help='input batch size for training (default: 128)')
 parser.add_argument('--test-batch-size', type=int, default=128, metavar='N',
                     help='input batch size for testing (default: 128)')
-parser.add_argument('--epochs', type=int, default=200, metavar='N',
-                    help='number of epochs to train (default: 200)')
+parser.add_argument('--epochs', type=int, default=140, metavar='N',
+                    help='number of epochs to train (default: 140)')
 parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
                     help='number of warmup epochs (default: 5)')
-parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
-                    help='learning rate (default: 0.01)')
+parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
+                    help='learning rate (default: 0.1)')
 parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                     help='SGD momentum (default: 0.9)')
 parser.add_argument('--weight-decay', type=float, default=5e-4, metavar='W',
@@ -118,15 +117,8 @@ if verbose:
 criterion = nn.CrossEntropyLoss()
 
 # Horovod: scale learning rate by lr_scaler.
-optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
-                      weight_decay=args.weight_decay)
-
-# Horovod: broadcast parameters & optimizer state.
-hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-
-# Horovod: (optional) compression algorithm.
-compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
+#optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
+#                      weight_decay=args.weight_decay)
 
 # Cross compatibility w/ Horovod versions, if hvd.Average exists then it
 # is version >=0.19
@@ -134,24 +126,27 @@ if hasattr(hvd, "Average"):
     hvd_kwargs = {"op": hvd.Adasum if args.use_adasum else hvd.Average}
 else:
     hvd_kwargs = {}
-    
 
-if args.kfac_update_freq > 0:
-    preconditioner = kfac.KFAC2(model, 0.03, update_freq=10)
-    if args.lr_decay is None:
-        args.lr_decay = [40, 60, 70, 80]
-else:
-    # Horovod: wrap optimizer with DistributedOptimizer.
-    # NOTE: Horovod distributed opt does not worh with gradient preconditioner
-    # because they write grads to a buffer in .backwards() and allreduce in .step()
-    # so intermediate grad ops are lost
-    optimizer = hvd.DistributedOptimizer(optimizer,
-                                         named_parameters=model.named_parameters(),
-                                         compression=compression,
-                                         **hvd_kwargs)
-    preconditioner = None
-    if args.lr_decay is None:
-        args.lr_decay = [60, 90, 110, 130]
+optimizer = kfac.KFACOptimizer(model, lr=args.lr, weight_decay=0.003,
+                                   damping=0.03, TCov=10, TInv=10)
+
+if args.lr_decay is None:
+    args.lr_decay = [40, 60, 70, 80]
+
+# Horovod: (optional) compression algorithm.
+compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
+# Horovod: wrap optimizer with DistributedOptimizer.
+# NOTE: Horovod distributed opt does not worh with gradient preconditioner
+# because they write grads to a buffer in .backwards() and allreduce in .step()
+# so intermediate grad ops are lost
+optimizer = hvd.DistributedOptimizer(optimizer,
+                                     named_parameters=model.named_parameters(),
+                                     compression=compression,
+                                     **hvd_kwargs) 
+
+# Horovod: broadcast parameters & optimizer state.
+hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+hvd.broadcast_optimizer_state(optimizer, root_rank=0)    
 
 args.lr_decay.reverse() # lr_decay schedule needs to be in reverse order
 
@@ -170,9 +165,19 @@ def train(epoch):
             optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, target)
+            if optimizer.steps % optimizer.TCov == 0:
+                # compute true fisher
+                optimizer.acc_stats = True
+                with torch.no_grad():
+                    sampled_y = torch.multinomial(torch.nn.functional.softmax(
+                                    output.cpu().data, dim=1), 1).squeeze().cuda()
+                loss_sample = criterion(output, sampled_y)
+                loss_sample.backward(retain_graph=True)
+                optimizer.acc_stats = False
+                optimizer.zero_grad()  # clear the gradient for computing true-fisher.
             loss.backward()
-            if preconditioner is not None:
-                preconditioner.step()
+            #if preconditioner is not None:
+            #    preconditioner.step()
             optimizer.step()
             #for i, param in enumerate(model.parameters()):
             #    if param.grad is not None and i == 1:
