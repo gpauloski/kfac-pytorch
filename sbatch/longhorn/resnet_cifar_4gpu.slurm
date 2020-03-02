@@ -18,11 +18,9 @@
 
 mkdir -p sbatch_logs
 
-module load cuda/10.0 cudnn/7.6.5 nccl/2.4.8
+module load cuda/10.1
 
-unset PYTHONPATH
 source $SCRATCH/anaconda3/bin/activate pytorch
-export HDF5_USE_FILE_LOCKING='FALSE'
 
 # Get nodelist by sorting jobs by latest start to earliest and getting second line
 SLURM_NODELIST=$(squeue --sort M --format %N -u $USER | head -2 | tail -1)
@@ -32,9 +30,10 @@ cat /tmp/hostfile
 
 mpiexec -hostfile /tmp/hostfile -N 4 \
    python examples/pytorch_cifar10_resnet.py \
-     --lr 0.01 \
-     --epochs 90 \
-     --kfac-update-freq 10
-          
+     --lr 0.1 \
+     --epochs 100 \
+     --kfac-update-freq 10 \
+     --model resnet32 \
+     --lr-decay 60 80
 
 # -----------------------------------------------------------------------------
