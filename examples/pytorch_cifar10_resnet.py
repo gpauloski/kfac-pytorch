@@ -21,7 +21,6 @@ from tqdm import tqdm
 sys.path.append("./kfac")
 import kfac
 
-
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Example')
 parser.add_argument('--batch-size', type=int, default=128, metavar='N',
@@ -54,6 +53,8 @@ parser.add_argument('--log-dir', default='./logs',
                     help='TensorBoard log directory')
 parser.add_argument('--dir', type=str, default='/tmp/cifar10', metavar='D',
                     help='directory to download cifar10 dataset to')
+parser.add_argument('--model', type=str, default='resnet32',
+                    help='ResNet model to use [20, 32, 56]')
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -104,7 +105,12 @@ test_sampler = torch.utils.data.distributed.DistributedSampler(
 test_loader = torch.utils.data.DataLoader(test_dataset, 
         batch_size=args.test_batch_size, sampler=test_sampler, **kwargs)
 
-model = resnet.resnet32()
+if args.model.lower() == "resnet20":
+    model = resnet.resnet20()
+elif args.model.lower() == "resnet32":
+    model = resnet.resnet32()
+elif args.model.lower() == "resnet56":
+    model = resnet.resnet56()
 
 if args.cuda:
     model.cuda()
@@ -113,11 +119,12 @@ if verbose:
     summary(model, (3, 32, 32))
 
 criterion = nn.CrossEntropyLoss()
+args.lr = args.lr * hvd.size()
 
 if args.kfac_update_freq > 0:
     optimizer = kfac.KFACOptimizer(model, lr=args.lr, momentum=args.momentum,
-                                        stat_decay=0.95, damping=0.03, TCov=1,
-                                        TInv=args.kfac_update_freq)
+                                   stat_decay=0.95, damping=0.03, TCov=1,
+                                   TInv=args.kfac_update_freq)
     if args.lr_decay is None:
         args.lr_decay = [40, 80]
 else:
@@ -152,22 +159,7 @@ def train(epoch):
             optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, target)
-            optimizer.acc_stats = True
-            #if args.kfac_update_freq > 0 and optimizer.steps % optimizer.TCov == 0:
-            #    # compute true fisher
-            #    optimizer.acc_stats = True
-            ###    with torch.no_grad():
-            #        sampled_y = torch.multinomial(torch.nn.functional.softmax(
-            #                        output.cpu().data, dim=1), 1).squeeze().cuda()
-            #    loss_sample = criterion(output, sampled_y)
-            #    loss_sample.backward(retain_graph=True)
-            #    optimizer.acc_stats = False
-            #    optimizer.zero_grad()  # clear the gradient for computing true-fisher.
             loss.backward()
-            #for i, param in enumerate(model.parameters()):
-            #    if param.grad is not None and i == 1:
-            #        #print("grad", hvd.rank(), torch.flatten(param.grad.data)[0:8])
-            #        print("param", hvd.rank(), torch.flatten(param.data)[0:8])
             optimizer.step()
 
             train_accuracy.update(accuracy(output, target))
