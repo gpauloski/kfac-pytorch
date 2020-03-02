@@ -53,6 +53,8 @@ class KFACOptimizer(optim.Optimizer):
         self.TCov = TCov
         self.TInv = TInv
 
+        self.acc_stats = True
+
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.TCov == 0:
             aa = self.CovAHandler(input[0].data, module)
