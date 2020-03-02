@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import MultiStepLR
 from torchvision import datasets, transforms, models
 import torch.utils.data.distributed
 
@@ -31,8 +32,8 @@ parser.add_argument('--epochs', type=int, default=200, metavar='N',
                     help='number of epochs to train (default: 200)')
 parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
                     help='number of warmup epochs (default: 5)')
-parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
-                    help='learning rate (default: 0.01)')
+parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
+                    help='learning rate (default: 0.1)')
 parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                     help='SGD momentum (default: 0.9)')
 parser.add_argument('--weight-decay', type=float, default=5e-4, metavar='W',
@@ -103,60 +104,41 @@ test_sampler = torch.utils.data.distributed.DistributedSampler(
 test_loader = torch.utils.data.DataLoader(test_dataset, 
         batch_size=args.test_batch_size, sampler=test_sampler, **kwargs)
 
-model = resnet.resnet56()
+model = resnet.resnet32()
 
 if args.cuda:
-    # Move model to GPU.
     model.cuda()
-    # If using GPU Adasum allreduce, scale learning rate by local_size.
-    if args.use_adasum and hvd.nccl_built():
-        lr_scaler = hvd.local_size()
 
 if verbose:
     summary(model, (3, 32, 32))
 
 criterion = nn.CrossEntropyLoss()
 
-# Horovod: scale learning rate by lr_scaler.
-optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
-                      weight_decay=args.weight_decay)
-
-# Horovod: broadcast parameters & optimizer state.
-hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-
-# Horovod: (optional) compression algorithm.
-compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
-
-# Cross compatibility w/ Horovod versions, if hvd.Average exists then it
-# is version >=0.19
-if hasattr(hvd, "Average"):
-    hvd_kwargs = {"op": hvd.Adasum if args.use_adasum else hvd.Average}
-else:
-    hvd_kwargs = {}
-    
-
 if args.kfac_update_freq > 0:
-    preconditioner = kfac.KFAC2(model, 0.03, update_freq=10)
+    optimizer = kfac.KFACOptimizer(model, lr=args.lr, momentum=args.momentum,
+                                        stat_decay=0.95, damping=0.03, TCov=1,
+                                        TInv=args.kfac_update_freq)
     if args.lr_decay is None:
-        args.lr_decay = [40, 60, 70, 80]
+        args.lr_decay = [40, 80]
 else:
-    # Horovod: wrap optimizer with DistributedOptimizer.
-    # NOTE: Horovod distributed opt does not worh with gradient preconditioner
-    # because they write grads to a buffer in .backwards() and allreduce in .step()
-    # so intermediate grad ops are lost
+    # Horovod: scale learning rate by lr_scaler.
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
+                          weight_decay=args.weight_decay)
+
+    compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
     optimizer = hvd.DistributedOptimizer(optimizer,
                                          named_parameters=model.named_parameters(),
-                                         compression=compression,
-                                         **hvd_kwargs)
-    preconditioner = None
+                                         compression=compression) 
+    hvd.broadcast_optimizer_state(optimizer, root_rank=0)
     if args.lr_decay is None:
         args.lr_decay = [60, 90, 110, 130]
 
-args.lr_decay.reverse() # lr_decay schedule needs to be in reverse order
+hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+lr_scheduler = MultiStepLR(optimizer, milestones=args.lr_decay, gamma=0.1)
 
 def train(epoch):
     model.train()
+    lr_scheduler.step()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
@@ -170,13 +152,23 @@ def train(epoch):
             optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, target)
+            optimizer.acc_stats = True
+            #if args.kfac_update_freq > 0 and optimizer.steps % optimizer.TCov == 0:
+            #    # compute true fisher
+            #    optimizer.acc_stats = True
+            ###    with torch.no_grad():
+            #        sampled_y = torch.multinomial(torch.nn.functional.softmax(
+            #                        output.cpu().data, dim=1), 1).squeeze().cuda()
+            #    loss_sample = criterion(output, sampled_y)
+            #    loss_sample.backward(retain_graph=True)
+            #    optimizer.acc_stats = False
+            #    optimizer.zero_grad()  # clear the gradient for computing true-fisher.
             loss.backward()
-            if preconditioner is not None:
-                preconditioner.step()
-            optimizer.step()
             #for i, param in enumerate(model.parameters()):
             #    if param.grad is not None and i == 1:
-            #        print("after op", hvd.rank(), torch.flatten(param.grad)[0:8])
+            #        #print("grad", hvd.rank(), torch.flatten(param.grad.data)[0:8])
+            #        print("param", hvd.rank(), torch.flatten(param.data)[0:8])
+            optimizer.step()
 
             train_accuracy.update(accuracy(output, target))
             train_loss.update(loss)
@@ -218,23 +210,7 @@ def test(epoch):
         log_writer.add_scalar('test/accuracy', test_accuracy.avg, epoch)
 
 
-def adjust_learning_rate(epoch):
-    if epoch < args.warmup_epochs:
-        lr_adj = 1. / hvd.size() * (epoch * (hvd.size() - 1) / args.warmup_epochs + 1)
-    else:
-        lr_adj = 1.
-        for e in args.lr_decay:
-            if epoch > e:
-                lr_adj *= 0.1
-         
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = args.lr * hvd.size() * lr_adj
-    #if verbose:
-    #    print("lr:", param_group['lr'])
-
-
 def accuracy(output, target):
-    # get the index of the max log-probability
     pred = output.max(1, keepdim=True)[1]
     return pred.eq(target.view_as(pred)).cpu().float().mean()
 
@@ -254,11 +230,9 @@ class Metric(object):
     def avg(self):
         return self.sum / self.n
 
-
 start = time.time()
 
 for epoch in range(args.epochs):
-    adjust_learning_rate(epoch)
     train(epoch)
     test(epoch)
 
