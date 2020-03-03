@@ -54,6 +54,7 @@ class KFACOptimizer(optim.Optimizer):
         self.TInv = TInv
 
         self.acc_stats = True
+        self.hvd_size = hvd.size()
 
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.TCov == 0:
@@ -140,7 +141,6 @@ class KFACOptimizer(optim.Optimizer):
                 vg_sum += (v[1] * m.bias.grad.data * lr ** 2).sum().item()
         nu = min(1.0, math.sqrt(self.kl_clip / vg_sum))
 
-        handles = []
         for m in self.modules:
             v = updates[m]
             m.weight.grad.data.copy_(v[0])
@@ -175,7 +175,8 @@ class KFACOptimizer(optim.Optimizer):
                     d_p = buf
                 
                 p.data.add_(-group['lr'], d_p)
-                handles.append(hvd.allreduce_async_(p.data, op=hvd.Average))
+                if self.hvd_size > 1:
+                    handles.append(hvd.allreduce_async_(p.data, op=hvd.Average))
 
         for handle in handles:
             hvd.synchronize(handle)
@@ -199,18 +200,21 @@ class KFACOptimizer(optim.Optimizer):
                 v = self.get_zeros_like(m)
             # TODO: can we avoid the .clone() here?
             updates[m] = [x.clone() for x in v]
-            for x in updates[m]:
-                # TODO: should we broadcast instead of sum?
-                handles.append(hvd.allreduce_async_(x, op=hvd.Sum))
+
+            if self.hvd_size > 1:
+                for x in updates[m]:
+                    handles.append(hvd.allreduce_async_(x, op=hvd.Sum))
+    
         for handle in handles:
             hvd.synchronize(handle)
+
         self._kl_clip_and_update_grad(updates, lr)
 
         self._step(closure)
         self.steps += 1
 
     def sync_handles(self):
-        if hvd.size() <= 1:
+        if self.hvd_size <= 1:
             return
 
         input_hdls, output_hdls, grad_hdls = [], [], []
