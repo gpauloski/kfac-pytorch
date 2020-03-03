@@ -98,10 +98,12 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
 
 download = True if hvd.local_rank() == 0 else False
+if not download: hvd.allreduce(torch.tensor(1), name="barrier")
 train_dataset = datasets.CIFAR10(root=args.dir, train=True, 
                                  download=download, transform=transform_train)
 test_dataset = datasets.CIFAR10(root=args.dir, train=False,
                                 download=download, transform=transform_test)
+if download: hvd.allreduce(torch.tensor(1), name="barrier")
 
 # Horovod: use DistributedSampler to partition the training data.
 train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -136,26 +138,22 @@ criterion = nn.CrossEntropyLoss()
 # Horovod: scale learning rate by lr_scaler.
 args.lr = args.lr * hvd.size()
 
-if args.kfac_update_freq > 0:
-    optimizer = kfac.KFACOptimizer(model, lr=args.lr, momentum=args.momentum,
-                                   stat_decay=args.stat_decay, damping=args.damping, 
-                                   kl_clip=args.kl_clip, TCov=1, TInv=args.kfac_update_freq,
-                                   weight_decay=args.weight_decay)
-else:
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
-                          weight_decay=args.weight_decay)
-    compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
-    optimizer = hvd.DistributedOptimizer(optimizer,
-                                         named_parameters=model.named_parameters(),
-                                         compression=compression) 
-    hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+preconditioner = kfac.KFAC(model, lr=args.lr, stat_decay=args.stat_decay, 
+                           damping=args.damping, 
+                           kl_clip=args.kl_clip, TCov=1, TInv=args.kfac_update_freq)
 
+optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
+                      weight_decay=args.weight_decay)
+
+hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-lr_scheduler = MultiStepLR(optimizer, milestones=args.lr_decay, gamma=0.1)
+lr_scheduler = [MultiStepLR(optimizer, milestones=args.lr_decay, gamma=0.1),
+                MultiStepLR(preconditioner, milestones=args.lr_decay, gamma=0.1)]
 
 def train(epoch):
     model.train()
-    lr_scheduler.step()
+    for scheduler in lr_scheduler:
+        scheduler.step()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
@@ -170,6 +168,7 @@ def train(epoch):
             output = model(data)
             loss = criterion(output, target)
             loss.backward()
+            preconditioner.step()
             optimizer.step()
 
             train_accuracy.update(accuracy(output, target))
