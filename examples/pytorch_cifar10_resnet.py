@@ -23,6 +23,8 @@ import kfac
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Example')
+parser.add_argument('--model', type=str, default='resnet32',
+                    help='ResNet model to use [20, 32, 56]')
 parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                     help='input batch size for training (default: 128)')
 parser.add_argument('--test-batch-size', type=int, default=128, metavar='N',
@@ -31,30 +33,38 @@ parser.add_argument('--epochs', type=int, default=200, metavar='N',
                     help='number of epochs to train (default: 200)')
 parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
                     help='number of warmup epochs (default: 5)')
+
+# Optimizer Parameters
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
                     help='learning rate (default: 0.1)')
+parser.add_argument('--lr-decay', nargs='+', type=int, default=[100, 150],
+                    help='epoch intervals to decay lr')
 parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                     help='SGD momentum (default: 0.9)')
 parser.add_argument('--weight-decay', type=float, default=5e-4, metavar='W',
                     help='SGD weight decay (default: 5e-4)')
+
+# KFAC Parameters
+parser.add_argument('--kfac-update-freq', type=int, default=10,
+                    help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
+parser.add_argument('--stat-decay', type=float, default=0.95,
+                    help='Alpha value for covariance accumulation (default: 0.95)')
+parser.add_argument('--damping', type=float, default=0.003,
+                    help='KFAC damping factor (defaultL 0.003)')
+parser.add_argument('--kl-clip', type=float, default=0.001,
+                    help='KL clip (default: 0.001)')
+
+# Other Parameters
+parser.add_argument('--log-dir', default='./logs',
+                    help='TensorBoard log directory')
+parser.add_argument('--dir', type=str, default='/tmp/cifar10', metavar='D',
+                    help='directory to download cifar10 dataset to')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
 parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 parser.add_argument('--fp16-allreduce', action='store_true', default=False,
                     help='use fp16 compression during allreduce')
-parser.add_argument('--use-adasum', action='store_true', default=False,
-                    help='use adasum algorithm to do reduction')
-parser.add_argument('--kfac-update-freq', type=int, default=10,
-                    help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
-parser.add_argument('--lr-decay', nargs='+', type=int, default=None,
-                    help='epoch intervals to decay lr')
-parser.add_argument('--log-dir', default='./logs',
-                    help='TensorBoard log directory')
-parser.add_argument('--dir', type=str, default='/tmp/cifar10', metavar='D',
-                    help='directory to download cifar10 dataset to')
-parser.add_argument('--model', type=str, default='resnet32',
-                    help='ResNet model to use [20, 32, 56]')
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -71,8 +81,7 @@ if args.cuda:
     # Horovod: pin GPU to local rank.
     torch.cuda.set_device(hvd.local_rank())
     torch.cuda.manual_seed(args.seed)
-
-torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = True
 
 # Horovod: limit # of CPU threads to be used per worker.
 torch.set_num_threads(1)
@@ -88,10 +97,11 @@ transform_test = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
 
+download = True if hvd.local_rank() == 0 else False
 train_dataset = datasets.CIFAR10(root=args.dir, train=True, 
-                                 download=True, transform=transform_train)
+                                 download=download, transform=transform_train)
 test_dataset = datasets.CIFAR10(root=args.dir, train=False,
-                                download=True, transform=transform_test)
+                                download=download, transform=transform_test)
 
 # Horovod: use DistributedSampler to partition the training data.
 train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -109,8 +119,12 @@ if args.model.lower() == "resnet20":
     model = resnet.resnet20()
 elif args.model.lower() == "resnet32":
     model = resnet.resnet32()
+elif args.model.lower() == "resnet44":
+    model = resnet.resnet44()
 elif args.model.lower() == "resnet56":
     model = resnet.resnet56()
+elif args.model.lower() == "resnet110":
+    model = resnet.resnet110()
 
 if args.cuda:
     model.cuda()
@@ -119,26 +133,22 @@ if verbose:
     summary(model, (3, 32, 32))
 
 criterion = nn.CrossEntropyLoss()
+# Horovod: scale learning rate by lr_scaler.
 args.lr = args.lr * hvd.size()
 
 if args.kfac_update_freq > 0:
     optimizer = kfac.KFACOptimizer(model, lr=args.lr, momentum=args.momentum,
-                                   stat_decay=0.95, damping=0.03, TCov=1,
-                                   TInv=args.kfac_update_freq)
-    if args.lr_decay is None:
-        args.lr_decay = [40, 80]
+                                   stat_decay=args.stat_decay, damping=args.damping, 
+                                   kl_clip=args.kl_clip, TCov=1, TInv=args.kfac_update_freq,
+                                   weight_decay=args.weight_decay)
 else:
-    # Horovod: scale learning rate by lr_scaler.
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
-
     compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
     optimizer = hvd.DistributedOptimizer(optimizer,
                                          named_parameters=model.named_parameters(),
                                          compression=compression) 
     hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-    if args.lr_decay is None:
-        args.lr_decay = [60, 90, 110, 130]
 
 hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 lr_scheduler = MultiStepLR(optimizer, milestones=args.lr_decay, gamma=0.1)
