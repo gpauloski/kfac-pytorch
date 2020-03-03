@@ -1,4 +1,10 @@
-# PyTorch Distributed KFac Optimizer
+# PyTorch Distributed KFAC Optimizer
+
+Distributed KFAC Optimizer in PyTorch using [Horovod](https://github.com/horovod/horovod) for communication.
+
+The KFAC code was originally forked from Chaoqi Wang's [KFAC-PyTorch](https://github.com/alecwangcq/KFAC-Pytorch).
+The ResNet models for Cifar10 are from Yerlan Idelbayev's [pytorch_resnet_cifar10](https://github.com/akamaster/pytorch_resnet_cifar10).
+The Cifar10 training scripts are modeled afer Horovod's example PyTorch training scripts.
 
 ## Cifar10 Training
 
