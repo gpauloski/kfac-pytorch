@@ -2,19 +2,21 @@ from __future__ import print_function
 
 import time
 from datetime import datetime
-import torch
 import argparse
+import os
+import math
+import sys
+
+import torch
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data.distributed
 from torchvision import datasets, transforms, models
 import horovod.torch as hvd
-import os
-import math
-import sys
 from tqdm import tqdm
 from distutils.version import LooseVersion
+from utils import *
 
 sys.path.append("./kfac")
 import kfac
@@ -32,12 +34,6 @@ parser.add_argument('--checkpoint-format', default='checkpoint-{epoch}.pth.tar',
                     help='checkpoint file format')
 parser.add_argument('--fp16-allreduce', action='store_true', default=False,
                     help='use fp16 compression during allreduce')
-parser.add_argument('--batches-per-allreduce', type=int, default=1,
-                    help='number of batches processed locally before '
-                         'executing allreduce across workers; it multiplies '
-                         'total batch size.')
-parser.add_argument('--use-adasum', action='store_true', default=False,
-                    help='use adasum algorithm to do reduction')
 
 # Default settings from https://arxiv.org/abs/1706.02677.
 parser.add_argument('--batch-size', type=int, default=32,
@@ -48,6 +44,8 @@ parser.add_argument('--epochs', type=int, default=90,
                     help='number of epochs to train')
 parser.add_argument('--base-lr', type=float, default=0.0125,
                     help='learning rate for a single GPU')
+parser.add_argument('--lr-decay', nargs='+', type=int, default=[30, 60, 80],
+                    help='epoch intervals to decay lr')
 parser.add_argument('--warmup-epochs', type=float, default=5,
                     help='number of warmup epochs')
 parser.add_argument('--momentum', type=float, default=0.9,
@@ -71,20 +69,17 @@ parser.add_argument('--seed', type=int, default=42,
                     help='random seed')
 
 args = parser.parse_args()
-
 args.cuda = not args.no_cuda and torch.cuda.is_available()
-allreduce_batch_size = args.batch_size * args.batches_per_allreduce
 
 hvd.init()
 torch.manual_seed(args.seed)
+verbose = 1 if hvd.rank() == 0 else 0
 
 if args.cuda:
-    # Horovod: pin GPU to local rank.
     torch.cuda.set_device(hvd.local_rank())
     torch.cuda.manual_seed(args.seed)
 
 cudnn.benchmark = True
-
 
 args.log_dir = os.path.join(args.log_dir, 
                             "imagenet_resnet50_kfac{}_gpu_{}_{}".format(
@@ -104,9 +99,6 @@ for try_epoch in range(args.epochs, 0, -1):
 # checkpoints) to other ranks.
 resume_from_epoch = hvd.broadcast(torch.tensor(resume_from_epoch), root_rank=0,
                                   name='resume_from_epoch').item()
-
-# Horovod: print logs on the first worker.
-verbose = 1 if hvd.rank() == 0 else 0
 
 # Horovod: write TensorBoard logs on first worker.
 try:
@@ -156,38 +148,28 @@ val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.val_batch_
 
 # Set up standard ResNet-50 model.
 model = models.resnet50()
-
-# By default, Adasum doesn't need scaling up learning rate.
-# For sum/average with gradient Accumulation: scale learning rate by batches_per_allreduce
-lr_scaler = args.batches_per_allreduce * hvd.size() if not args.use_adasum else 1
-
 if args.cuda:
-    # Move model to GPU.
     model.cuda()
-    # If using GPU Adasum allreduce, scale learning rate by local_size.
-    if args.use_adasum and hvd.nccl_built():
-        lr_scaler = args.batches_per_allreduce * hvd.local_size()
+
+args.base_lr = args.base_lr * hvd.size()
+use_kfac = True if args.kfac_update_freq > 0 else False
 
 # Horovod: scale learning rate by the number of GPUs.
-optimizer = optim.SGD(model.parameters(),
-                      lr=(args.base_lr *
-                          lr_scaler),
+optimizer = optim.SGD(model.parameters(), lr=args.base_lr,
                       momentum=args.momentum, weight_decay=args.wd)
 
-# Horovod: (optional) compression algorithm.
-compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
-
-# Horovod: wrap optimizer with DistributedOptimizer.
-#optimizer = hvd.DistributedOptimizer(
-#    optimizer, named_parameters=model.named_parameters(),
-#    compression=compression,
-#    backward_passes_per_step=args.batches_per_allreduce,
-#    op=hvd.Adasum if args.use_adasum else hvd.Average)
-
-if args.kfac_update_freq > 0:
-    preconditioner = kfac.KFAC(model, lr=args.base_lr * lr_scaler, 
+if use_kfac:
+    preconditioner = kfac.KFAC(model, lr=args.base_lr, 
                                stat_decay=args.stat_decay, damping=args.damping, 
                                kl_clip=args.kl_clip, TCov=1, TInv=args.kfac_update_freq)
+else:
+    # KFAC guarentees grads are equal across ranks before opt.step() is called
+    # so if we do not use kfac we need to wrap the optimizer with horovod
+    compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
+    optimizer = hvd.DistributedOptimizer(optimizer, 
+                                         named_parameters=model.named_parameters(),
+                                         compression=compression,
+                                         op=hvd.Average)
 
 # Restore from a previous checkpoint, if initial_epoch is specified.
 # Horovod: restore on the first worker which will broadcast weights to other workers.
@@ -201,38 +183,40 @@ if resume_from_epoch > 0 and hvd.rank() == 0:
 hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
+lrs = create_lr_schedule(hvd.size(), args.warmup_epochs, args.lr_decay)
+lr_scheduler = [LambdaLR(optimizer, lrs)]
+if use_kfac:
+    lr_scheduler.append(LambdaLR(preconditioner, lrs))
+
 def train(epoch):
     model.train()
+    for scheduler in lr_scheduler:
+        scheduler.step()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
 
-    with tqdm(total=len(train_loader),
-              desc='Train Epoch     #{}'.format(epoch + 1),
+    with tqdm(total=len(train_loader), 
+              desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
               disable=not verbose) as t:
         for batch_idx, (data, target) in enumerate(train_loader):
-            adjust_learning_rate(epoch, batch_idx)
-
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
-            # Split data into sub-batches of size batch_size
-            for i in range(0, len(data), args.batch_size):
-                data_batch = data[i:i + args.batch_size]
-                target_batch = target[i:i + args.batch_size]
-                output = model(data_batch)
-                train_accuracy.update(accuracy(output, target_batch))
-                loss = F.cross_entropy(output, target_batch)
-                train_loss.update(loss)
-                # Average gradients among sub-batches
-                loss.div_(math.ceil(float(len(data)) / args.batch_size))
-                loss.backward()
+            output = model(data)
+
+            loss = F.cross_entropy(output, target)
+            train_loss.update(loss)
+            train_accuracy.update(accuracy(output, target))
+            loss.backward()
+
             # Gradient is applied across all ranks
-            if args.kfac_update_freq > 0:
+            if use_kfac:
                 preconditioner.step()
             optimizer.step()
-            t.set_postfix({'loss': train_loss.avg.item(),
-                           'accuracy': 100. * train_accuracy.avg.item()})
+
+            t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
+                    train_loss.avg.item(), 100*train_accuracy.avg.item()))
             t.update(1)
 
     if log_writer:
@@ -245,80 +229,35 @@ def validate(epoch):
     val_loss = Metric('val_loss')
     val_accuracy = Metric('val_accuracy')
 
-    with tqdm(total=len(val_loader),
-              desc='Validate Epoch  #{}'.format(epoch + 1),
+    with tqdm(total=len(test_loader),
+              bar_format='{l_bar}{bar}|{postfix}',
+              desc='             '.format(epoch + 1, args.epochs),
               disable=not verbose) as t:
         with torch.no_grad():
             for data, target in val_loader:
                 if args.cuda:
                     data, target = data.cuda(), target.cuda()
                 output = model(data)
-
                 val_loss.update(F.cross_entropy(output, target))
                 val_accuracy.update(accuracy(output, target))
-                t.set_postfix({'loss': val_loss.avg.item(),
-                               'accuracy': 100. * val_accuracy.avg.item()})
+
                 t.update(1)
+                if i + 1 == len(val_loader):
+                    t.set_postfix_str("\b\b val_loss: {:.4f}, val_acc: {:.2f}%".format(
+                            val_loss.avg.item(), 100*val_accuracy.avg.item()),
+                            refresh=False)
 
     if log_writer:
         log_writer.add_scalar('val/loss', val_loss.avg, epoch)
         log_writer.add_scalar('val/accuracy', val_accuracy.avg, epoch)
 
 
-# Horovod: using `lr = base_lr * hvd.size()` from the very beginning leads to worse final
-# accuracy. Scale the learning rate `lr = base_lr` ---> `lr = base_lr * hvd.size()` during
-# the first five epochs. See https://arxiv.org/abs/1706.02677 for details.
-# After the warmup reduce learning rate by 10 on the 30th, 60th and 80th epochs.
-def adjust_learning_rate(epoch, batch_idx):
-    if epoch < args.warmup_epochs:
-        epoch += float(batch_idx + 1) / len(train_loader)
-        lr_adj = 1. / hvd.size() * (epoch * (hvd.size() - 1) / args.warmup_epochs + 1)
-    elif epoch < 30:
-        lr_adj = 1.
-    elif epoch < 60:
-        lr_adj = 1e-1
-    elif epoch < 80:
-        lr_adj = 1e-2
-    else:
-        lr_adj = 1e-3
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = args.base_lr * hvd.size() * args.batches_per_allreduce * lr_adj
-
-
-def accuracy(output, target):
-    # get the index of the max log-probability
-    pred = output.max(1, keepdim=True)[1]
-    return pred.eq(target.view_as(pred)).cpu().float().mean()
-
-
-def save_checkpoint(epoch):
-    if hvd.rank() == 0:
-        filepath = args.checkpoint_format.format(epoch=epoch + 1)
-        state = {
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-        }
-        torch.save(state, filepath)
-
-
-# Horovod: average metrics from distributed training.
-class Metric(object):
-    def __init__(self, name):
-        self.name = name
-        self.sum = torch.tensor(0.)
-        self.n = torch.tensor(0.)
-
-    def update(self, val):
-        self.sum += hvd.allreduce(val.detach().cpu(), name=self.name)
-        self.n += 1
-
-    @property
-    def avg(self):
-        return self.sum / self.n
-
+start = time.time()
 
 for epoch in range(resume_from_epoch, args.epochs):
     train(epoch)
     validate(epoch)
     save_checkpoint(epoch)
 
+if verbose:
+    print("\nTraining time:", str(timedelta(seconds=time.time() - start)))
