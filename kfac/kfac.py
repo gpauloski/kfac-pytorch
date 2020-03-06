@@ -8,28 +8,19 @@ from kfac_utils import update_running_stat
 
 import horovod.torch as hvd
 
-class KFACOptimizer(optim.Optimizer):
+class KFAC(optim.Optimizer):
     def __init__(self,
                  model,
-                 lr=0.001,
-                 momentum=0.9,
+                 lr=0.1,
                  stat_decay=0.95,
                  damping=0.001,
                  kl_clip=0.001,
-                 weight_decay=0,
                  TCov=10,
                  TInv=100,
                  batch_averaged=True):
-        if lr < 0.0:
-            raise ValueError("Invalid learning rate: {}".format(lr))
-        if momentum < 0.0:
-            raise ValueError("Invalid momentum value: {}".format(momentum))
-        if weight_decay < 0.0:
-            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
-        defaults = dict(lr=lr, momentum=momentum, damping=damping,
-                        weight_decay=weight_decay)
-        # TODO (CW): KFAC optimizer now only support model as input
-        super(KFACOptimizer, self).__init__(model.parameters(), defaults)
+        
+        defaults = dict(lr=lr, damping=damping)
+        super(KFAC, self).__init__(model.parameters(), defaults)
         self.CovAHandler = ComputeCovA()
         self.CovGHandler = ComputeCovG()
         self.batch_averaged = batch_averaged
@@ -149,38 +140,6 @@ class KFACOptimizer(optim.Optimizer):
                 m.bias.grad.data.copy_(v[1])
                 m.bias.grad.data.mul_(nu)
 
-    def _step(self, closure):
-        # FIXME (CW): Modified based on SGD (removed nestrov and dampening in momentum.)
-        # FIXME (CW): 1. no nesterov, 2. buf.mul_(momentum).add_(1 <del> - dampening </del>, d_p)
-        handles = []
-        go = False
-        for group in self.param_groups:
-            weight_decay = group['weight_decay']
-            momentum = group['momentum']
-
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                d_p = p.grad.data
-                if weight_decay != 0 and self.steps >= 20 * self.TCov:
-                    d_p.add_(weight_decay, p.data)
-                if momentum != 0:
-                    param_state = self.state[p]
-                    if 'momentum_buffer' not in param_state:
-                        buf = param_state['momentum_buffer'] = torch.zeros_like(p.data)
-                        buf.mul_(momentum).add_(d_p)
-                    else:
-                        buf = param_state['momentum_buffer']
-                        buf.mul_(momentum).add_(1, d_p)
-                    d_p = buf
-                
-                p.data.add_(-group['lr'], d_p)
-                if self.hvd_size > 1:
-                    handles.append(hvd.allreduce_async_(p.data, op=hvd.Average))
-
-        for handle in handles:
-            hvd.synchronize(handle)
-
     def step(self, closure=None):
         # FIXME(CW): temporal fix for compatibility with Official LR scheduler.
         group = self.param_groups[0]
@@ -210,8 +169,23 @@ class KFACOptimizer(optim.Optimizer):
 
         self._kl_clip_and_update_grad(updates, lr)
 
-        self._step(closure)
+        self.allreduce_grads()
+
         self.steps += 1
+
+    def allreduce_grads(self):
+        """
+        We allreduce all of the grads b/c while conv2d and linear layers
+        will already be allreduced, other layers that kfac cannot handle are
+        not.
+        """
+        handles = []
+        for group in self.param_groups:
+            for p in group['params']:
+                if p.grad is not None:
+                    handles.append(hvd.allreduce_async_(p.grad, op=hvd.Average))
+        for handle in handles:
+            hvd.synchronize(handle)
 
     def sync_handles(self):
         if self.hvd_size <= 1:

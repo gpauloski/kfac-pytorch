@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch.optim.lr_scheduler import MultiStepLR
+from torch.optim.lr_scheduler import LambdaLR
 from torchvision import datasets, transforms, models
 import torch.utils.data.distributed
 
@@ -17,6 +17,7 @@ from torchsummary import summary
 import cifar_resnet as resnet
 import horovod.torch as hvd
 from tqdm import tqdm
+from utils import *
 
 sys.path.append("./kfac")
 import kfac
@@ -74,14 +75,18 @@ hvd.init()
 torch.manual_seed(args.seed)
 verbose = True if hvd.rank() == 0 else False
 
-os.makedirs(args.log_dir, exist_ok=True)
-log_writer = SummaryWriter(args.log_dir) if verbose else None
-
 if args.cuda:
-    # Horovod: pin GPU to local rank.
     torch.cuda.set_device(hvd.local_rank())
     torch.cuda.manual_seed(args.seed)
-    torch.backends.cudnn.benchmark = True
+
+torch.backends.cudnn.benchmark = True
+
+args.log_dir = os.path.join(args.log_dir, 
+                            "cifar10_{}_kfac{}_gpu_{}_{}".format(
+                            args.model, args.kfac_update_freq, hvd.size(),
+                            datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
+os.makedirs(args.log_dir, exist_ok=True)
+log_writer = SummaryWriter(args.log_dir) if verbose else None
 
 # Horovod: limit # of CPU threads to be used per worker.
 torch.set_num_threads(1)
@@ -98,10 +103,12 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
 
 download = True if hvd.local_rank() == 0 else False
+if not download: hvd.allreduce(torch.tensor(1), name="barrier")
 train_dataset = datasets.CIFAR10(root=args.dir, train=True, 
                                  download=download, transform=transform_train)
 test_dataset = datasets.CIFAR10(root=args.dir, train=False,
                                 download=download, transform=transform_test)
+if download: hvd.allreduce(torch.tensor(1), name="barrier")
 
 # Horovod: use DistributedSampler to partition the training data.
 train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -133,29 +140,36 @@ if verbose:
     summary(model, (3, 32, 32))
 
 criterion = nn.CrossEntropyLoss()
-# Horovod: scale learning rate by lr_scaler.
 args.lr = args.lr * hvd.size()
 
-if args.kfac_update_freq > 0:
-    optimizer = kfac.KFACOptimizer(model, lr=args.lr, momentum=args.momentum,
-                                   stat_decay=args.stat_decay, damping=args.damping, 
-                                   kl_clip=args.kl_clip, TCov=1, TInv=args.kfac_update_freq,
-                                   weight_decay=args.weight_decay)
-else:
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
-                          weight_decay=args.weight_decay)
-    compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
-    optimizer = hvd.DistributedOptimizer(optimizer,
-                                         named_parameters=model.named_parameters(),
-                                         compression=compression) 
-    hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
+                      weight_decay=args.weight_decay)
 
+if use_kfac:
+    preconditioner = kfac.KFAC(model, lr=args.lr, stat_decay=args.stat_decay, 
+                               damping=args.damping, 
+                               kl_clip=args.kl_clip, TCov=1, TInv=args.kfac_update_freq)
+else:
+    # KFAC guarentees grads are equal across ranks before opt.step() is called
+    # so if we do not use kfac we need to wrap the optimizer with horovod
+    compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
+    optimizer = hvd.DistributedOptimizer(optimizer, 
+                                         named_parameters=model.named_parameters(),
+                                         compression=compression,
+                                         op=hvd.Average)
+
+hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-lr_scheduler = MultiStepLR(optimizer, milestones=args.lr_decay, gamma=0.1)
+
+lrs = create_lr_schedule(hvd.size(), args.warmup_epochs, args.lr_decay)
+lr_scheduler = [LambdaLR(optimizer, lrs)]
+if use_kfac:
+    lr_scheduler.append(LambdaLR(preconditioner, lrs))
 
 def train(epoch):
     model.train()
-    lr_scheduler.step()
+    for scheduler in lr_scheduler:
+        scheduler.step()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
@@ -168,12 +182,15 @@ def train(epoch):
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
             output = model(data)
-            loss = criterion(output, target)
-            loss.backward()
-            optimizer.step()
 
-            train_accuracy.update(accuracy(output, target))
+            loss = criterion(output, target)
             train_loss.update(loss)
+            train_accuracy.update(accuracy(output, target))
+            loss.backward()
+
+            if use_kfac:
+                preconditioner.step()
+            optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
                     train_loss.avg.item(), 100*train_accuracy.avg.item()))
@@ -211,26 +228,6 @@ def test(epoch):
         log_writer.add_scalar('test/loss', test_loss.avg, epoch)
         log_writer.add_scalar('test/accuracy', test_accuracy.avg, epoch)
 
-
-def accuracy(output, target):
-    pred = output.max(1, keepdim=True)[1]
-    return pred.eq(target.view_as(pred)).cpu().float().mean()
-
-
-# Horovod: average metrics from distributed training.
-class Metric(object):
-    def __init__(self, name):
-        self.name = name
-        self.sum = torch.tensor(0.)
-        self.n = torch.tensor(0.)
-
-    def update(self, val):
-        self.sum += hvd.allreduce(val.detach().cpu(), name=self.name)
-        self.n += 1
-
-    @property
-    def avg(self):
-        return self.sum / self.n
 
 start = time.time()
 
