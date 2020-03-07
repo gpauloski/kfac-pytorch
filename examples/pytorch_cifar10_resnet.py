@@ -3,7 +3,7 @@ import argparse
 import time
 import os
 import sys
-from datetime import timedelta
+import datetime
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -84,7 +84,7 @@ torch.backends.cudnn.benchmark = True
 args.log_dir = os.path.join(args.log_dir, 
                             "cifar10_{}_kfac{}_gpu_{}_{}".format(
                             args.model, args.kfac_update_freq, hvd.size(),
-                            datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
+                            datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
 os.makedirs(args.log_dir, exist_ok=True)
 log_writer = SummaryWriter(args.log_dir) if verbose else None
 
@@ -141,6 +141,7 @@ if verbose:
 
 criterion = nn.CrossEntropyLoss()
 args.lr = args.lr * hvd.size()
+use_kfac = True if args.kfac_update_freq > 0 else False
 
 optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
                       weight_decay=args.weight_decay)
@@ -236,5 +237,5 @@ for epoch in range(args.epochs):
     test(epoch)
 
 if verbose:
-    print("\nTraining time:", str(timedelta(seconds=time.time() - start)))
+    print("\nTraining time:", str(datetime.timedelta(seconds=time.time() - start)))
 

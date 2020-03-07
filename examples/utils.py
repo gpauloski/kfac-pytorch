@@ -1,3 +1,5 @@
+import torch
+import horovod.torch as hvd
 
 def accuracy(output, target):
     # get the index of the max log-probability
@@ -5,9 +7,9 @@ def accuracy(output, target):
     return pred.eq(target.view_as(pred)).cpu().float().mean()
 
 
-def save_checkpoint(epoch):
+def save_checkpoint(model, optimizer, checkpoint_format, epoch):
     if hvd.rank() == 0:
-        filepath = args.checkpoint_format.format(epoch=epoch + 1)
+        filepath = checkpoint_format.format(epoch=epoch + 1)
         state = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
