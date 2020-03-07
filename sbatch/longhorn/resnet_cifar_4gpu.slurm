@@ -7,7 +7,6 @@
 
 #SBATCH -J cifkfc4                 # Job name
 #SBATCH -o sbatch_logs/cif_kfc4.o%j # Name of stdout output file
-#SBATCH -e sbatch_logs/cif_kfc4.e%j # Name of stdout output file
 #SBATCH -N 1                       # Total # of nodes 
 #SBATCH -n 4                       # Total # of mpi tasks
 #SBATCH -t 4:00:00                # Run time (hh:mm:ss)
