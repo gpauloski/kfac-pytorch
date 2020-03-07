@@ -1,7 +1,7 @@
 from __future__ import print_function
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import argparse
 import os
 import math
@@ -12,6 +12,7 @@ import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data.distributed
+from torch.optim.lr_scheduler import LambdaLR
 from torchvision import datasets, transforms, models
 import horovod.torch as hvd
 from tqdm import tqdm
@@ -128,7 +129,7 @@ train_dataset = \
 train_sampler = torch.utils.data.distributed.DistributedSampler(
     train_dataset, num_replicas=hvd.size(), rank=hvd.rank())
 train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=allreduce_batch_size,
+    train_dataset, batch_size=args.batch_size,
     sampler=train_sampler, **kwargs)
 
 val_dataset = \
@@ -229,12 +230,12 @@ def validate(epoch):
     val_loss = Metric('val_loss')
     val_accuracy = Metric('val_accuracy')
 
-    with tqdm(total=len(test_loader),
+    with tqdm(total=len(val_loader),
               bar_format='{l_bar}{bar}|{postfix}',
               desc='             '.format(epoch + 1, args.epochs),
               disable=not verbose) as t:
         with torch.no_grad():
-            for data, target in val_loader:
+            for i, (data, target) in enumerate(val_loader):
                 if args.cuda:
                     data, target = data.cuda(), target.cuda()
                 output = model(data)
@@ -257,7 +258,7 @@ start = time.time()
 for epoch in range(resume_from_epoch, args.epochs):
     train(epoch)
     validate(epoch)
-    save_checkpoint(epoch)
+    save_checkpoint(model, optimizer, args.checkpoint_format, epoch)
 
 if verbose:
     print("\nTraining time:", str(timedelta(seconds=time.time() - start)))
