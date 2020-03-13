@@ -75,6 +75,8 @@ args.cuda = not args.no_cuda and torch.cuda.is_available()
 hvd.init()
 torch.manual_seed(args.seed)
 verbose = 1 if hvd.rank() == 0 else 0
+if verbose:
+    print(args)
 
 if args.cuda:
     torch.cuda.set_device(hvd.local_rank())
@@ -223,6 +225,7 @@ def train(epoch):
     if log_writer:
         log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
+        log_writer.add_scalar('train/lr', args.base_lr * lrs(epoch), epoch)
 
 
 def validate(epoch):
