@@ -32,8 +32,7 @@ mpiexec -hostfile /tmp/hostfile -N 1 ./sbatch/cp_imagenet_to_temp.sh
 mpiexec -hostfile /tmp/hostfile -N 4 \
    python examples/pytorch_imagenet_resnet50.py \
      --kfac-update-freq 10 \
-     --epochs 60 \
-     --base-lr 0.02 \
-     --lr-decay 25 35 40
+     --epochs 50 \
+     --lr-decay 20 35 40 45
 
 # -----------------------------------------------------------------------------
