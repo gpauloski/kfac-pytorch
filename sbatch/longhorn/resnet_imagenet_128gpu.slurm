@@ -5,10 +5,10 @@
 #
 #------------------------------------------------------------------------------
 
-#SBATCH -J imgkfc64                 # Job name
-#SBATCH -o sbatch_logs/imgnet_kfc64.o%j # Name of stdout output file
-#SBATCH -N 16                       # Total # of nodes 
-#SBATCH -n 64                       # Total # of mpi tasks
+#SBATCH -J imgkfc128                 # Job name
+#SBATCH -o sbatch_logs/imgnet_kfc128.o%j # Name of stdout output file
+#SBATCH -N 32                       # Total # of nodes 
+#SBATCH -n 128                       # Total # of mpi tasks
 #SBATCH -t 24:00:00                # Run time (hh:mm:ss)
 #SBATCH --mail-user=jgpauloski@utexas.edu
 #SBATCH --mail-type=end            # Send email at begin and end of job
