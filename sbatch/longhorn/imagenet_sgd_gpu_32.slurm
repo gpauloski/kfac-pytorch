@@ -5,10 +5,10 @@
 #
 #------------------------------------------------------------------------------
 
-#SBATCH -J imgkfc64                 # Job name
-#SBATCH -o sbatch_logs/imgnet_kfc64.o%j # Name of stdout output file
-#SBATCH -N 16                       # Total # of nodes 
-#SBATCH -n 64                       # Total # of mpi tasks
+#SBATCH -J imgsgd32                 # Job name
+#SBATCH -o sbatch_logs/imgnet_sgd32.o%j # Name of stdout output file
+#SBATCH -N 8                       # Total # of nodes 
+#SBATCH -n 32                       # Total # of mpi tasks
 #SBATCH -t 24:00:00                # Run time (hh:mm:ss)
 #SBATCH --mail-user=jgpauloski@utexas.edu
 #SBATCH --mail-type=end            # Send email at begin and end of job
@@ -31,8 +31,6 @@ mpiexec -hostfile /tmp/hostfile -N 1 ./sbatch/cp_imagenet_to_temp.sh
 
 mpiexec -hostfile /tmp/hostfile -N 4 \
    python examples/pytorch_imagenet_resnet50.py \
-     --kfac-update-freq 10 \
-     --epochs 50 \
-     --lr-decay 20 35 40 45
+     --kfac-update-freq 0
 
 # -----------------------------------------------------------------------------

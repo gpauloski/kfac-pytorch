@@ -28,6 +28,7 @@ class KFAC(optim.Optimizer):
         self.known_modules = {'Linear', 'Conv2d'}
 
         self.modules = []
+        self.known_params = []
         self.grad_outputs = {}
 
         self.model = model
@@ -71,6 +72,7 @@ class KFAC(optim.Optimizer):
                 self.modules.append(module)
                 module.register_forward_pre_hook(self._save_input)
                 module.register_backward_hook(self._save_grad_output)
+                #self.known_params.append(p for p in module.parameters())
 
     def _update_inv(self, m):
         """Do eigen decomposition for computing inverse of the ~ fisher.
@@ -176,15 +178,19 @@ class KFAC(optim.Optimizer):
 
     def allreduce_grads(self):
         """
-        We allreduce all of the grads b/c while conv2d and linear layers
-        will already be allreduced, other layers that kfac cannot handle are
-        not.
+        All-reduce gradients off layers that are not supported by KFAC, i.e.
+        supported layers will already be all-reduced so we need to handle the
+        other layers (like batchnorm).
         """
         handles = []
         for group in self.param_groups:
             for p in group['params']:
-                if p.grad is not None:
-                    handles.append(hvd.allreduce_async_(p.grad, op=hvd.Average))
+                if p.grad is None:
+                    continue
+                #if p in self.known_params:
+                #    print("reduced", type(p), p)
+                #    continue
+                handles.append(hvd.allreduce_async_(p.grad, op=hvd.Average))
         for handle in handles:
             hvd.synchronize(handle)
 
