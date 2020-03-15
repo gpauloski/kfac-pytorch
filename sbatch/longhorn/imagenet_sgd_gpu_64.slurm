@@ -21,8 +21,6 @@ module load cuda/10.1
 
 source $SCRATCH/anaconda3/bin/activate pytorch
 
-# Get nodelist by sorting jobs by latest start to earliest and getting second line
-SLURM_NODELIST=$(squeue --sort M --format %N -u $USER | head -2 | tail -1)
 scontrol show hostnames $SLURM_NODELIST > /tmp/hostfile
 
 cat /tmp/hostfile
