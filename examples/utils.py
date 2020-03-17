@@ -1,5 +1,14 @@
 import torch
 import horovod.torch as hvd
+from PIL import Image
+
+def is_valid(filename):
+    try:
+        im=Image.open(filename)
+        im.verify()
+    except Exception:
+        return False
+    return True
 
 def accuracy(output, target):
     # get the index of the max log-probability
