@@ -27,6 +27,8 @@ cat /tmp/hostfile
 
 mpiexec -hostfile /tmp/hostfile -N 1 ./sbatch/cp_imagenet_to_temp.sh
 
+sleep 600
+
 mpiexec -hostfile /tmp/hostfile -N 4 \
    python examples/pytorch_imagenet_resnet50.py \
      --kfac-update-freq 10 \

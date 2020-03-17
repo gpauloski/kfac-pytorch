@@ -66,6 +66,8 @@ parser.add_argument('--kl-clip', type=float, default=0.001,
 
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
+parser.add_argument('--single-threaded', action='store_true', default=False,
+                    help='disables multi-threaded dataloading')
 parser.add_argument('--seed', type=int, default=42,
                     help='random seed')
 
@@ -114,9 +116,13 @@ except ImportError:
     log_writer = None
 
 # Horovod: limit # of CPU threads to be used per worker.
-torch.set_num_threads(4)
+if args.single_threaded:
+    torch.set_num_threads(1)
+    kwargs = {'num_workers': 0, 'pin_memory': True} if args.cuda else {}
+else:
+    torch.set_num_threads(4)
+    kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
-kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 train_dataset = \
     datasets.ImageFolder(args.train_dir,
                          transform=transforms.Compose([
