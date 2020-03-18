@@ -89,9 +89,9 @@ os.makedirs(args.log_dir, exist_ok=True)
 log_writer = SummaryWriter(args.log_dir) if verbose else None
 
 # Horovod: limit # of CPU threads to be used per worker.
-torch.set_num_threads(1)
+torch.set_num_threads(4)
 
-kwargs = {'num_workers': 0, 'pin_memory': True} if args.cuda else {}
+kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
 transform_train = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
@@ -169,8 +169,6 @@ if use_kfac:
 
 def train(epoch):
     model.train()
-    for scheduler in lr_scheduler:
-        scheduler.step()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
@@ -201,6 +199,8 @@ def train(epoch):
         log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
 
+    for scheduler in lr_scheduler:
+        scheduler.step()
 
 def test(epoch):
     model.eval()
