@@ -11,11 +11,18 @@ Install base dependencies
 ```
 $ conda install tensorflow-gpu==1.15         # I used version 1.15 but 1.14 should work as well
 $ conda install gxx_linux-ppc64le=7.3.0 cffi
-$ module load cuda/10.0
+$ module load cuda/10.1
 $ pip install kfac tensorflow-probability pytorch
 ```
 
 Install Horovod 
+
+```
+$ HOROVOD_CUDA_HOME=/opt/apps/cuda/10.1/ HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_NCCL_HOME=/opt/apps/cuda10_0/nccl/2.4.8/   HOROVOD_WITHOUT_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=1 HOROVOD_WITHOUT_MXNET=1 pip install horovod --no-cache-dir
+Collecting horovod
+```
+
+Other installs:
 
 Note: I use Horovod==0.19.0 because of this fix: "Fixed hvd.allgather to work with CUDA tensors when building with HOROVOD_GPU_ALLGATHER=MPI (#1480)."
 
