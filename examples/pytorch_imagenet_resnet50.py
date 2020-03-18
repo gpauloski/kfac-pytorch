@@ -7,6 +7,7 @@ import os
 import math
 import sys
 
+import cv2
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
@@ -25,9 +26,9 @@ import kfac
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Example',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--train-dir', default='/tmp/ILSVRC2012_img_train/',
+parser.add_argument('--train-dir', default='/tmp/imagenet/ILSVRC2012_img_train/',
                     help='path to training data')
-parser.add_argument('--val-dir', default='/tmp/ILSVRC2012_img_val/',
+parser.add_argument('--val-dir', default='/tmp/imagenet/ILSVRC2012_img_val/',
                     help='path to validation data')
 parser.add_argument('--log-dir', default='./logs',
                     help='tensorboard/checkpoint log directory')
@@ -199,8 +200,6 @@ if use_kfac:
 
 def train(epoch):
     model.train()
-    for scheduler in lr_scheduler:
-        scheduler.step()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
@@ -232,6 +231,9 @@ def train(epoch):
         log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
         log_writer.add_scalar('train/lr', args.base_lr * lrs(epoch), epoch)
+
+    for scheduler in lr_scheduler:
+        scheduler.step()
 
 
 def validate(epoch):
