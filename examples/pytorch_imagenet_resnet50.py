@@ -30,8 +30,8 @@ parser.add_argument('--train-dir', default='/tmp/imagenet/ILSVRC2012_img_train/'
                     help='path to training data')
 parser.add_argument('--val-dir', default='/tmp/imagenet/ILSVRC2012_img_val/',
                     help='path to validation data')
-parser.add_argument('--log-dir', default='./logs',
-                    help='tensorboard/checkpoint log directory')
+parser.add_argument('--log-dir', default=None,
+                    help='tensorboard/checkpoint log directory. Defaults to ./logs/{timestamped_dir}')
 parser.add_argument('--checkpoint-format', default='checkpoint-{epoch}.pth.tar',
                     help='checkpoint file format')
 parser.add_argument('--fp16-allreduce', action='store_true', default=False,
@@ -87,12 +87,13 @@ if args.cuda:
 
 cudnn.benchmark = True
 
-args.log_dir = os.path.join(args.log_dir, 
-                            "imagenet_resnet50_kfac{}_gpu_{}_{}".format(
-                            args.kfac_update_freq, hvd.size(),
-                             datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
+if args.log_dir is None:
+    args.log_dir = os.path.join("./logs", 
+                                "imagenet_resnet50_kfac{}_gpu_{}_{}".format(
+                                args.kfac_update_freq, hvd.size(),
+                                datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
+    os.makedirs(args.log_dir, exist_ok=True)
 args.checkpoint_format=os.path.join(args.log_dir, args.checkpoint_format)
-os.makedirs(args.log_dir, exist_ok=True)
 
 # If set > 0, will resume training from a given checkpoint.
 resume_from_epoch = 0
