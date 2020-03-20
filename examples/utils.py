@@ -49,7 +49,7 @@ def create_lr_schedule(workers, warmup_epochs, decay_schedule, alpha=0.1):
         else:
             decay_schedule.sort(reverse=True)
             for e in decay_schedule:
-                if epoch > e:
+                if epoch >= e:
                     lr_adj *= alpha
         return lr_adj
     return lr_schedule
