@@ -5,6 +5,8 @@ import torch.optim as optim
 
 from kfac_utils import (ComputeCovA, ComputeCovG)
 from kfac_utils import update_running_stat
+from kfac_utils import try_contiguous
+from kfac_utils import cycle
 
 import horovod.torch as hvd
 
@@ -37,16 +39,18 @@ class KFAC(optim.Optimizer):
         self.steps = 0
 
         self.m_aa, self.m_gg = {}, {}
-        self.Q_a, self.Q_g = {}, {}
-        self.d_a, self.d_g = {}, {}
-        self.stat_decay = stat_decay
+        self.m_aa_inv, self.m_gg_inv = {}, {}
 
+
+        self.stat_decay = stat_decay
         self.kl_clip = kl_clip
         self.TCov = TCov
         self.TInv = TInv
+        self.inv_block_count = 1
 
         self.acc_stats = True
         self.hvd_size = hvd.size()
+        self.rank_iter = cycle(list(range(self.hvd_size)))
 
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.TCov == 0:
@@ -74,20 +78,34 @@ class KFAC(optim.Optimizer):
                 module.register_backward_hook(self._save_grad_output)
                 #self.known_params.append(p for p in module.parameters())
 
-    def _update_inv(self, m):
-        """Do eigen decomposition for computing inverse of the ~ fisher.
-        :param m: The layer
-        :return: no returns.
-        """
-        eps = 1e-10  # for numerical stability
-        self.d_a[m], self.Q_a[m] = torch.symeig(
-            self.m_aa[m], eigenvectors=True)
+    def _update_a_inv(self, m, damping, ranks):
+        a = self.m_aa[m]
+        diag_a = a.new(a.shape[0]).fill_(damping)
+        a = a + torch.diag(diag_a)
+        self.m_aa_inv[m] = try_contiguous(self._inverse_approx(a, ranks, damping))
 
-        self.d_g[m], self.Q_g[m] = torch.symeig(
-            self.m_gg[m], eigenvectors=True)
+    def _update_g_inv(self, m, damping, ranks):
+        g = self.m_gg[m]
+        diag_g = g.new(g.shape[0]).fill_(damping)
+        g = g + torch.diag(diag_g)
+        self.m_gg_inv[m] = try_contiguous(self._approx_inverse(g, ranks, damping))
 
-        self.d_a[m].mul_((self.d_a[m] > eps).float())
-        self.d_g[m].mul_((self.d_g[m] > eps).float())
+    def _approx_inverse(self, a, ranks):
+        inverse = torch.zeros_like(a)
+
+        i = ranks.index(hvd.rank())
+        n = len(ranks)
+        x_len, y_len = inverse.shape[0] // n, inverse.shape[1] // n
+        x_start, y_start = i*x_len, i*y_len
+        x_end = (i+1)*x_len if i + 1 < n else x_end
+        y_end = (i+1)*y_len if i + 1 < n else y_end
+
+        diag_block = a[x_start:x_end, y_start:y_end]
+        diag_damping = diag_block.net(diag_block.shape[0]).fill_(damping)
+        diag_block += diag_damping
+        inverse[x_start:x_end, y_start:y_end] = diag_block.inverse()
+
+        return inverse
 
     @staticmethod
     def _get_matrix_form_grad(m, classname):
@@ -104,17 +122,14 @@ class KFAC(optim.Optimizer):
             p_grad_mat = torch.cat([p_grad_mat, m.bias.grad.data.view(-1, 1)], 1)
         return p_grad_mat
 
-    def _get_natural_grad(self, m, p_grad_mat, damping):
+    def _get_natural_grad(self, m, p_grad_mat):
         """
         :param m:  the layer
         :param p_grad_mat: the gradients in matrix form
         :return: a list of gradients w.r.t to the parameters in `m`
         """
-        # p_grad_mat is of output_dim * input_dim
-        # inv((ss')) p_grad_mat inv(aa') = [ Q_g (1/R_g) Q_g^T ] @ p_grad_mat @ [Q_a (1/R_a) Q_a^T]
-        v1 = self.Q_g[m].t() @ p_grad_mat @ self.Q_a[m]
-        v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + damping)
-        v = self.Q_g[m] @ v2 @ self.Q_a[m].t()
+        v = self.m_gg_inv[m] @ p_grad_mat @ self.m_aa_inv[m]
+
         if m.bias is not None:
             # we always put gradient w.r.t weight in [0]
             # and w.r.t bias in [1]
@@ -151,27 +166,35 @@ class KFAC(optim.Optimizer):
         updates = {}
         handles = []
         self.sync_handles()
-        for i, m in enumerate(self.modules):
-            if i % hvd.size() == hvd.rank():
-                classname = m.__class__.__name__
-                if self.steps % self.TInv == 0:
-                    self._update_inv(m)
-                p_grad_mat = self._get_matrix_form_grad(m, classname)
-                v = self._get_natural_grad(m, p_grad_mat, damping)
-            else:
-                v = self.get_zeros_like(m)
-            # TODO: can we avoid the .clone() here?
-            updates[m] = [x.clone() for x in v]
 
-            if self.hvd_size > 1:
-                for x in updates[m]:
-                    handles.append(hvd.allreduce_async_(x, op=hvd.Sum))
-    
+        if self.steps % self.TInv == 0:
+            for m in self.modules:
+                a_ranks = self.rank_iter.next(self.inv_block_count)
+                g_ranks = self.rank_iter.next(self.inv_block_count)
+                if hvd.rank() in a_ranks:
+                    self._update_a_inv(m, damping, a_ranks)
+                else:
+                    self.m_aa_inv[m] = torch.zeros_like(self.m_aa[m])
+
+                if hvd.rank() in g_ranks:
+                    self._update_g_inv(m, damping, g_ranks)
+                else:
+                    self.m_gg_inv[m] = torch.zeros_like(self.m_gg[m])
+               
+                if self.hvd_size > 1:
+                    handles.append(hvd.allreduce_async_(self.m_aa_inv[m], op=hvd.Sum))
+                    handles.append(hvd.allreduce_async_(self.m_gg_inv[m], op=hvd.Sum))
+
         for handle in handles:
             hvd.synchronize(handle)
 
-        self._kl_clip_and_update_grad(updates, lr)
+        for m in self.modules:
+            classname = m.__class__.__name__
+            p_grad_mat = self._get_matrix_form_grad(m, classname)
+            v = self._get_natural_grad(m, p_grad_mat)
+            updates[m] = v
 
+        self._kl_clip_and_update_grad(updates, lr)
         self.allreduce_grads()
 
         self.steps += 1
@@ -181,15 +204,16 @@ class KFAC(optim.Optimizer):
         All-reduce gradients off layers that are not supported by KFAC, i.e.
         supported layers will already be all-reduced so we need to handle the
         other layers (like batchnorm).
+
+        TODO(gpauloski): skip supported layers here 
+                         (i.e. dont allgather conv2d again)
         """
         handles = []
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is None:
                     continue
-                #if p in self.known_params:
-                #    print("reduced", type(p), p)
-                #    continue
+
                 handles.append(hvd.allreduce_async_(p.grad, op=hvd.Average))
         for handle in handles:
             hvd.synchronize(handle)
