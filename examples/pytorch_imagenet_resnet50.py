@@ -122,7 +122,7 @@ except ImportError:
 
 # Horovod: limit # of CPU threads to be used per worker.
 if args.single_threaded:
-    torch.set_num_threads(1)
+    torch.set_num_threads(8)
     kwargs = {'num_workers': 0, 'pin_memory': True} if args.cuda else {}
 else:
     torch.set_num_threads(4)
