@@ -77,38 +77,49 @@ class KFAC(optim.Optimizer):
                 self.modules.append(module)
                 module.register_forward_pre_hook(self._save_input)
                 module.register_backward_hook(self._save_grad_output)
-                #self.known_params.append(p for p in module.parameters())
 
-    def _update_a_inv(self, m, damping, ranks):
-        self.m_aa_inv[m] = self._approx_inverse_block(
-                               self.m_aa[m], ranks, damping)
+    def _update_a_inv(self, m, ranks, damping):
+        self.m_aa_inv[m] = try_contiguous(torch.zeros_like(self.m_aa[m]))
+        if hvd.rank() not in ranks:
+            return
+        a = self.m_aa[m].clone()
+        diag_a = torch.diag(a.new(a.shape[0]).fill_(damping))
+        a.add_(diag_a)
+        self.m_aa_inv[m].add_(torch.inverse(a))
 
-    def _update_g_inv(self, m, damping, ranks):
-        self.m_gg_inv[m] = self._approx_inverse_block(
-                               self.m_gg[m], ranks, damping)
+        #self.m_aa_inv[m] = self._approx_inverse_block(
+        #                       self.m_aa[m], ranks, damping)
+
+    def _update_g_inv(self, m, ranks, damping):
+        self.m_gg_inv[m] = try_contiguous(torch.zeros_like(self.m_gg[m]))
+        if hvd.rank() not in ranks:
+            return
+        g = self.m_gg[m].clone()
+        diag_g = torch.diag(g.new(g.shape[0]).fill_(damping))
+        g.add_(torch.diag(diag_g))
+        g.add_(diag_g)
+        self.m_gg_inv[m].add_(torch.inverse(g))
+        
+        #self.m_gg_inv[m] = self._approx_inverse_block(
+        #                       self.m_gg[m], ranks, damping)
 
     def _approx_inverse_block(self, a, ranks, damping):
-
         i = ranks.index(hvd.rank())
         n = len(ranks)
         x_len, y_len = a.shape[0] // n, a.shape[1] // n
-        #if n >= min(x_len, y_len):
-        #    n = min(x_len, y_len)
+        if n >= min(x_len, y_len):
+            n = min(x_len, y_len)
         xs, ys = i*x_len, i*y_len
         xe = (i+1)*x_len if i + 1 < n else a.shape[0]
         ye = (i+1)*y_len if i + 1 < n else a.shape[1]
 
         inverse = torch.zeros_like(a)
 
-        #if i < n:
-        #diag_block = a[xs:xe, ys:ye]
-        #diag_damping = diag_block.new(diag_block.shape[0]).fill_(damping)
-        diag_damping = a.new(a.shape[0]).fill_(damping)
-        #diag_block += torch.diag(diag_damping)
-        #inverse[xs:xe, ys:ye].copy_(diag_block.inverse())
-        inverse = (a + torch.diag(diag_damping)).inverse()
-        #print("ranks={}, rank={}, i={}, xs={}, xe={}, inv_shape={}, block_shape={}".format(
-        #      ranks, hvd.rank(), i, xs, xe, inverse.shape, diag_block.shape))
+        if i < n:
+            diag_block = a[xs:xe, ys:ye]
+            diag_damping = diag_block.new(diag_block.shape[0]).fill_(damping)
+            diag_block += torch.diag(diag_damping)
+             inverse[xs:xe, ys:ye].copy_(diag_block.inverse())
 
         return try_contiguous(inverse)
 
@@ -173,19 +184,13 @@ class KFAC(optim.Optimizer):
         self.sync_handles()
 
         if self.steps % self.TInv == 0:
-            for m in self.modules:
+            for i, m in enumerate(self.modules):
                 a_ranks = self.rank_iter.next(self.inv_block_count)
                 g_ranks = self.rank_iter.next(self.inv_block_count)
-                if hvd.rank() in a_ranks:
-                    self._update_a_inv(m, damping, a_ranks)
-                else:
-                    self.m_aa_inv[m] = torch.zeros_like(self.m_aa[m])
 
-                if hvd.rank() in g_ranks:
-                    self._update_g_inv(m, damping, g_ranks)
-                else:
-                    self.m_gg_inv[m] = torch.zeros_like(self.m_gg[m])
-               
+                self._update_a_inv(m, a_ranks, damping)
+                self._update_g_inv(m, g_ranks, damping)
+                
                 if self.hvd_size > 1:
                     handles.append(hvd.allreduce_async_(self.m_aa_inv[m], op=hvd.Sum))
                     handles.append(hvd.allreduce_async_(self.m_gg_inv[m], op=hvd.Sum))
