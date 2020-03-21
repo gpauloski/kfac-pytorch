@@ -19,7 +19,8 @@ class KFAC(optim.Optimizer):
                  kl_clip=0.001,
                  TCov=10,
                  TInv=100,
-                 batch_averaged=True):
+                 batch_averaged=True,
+                 inv_block_count=1):
         
         defaults = dict(lr=lr, damping=damping)
         super(KFAC, self).__init__(model.parameters(), defaults)
@@ -46,7 +47,7 @@ class KFAC(optim.Optimizer):
         self.kl_clip = kl_clip
         self.TCov = TCov
         self.TInv = TInv
-        self.inv_block_count = 1
+        self.inv_block_count = inv_block_count
 
         self.acc_stats = True
         self.hvd_size = hvd.size()
@@ -79,33 +80,37 @@ class KFAC(optim.Optimizer):
                 #self.known_params.append(p for p in module.parameters())
 
     def _update_a_inv(self, m, damping, ranks):
-        a = self.m_aa[m]
-        diag_a = a.new(a.shape[0]).fill_(damping)
-        a = a + torch.diag(diag_a)
-        self.m_aa_inv[m] = try_contiguous(self._inverse_approx(a, ranks, damping))
+        self.m_aa_inv[m] = self._approx_inverse_block(
+                               self.m_aa[m], ranks, damping)
 
     def _update_g_inv(self, m, damping, ranks):
-        g = self.m_gg[m]
-        diag_g = g.new(g.shape[0]).fill_(damping)
-        g = g + torch.diag(diag_g)
-        self.m_gg_inv[m] = try_contiguous(self._approx_inverse(g, ranks, damping))
+        self.m_gg_inv[m] = self._approx_inverse_block(
+                               self.m_gg[m], ranks, damping)
 
-    def _approx_inverse(self, a, ranks):
-        inverse = torch.zeros_like(a)
+    def _approx_inverse_block(self, a, ranks, damping):
 
         i = ranks.index(hvd.rank())
         n = len(ranks)
-        x_len, y_len = inverse.shape[0] // n, inverse.shape[1] // n
-        x_start, y_start = i*x_len, i*y_len
-        x_end = (i+1)*x_len if i + 1 < n else x_end
-        y_end = (i+1)*y_len if i + 1 < n else y_end
+        x_len, y_len = a.shape[0] // n, a.shape[1] // n
+        #if n >= min(x_len, y_len):
+        #    n = min(x_len, y_len)
+        xs, ys = i*x_len, i*y_len
+        xe = (i+1)*x_len if i + 1 < n else a.shape[0]
+        ye = (i+1)*y_len if i + 1 < n else a.shape[1]
 
-        diag_block = a[x_start:x_end, y_start:y_end]
-        diag_damping = diag_block.net(diag_block.shape[0]).fill_(damping)
-        diag_block += diag_damping
-        inverse[x_start:x_end, y_start:y_end] = diag_block.inverse()
+        inverse = torch.zeros_like(a)
 
-        return inverse
+        #if i < n:
+        #diag_block = a[xs:xe, ys:ye]
+        #diag_damping = diag_block.new(diag_block.shape[0]).fill_(damping)
+        diag_damping = a.new(a.shape[0]).fill_(damping)
+        #diag_block += torch.diag(diag_damping)
+        #inverse[xs:xe, ys:ye].copy_(diag_block.inverse())
+        inverse = (a + torch.diag(diag_damping)).inverse()
+        #print("ranks={}, rank={}, i={}, xs={}, xe={}, inv_shape={}, block_shape={}".format(
+        #      ranks, hvd.rank(), i, xs, xe, inverse.shape, diag_block.shape))
+
+        return try_contiguous(inverse)
 
     @staticmethod
     def _get_matrix_form_grad(m, classname):
