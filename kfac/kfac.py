@@ -82,27 +82,13 @@ class KFAC(optim.Optimizer):
         self.m_aa_inv[m] = try_contiguous(torch.zeros_like(self.m_aa[m]))
         if hvd.rank() not in ranks:
             return
-        #a = self.m_aa[m].clone()
-        #diag_a = torch.diag(a.new(a.shape[0]).fill_(damping))
-        #a.add_(diag_a)
-        ##u = torch.cholesky(a)
-        #inv = torch.cholesky_inverse(u)
-        #self.m_aa_inv[m].add_(inv)
-
         self.m_aa_inv[m].add_(
                 self._approx_inverse_block(self.m_aa[m], ranks, damping))
 
     def _update_g_inv(self, m, ranks, damping):
         self.m_gg_inv[m] = try_contiguous(torch.zeros_like(self.m_gg[m]))
         if hvd.rank() not in ranks:
-            return
-        #g = self.m_gg[m]
-        #diag_g = torch.diag(g.new(g.shape[0]).fill_(damping))
-        #g.add_(torch.diag(diag_g))
-        #g.add_(diag_g)
-        ##self.m_gg_inv[m].add_(torch.inverse(g))
-        #self.m_gg_inv[m].add_(torch.ones_like(g))
-        
+            return 
         self.m_gg_inv[m] += self._approx_inverse_block(self.m_gg[m], ranks, damping)
 
     def _approx_inverse_block(self, a, ranks, damping):
@@ -187,7 +173,7 @@ class KFAC(optim.Optimizer):
         self.sync_handles()
 
         if self.steps % self.TInv == 0:
-            for i, m in enumerate(self.modules):
+            for m in self.modules:
                 a_ranks = self.rank_iter.next(self.inv_block_count)
                 g_ranks = self.rank_iter.next(self.inv_block_count)
 
