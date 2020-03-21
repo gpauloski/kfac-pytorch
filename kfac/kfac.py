@@ -82,26 +82,28 @@ class KFAC(optim.Optimizer):
         self.m_aa_inv[m] = try_contiguous(torch.zeros_like(self.m_aa[m]))
         if hvd.rank() not in ranks:
             return
-        a = self.m_aa[m].clone()
-        diag_a = torch.diag(a.new(a.shape[0]).fill_(damping))
-        a.add_(diag_a)
-        self.m_aa_inv[m].add_(torch.inverse(a))
+        #a = self.m_aa[m].clone()
+        #diag_a = torch.diag(a.new(a.shape[0]).fill_(damping))
+        #a.add_(diag_a)
+        ##u = torch.cholesky(a)
+        #inv = torch.cholesky_inverse(u)
+        #self.m_aa_inv[m].add_(inv)
 
-        #self.m_aa_inv[m] = self._approx_inverse_block(
-        #                       self.m_aa[m], ranks, damping)
+        self.m_aa_inv[m].add_(
+                self._approx_inverse_block(self.m_aa[m], ranks, damping))
 
     def _update_g_inv(self, m, ranks, damping):
         self.m_gg_inv[m] = try_contiguous(torch.zeros_like(self.m_gg[m]))
         if hvd.rank() not in ranks:
             return
-        g = self.m_gg[m].clone()
-        diag_g = torch.diag(g.new(g.shape[0]).fill_(damping))
-        g.add_(torch.diag(diag_g))
-        g.add_(diag_g)
-        self.m_gg_inv[m].add_(torch.inverse(g))
+        #g = self.m_gg[m]
+        #diag_g = torch.diag(g.new(g.shape[0]).fill_(damping))
+        #g.add_(torch.diag(diag_g))
+        #g.add_(diag_g)
+        ##self.m_gg_inv[m].add_(torch.inverse(g))
+        #self.m_gg_inv[m].add_(torch.ones_like(g))
         
-        #self.m_gg_inv[m] = self._approx_inverse_block(
-        #                       self.m_gg[m], ranks, damping)
+        self.m_gg_inv[m] += self._approx_inverse_block(self.m_gg[m], ranks, damping)
 
     def _approx_inverse_block(self, a, ranks, damping):
         i = ranks.index(hvd.rank())
@@ -116,12 +118,13 @@ class KFAC(optim.Optimizer):
         inverse = torch.zeros_like(a)
 
         if i < n:
-            diag_block = a[xs:xe, ys:ye]
+            diag_block = a[xs:xe, ys:ye].clone()
             diag_damping = diag_block.new(diag_block.shape[0]).fill_(damping)
             diag_block += torch.diag(diag_damping)
-             inverse[xs:xe, ys:ye].copy_(diag_block.inverse())
+            u = torch.cholesky(diag_block)
+            inverse[xs:xe, ys:ye] += torch.cholesky_inverse(u)
 
-        return try_contiguous(inverse)
+        return inverse
 
     @staticmethod
     def _get_matrix_form_grad(m, classname):
