@@ -100,13 +100,15 @@ class KFAC(optim.Optimizer):
         xs, ys = i*x_len, i*y_len
         xe = (i+1)*x_len if i + 1 < n else a.shape[0]
         ye = (i+1)*y_len if i + 1 < n else a.shape[1]
-
+        
         inverse = torch.zeros_like(a)
 
         if i < n:
             diag_block = a[xs:xe, ys:ye].clone()
             diag_damping = diag_block.new(diag_block.shape[0]).fill_(damping)
             diag_block += torch.diag(diag_damping)
+            # Use cholesky inverse because torch.inverse() was segfaulting
+            # on longhorn
             u = torch.cholesky(diag_block)
             inverse[xs:xe, ys:ye] += torch.cholesky_inverse(u)
 
@@ -163,26 +165,27 @@ class KFAC(optim.Optimizer):
                 m.bias.grad.data.copy_(v[1])
                 m.bias.grad.data.mul_(nu)
 
-    def step(self, closure=None):
-        # FIXME(CW): temporal fix for compatibility with Official LR scheduler.
+    def kfac_step(self):
         group = self.param_groups[0]
         lr = group['lr']
         damping = group['damping']
         updates = {}
         handles = []
-        self.sync_handles()
 
-        if self.steps % self.TInv == 0:
-            for m in self.modules:
-                a_ranks = self.rank_iter.next(self.inv_block_count)
-                g_ranks = self.rank_iter.next(self.inv_block_count)
+        if self.hvd_size > 1:
+            self.sync_handles()
 
-                self._update_a_inv(m, a_ranks, damping)
-                self._update_g_inv(m, g_ranks, damping)
+        # Compute and gather inverses across workers
+        for m in self.modules:
+            a_ranks = self.rank_iter.next(self.inv_block_count)
+            g_ranks = self.rank_iter.next(self.inv_block_count)
+
+            self._update_a_inv(m, a_ranks, damping)
+            self._update_g_inv(m, g_ranks, damping)
                 
-                if self.hvd_size > 1:
-                    handles.append(hvd.allreduce_async_(self.m_aa_inv[m], op=hvd.Sum))
-                    handles.append(hvd.allreduce_async_(self.m_gg_inv[m], op=hvd.Sum))
+            if self.hvd_size > 1:
+                handles.append(hvd.allreduce_async_(self.m_aa_inv[m], op=hvd.Sum))
+                handles.append(hvd.allreduce_async_(self.m_gg_inv[m], op=hvd.Sum))
 
         for handle in handles:
             hvd.synchronize(handle)
@@ -194,8 +197,13 @@ class KFAC(optim.Optimizer):
             updates[m] = v
 
         self._kl_clip_and_update_grad(updates, lr)
-        self.allreduce_grads()
 
+    def step(self, closure=None):
+        if self.steps % self.TInv == 0:
+            self.kfac_step()
+
+        if self.hvd_size > 1:
+            self.allreduce_grads()
         self.steps += 1
 
     def allreduce_grads(self):
@@ -218,30 +226,15 @@ class KFAC(optim.Optimizer):
             hvd.synchronize(handle)
 
     def sync_handles(self):
-        if self.hvd_size <= 1:
-            return
-
-        input_hdls, output_hdls, grad_hdls = [], [], []
+        handles = []
 
         for m in self.modules:
-            input_hdls.append(hvd.allreduce_async_(self.m_aa[m].data, op=hvd.Average))
-            output_hdls.append(hvd.allreduce_async_(self.m_gg[m].data, op=hvd.Average))
+            handles.append(hvd.allreduce_async_(self.m_aa[m].data, op=hvd.Average))
+            handles.append(hvd.allreduce_async_(self.m_gg[m].data, op=hvd.Average))
             if m.weight.grad is not None:
-                grad_hdls.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
+                handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
                 if m.bias is not None:
-                    grad_hdls.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
+                    handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
 
-        for handle in input_hdls:
+        for handle in handles:
             hvd.synchronize(handle)
-        for handle in output_hdls:
-            hvd.synchronize(handle)
-        for handle in grad_hdls:
-            hvd.synchronize(handle)
-
-    def get_zeros_like(self, m):
-        if m.bias is not None:
-            v = [torch.zeros_like(m.weight.grad),
-                 torch.zeros_like(m.bias.grad)]
-        else:
-            v = [torch.zeros_like(m.weight.grad)]
-        return v

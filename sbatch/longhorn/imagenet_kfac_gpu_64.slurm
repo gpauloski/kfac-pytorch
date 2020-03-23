@@ -32,6 +32,9 @@ mpiexec -hostfile /tmp/hostfile -N 4 \
      --kfac-update-freq 10 \
      --epochs 55 \
      --lr-decay 25 40 45 50 \
-     --damping 0.001 
+     --damping 0.001 \
+     --stat-decay 0.999 \
+     --inv-block-count 2 \
+     --single-threaded 
 
 # -----------------------------------------------------------------------------
