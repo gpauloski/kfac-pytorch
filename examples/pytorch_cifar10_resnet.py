@@ -93,9 +93,9 @@ os.makedirs(args.log_dir, exist_ok=True)
 log_writer = SummaryWriter(args.log_dir) if verbose else None
 
 # Horovod: limit # of CPU threads to be used per worker.
-torch.set_num_threads(1)
+torch.set_num_threads(4)
 
-kwargs = {'num_workers': 0, 'pin_memory': True} if args.cuda else {}
+kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
 transform_train = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
