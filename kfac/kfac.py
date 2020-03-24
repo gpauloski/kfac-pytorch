@@ -50,8 +50,7 @@ class KFAC(optim.Optimizer):
         self.inv_block_count = inv_block_count
 
         self.acc_stats = True
-        self.hvd_size = hvd.size()
-        self.rank_iter = cycle(list(range(self.hvd_size)))
+        self.rank_iter = cycle(list(range(hvd.size())))
 
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.TCov == 0:
@@ -172,23 +171,24 @@ class KFAC(optim.Optimizer):
         updates = {}
         handles = []
 
-        if self.hvd_size > 1:
+        if hvd.size() > 1 and self.steps % self.TCov == 0:
             self.sync_handles()
 
         # Compute and gather inverses across workers
-        for m in self.modules:
-            a_ranks = self.rank_iter.next(self.inv_block_count)
-            g_ranks = self.rank_iter.next(self.inv_block_count)
+        if self.steps % self.TInv == 0:
+            for m in self.modules:
+                a_ranks = self.rank_iter.next(self.inv_block_count)
+                g_ranks = self.rank_iter.next(self.inv_block_count)
 
-            self._update_a_inv(m, a_ranks, damping)
-            self._update_g_inv(m, g_ranks, damping)
+                self._update_a_inv(m, a_ranks, damping)
+                self._update_g_inv(m, g_ranks, damping)
                 
-            if self.hvd_size > 1:
-                handles.append(hvd.allreduce_async_(self.m_aa_inv[m], op=hvd.Sum))
-                handles.append(hvd.allreduce_async_(self.m_gg_inv[m], op=hvd.Sum))
+                if hvd.size() > 1:
+                    handles.append(hvd.allreduce_async_(self.m_aa_inv[m], op=hvd.Sum))
+                    handles.append(hvd.allreduce_async_(self.m_gg_inv[m], op=hvd.Sum))
 
-        for handle in handles:
-            hvd.synchronize(handle)
+            for handle in handles:
+                hvd.synchronize(handle)
 
         for m in self.modules:
             classname = m.__class__.__name__
@@ -199,22 +199,12 @@ class KFAC(optim.Optimizer):
         self._kl_clip_and_update_grad(updates, lr)
 
     def step(self, closure=None):
-        if self.steps % self.TInv == 0:
-            self.kfac_step()
-
-        if self.hvd_size > 1:
+        if hvd.size() > 1:
             self.allreduce_grads()
+        self.kfac_step()
         self.steps += 1
 
     def allreduce_grads(self):
-        """
-        All-reduce gradients off layers that are not supported by KFAC, i.e.
-        supported layers will already be all-reduced so we need to handle the
-        other layers (like batchnorm).
-
-        TODO(gpauloski): skip supported layers here 
-                         (i.e. dont allgather conv2d again)
-        """
         handles = []
         for group in self.param_groups:
             for p in group['params']:
@@ -231,10 +221,10 @@ class KFAC(optim.Optimizer):
         for m in self.modules:
             handles.append(hvd.allreduce_async_(self.m_aa[m].data, op=hvd.Average))
             handles.append(hvd.allreduce_async_(self.m_gg[m].data, op=hvd.Average))
-            if m.weight.grad is not None:
-                handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
-                if m.bias is not None:
-                    handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
+            #if m.weight.grad is not None:
+            #    handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
+            #    if m.bias is not None:
+            #        handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
 
         for handle in handles:
             hvd.synchronize(handle)
