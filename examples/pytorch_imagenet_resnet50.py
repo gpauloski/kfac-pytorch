@@ -54,16 +54,22 @@ parser.add_argument('--momentum', type=float, default=0.9,
                     help='SGD momentum')
 parser.add_argument('--wd', type=float, default=0.00005,
                     help='weight decay')
+parser.add_argument('--label-smoothing', type=float, default=0.1,
+                    help='label smoothing (default 0.1)')
 
 # KFAC Parameters
 parser.add_argument('--kfac-update-freq', type=int, default=10,
                     help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
+parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
+                    help='iters between kfac cov ops (default: 1)')
 parser.add_argument('--stat-decay', type=float, default=0.95,
                     help='Alpha value for covariance accumulation (default: 0.95)')
-parser.add_argument('--damping', type=float, default=0.003,
-                    help='KFAC damping factor (defaultL 0.003)')
+parser.add_argument('--damping', type=float, default=0.002,
+                    help='KFAC damping factor (default 0.003)')
 parser.add_argument('--kl-clip', type=float, default=0.001,
                     help='KL clip (default: 0.001)')
+parser.add_argument('--inv-block-count', type=int, default=1,
+                    help='Number of blocks to approx inv with (default: 1)')
 
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
@@ -119,7 +125,7 @@ except ImportError:
 
 # Horovod: limit # of CPU threads to be used per worker.
 if args.single_threaded:
-    torch.set_num_threads(1)
+    torch.set_num_threads(4)
     kwargs = {'num_workers': 0, 'pin_memory': True} if args.cuda else {}
 else:
     torch.set_num_threads(4)
@@ -170,9 +176,11 @@ optimizer = optim.SGD(model.parameters(), lr=args.base_lr,
                       momentum=args.momentum, weight_decay=args.wd)
 
 if use_kfac:
-    preconditioner = kfac.KFAC(model, lr=args.base_lr, 
-                               stat_decay=args.stat_decay, damping=args.damping, 
-                               kl_clip=args.kl_clip, TCov=1, TInv=args.kfac_update_freq)
+    preconditioner = kfac.KFAC(model, lr=args.base_lr, stat_decay=args.stat_decay,
+                               damping=args.damping, kl_clip=args.kl_clip,
+                               TCov=args.kfac_cov_update_freq,
+                               TInv=args.kfac_update_freq,
+                               inv_block_count=args.inv_block_count)
 else:
     # KFAC guarentees grads are equal across ranks before opt.step() is called
     # so if we do not use kfac we need to wrap the optimizer with horovod
@@ -199,6 +207,8 @@ lr_scheduler = [LambdaLR(optimizer, lrs)]
 if use_kfac:
     lr_scheduler.append(LambdaLR(preconditioner, lrs))
 
+loss_func = LabelSmoothLoss(args.label_smoothing)
+
 def train(epoch):
     model.train()
     train_sampler.set_epoch(epoch)
@@ -214,7 +224,7 @@ def train(epoch):
             optimizer.zero_grad()
             output = model(data)
 
-            loss = F.cross_entropy(output, target)
+            loss = loss_func(output, target)
             train_loss.update(loss)
             train_accuracy.update(accuracy(output, target))
             loss.backward()
@@ -251,7 +261,7 @@ def validate(epoch):
                 if args.cuda:
                     data, target = data.cuda(), target.cuda()
                 output = model(data)
-                val_loss.update(F.cross_entropy(output, target))
+                val_loss.update(loss_func(output, target))
                 val_accuracy.update(accuracy(output, target))
 
                 t.update(1)
