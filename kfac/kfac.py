@@ -21,7 +21,10 @@ class KFAC(optim.Optimizer):
                  TInv=100,
                  batch_averaged=True,
                  inv_block_count=1):
-        
+       
+        if inv_block_count > 1:
+            raise ValueError("Inv block count > 1 not implemented yet")
+ 
         defaults = dict(lr=lr, damping=damping)
         super(KFAC, self).__init__(model.parameters(), defaults)
         self.CovAHandler = ComputeCovA()
@@ -40,8 +43,8 @@ class KFAC(optim.Optimizer):
         self.steps = 0
 
         self.m_aa, self.m_gg = {}, {}
-        self.m_aa_inv, self.m_gg_inv = {}, {}
-
+        self.Q_a, self.Q_g = {}, {}
+        self.d_a, self.d_g = {}, {}
 
         self.stat_decay = stat_decay
         self.kl_clip = kl_clip
@@ -77,41 +80,16 @@ class KFAC(optim.Optimizer):
                 module.register_forward_pre_hook(self._save_input)
                 module.register_backward_hook(self._save_grad_output)
 
-    def _update_a_inv(self, m, ranks, damping):
-        self.m_aa_inv[m] = try_contiguous(torch.zeros_like(self.m_aa[m]))
-        if hvd.rank() not in ranks:
-            return
-        self.m_aa_inv[m].add_(
-                self._approx_inverse_block(self.m_aa[m], ranks, damping))
+    def _update_inv(self, m):
+        eps = 1e-10  # for numerical stability
 
-    def _update_g_inv(self, m, ranks, damping):
-        self.m_gg_inv[m] = try_contiguous(torch.zeros_like(self.m_gg[m]))
-        if hvd.rank() not in ranks:
-            return 
-        self.m_gg_inv[m] += self._approx_inverse_block(self.m_gg[m], ranks, damping)
+        self.d_a[m], self.Q_a[m] = torch.symeig(
+            self.m_aa[m], eigenvectors=True)
+        self.d_g[m], self.Q_g[m] = torch.symeig(
+            self.m_gg[m], eigenvectors=True)
 
-    def _approx_inverse_block(self, a, ranks, damping):
-        i = ranks.index(hvd.rank())
-        n = len(ranks)
-        x_len, y_len = a.shape[0] // n, a.shape[1] // n
-        if n >= min(x_len, y_len):
-            n = min(x_len, y_len)
-        xs, ys = i*x_len, i*y_len
-        xe = (i+1)*x_len if i + 1 < n else a.shape[0]
-        ye = (i+1)*y_len if i + 1 < n else a.shape[1]
-        
-        inverse = torch.zeros_like(a)
-
-        if i < n:
-            diag_block = a[xs:xe, ys:ye].clone()
-            diag_damping = diag_block.new(diag_block.shape[0]).fill_(damping)
-            diag_block += torch.diag(diag_damping)
-            # Use cholesky inverse because torch.inverse() was segfaulting
-            # on longhorn
-            u = torch.cholesky(diag_block)
-            inverse[xs:xe, ys:ye] += torch.cholesky_inverse(u)
-
-        return inverse
+        self.d_g[m].mul_((self.d_g[m] > eps).float())
+        self.d_a[m].mul_((self.d_a[m] > eps).float())
 
     @staticmethod
     def _get_matrix_form_grad(m, classname):
@@ -121,20 +99,23 @@ class KFAC(optim.Optimizer):
         :return: a matrix form of the gradient. it should be a [output_dim, input_dim] matrix.
         """
         if classname == 'Conv2d':
-            p_grad_mat = m.weight.grad.data.view(m.weight.grad.data.size(0), -1)  # n_filters * (in_c * kw * kh)
+            # n_filters * (in_c * kw * kh)
+            p_grad_mat = m.weight.grad.data.view(m.weight.grad.data.size(0), -1)  
         else:
             p_grad_mat = m.weight.grad.data
         if m.bias is not None:
             p_grad_mat = torch.cat([p_grad_mat, m.bias.grad.data.view(-1, 1)], 1)
         return p_grad_mat
 
-    def _get_natural_grad(self, m, p_grad_mat):
+    def _get_natural_grad(self, m, p_grad_mat, damping):
         """
         :param m:  the layer
         :param p_grad_mat: the gradients in matrix form
         :return: a list of gradients w.r.t to the parameters in `m`
         """
-        v = self.m_gg_inv[m] @ p_grad_mat @ self.m_aa_inv[m]
+        v1 = self.Q_g[m].t() @ p_grad_mat @ self.Q_a[m]
+        v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + damping)
+        v = self.Q_g[m] @ v2 @ self.Q_a[m].t()
 
         if m.bias is not None:
             # we always put gradient w.r.t weight in [0]
@@ -164,44 +145,43 @@ class KFAC(optim.Optimizer):
                 m.bias.grad.data.copy_(v[1])
                 m.bias.grad.data.mul_(nu)
 
-    def kfac_step(self):
+    def step(self, closure=None):
         group = self.param_groups[0]
         lr = group['lr']
         damping = group['damping']
         updates = {}
         handles = []
 
-        if hvd.size() > 1 and self.steps % self.TCov == 0:
+        if hvd.size() > 1:
+            self.allreduce_grads()
+
+        if self.steps % self.TCov == 0 and hvd.size() > 1:
             self.sync_handles()
 
-        # Compute and gather inverses across workers
-        if self.steps % self.TInv == 0:
-            for m in self.modules:
-                a_ranks = self.rank_iter.next(self.inv_block_count)
-                g_ranks = self.rank_iter.next(self.inv_block_count)
+        for i, m in enumerate(self.modules):
+            #rank = self.rank_iter.next(1)
+            #if hvd.rank() in rank:
+            if i % hvd.size() == hvd.rank():
+                classname = m.__class__.__name__
+                if self.steps % self.TInv == 0:
+                    self._update_inv(m)
+                p_grad_mat = self._get_matrix_form_grad(m, classname)
+                v = self._get_natural_grad(m, p_grad_mat, damping)
+                v = [try_contiguous(x) for x in v]
+            else:
+                v = self.get_zeros_like(m)
 
-                self._update_a_inv(m, a_ranks, damping)
-                self._update_g_inv(m, g_ranks, damping)
-                
-                if hvd.size() > 1:
-                    handles.append(hvd.allreduce_async_(self.m_aa_inv[m], op=hvd.Sum))
-                    handles.append(hvd.allreduce_async_(self.m_gg_inv[m], op=hvd.Sum))
-
-            for handle in handles:
-                hvd.synchronize(handle)
-
-        for m in self.modules:
-            classname = m.__class__.__name__
-            p_grad_mat = self._get_matrix_form_grad(m, classname)
-            v = self._get_natural_grad(m, p_grad_mat)
             updates[m] = v
+
+            if hvd.size() > 1:
+                for x in updates[m]:
+                    handles.append(hvd.allreduce_async_(x, op=hvd.Sum))
+    
+        for handle in handles:
+            hvd.synchronize(handle)
 
         self._kl_clip_and_update_grad(updates, lr)
 
-    def step(self, closure=None):
-        if hvd.size() > 1:
-            self.allreduce_grads()
-        self.kfac_step()
         self.steps += 1
 
     def allreduce_grads(self):
@@ -221,10 +201,18 @@ class KFAC(optim.Optimizer):
         for m in self.modules:
             handles.append(hvd.allreduce_async_(self.m_aa[m].data, op=hvd.Average))
             handles.append(hvd.allreduce_async_(self.m_gg[m].data, op=hvd.Average))
-            #if m.weight.grad is not None:
-            #    handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
-            #    if m.bias is not None:
-            #        handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
+            if m.weight.grad is not None:
+                handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
+                if m.bias is not None:
+                    handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
 
         for handle in handles:
             hvd.synchronize(handle)
+
+    def get_zeros_like(self, m):
+        if m.bias is not None:
+            v = [torch.zeros_like(m.weight.grad),
+                 torch.zeros_like(m.bias.grad)]
+        else:
+            v = [torch.zeros_like(m.weight.grad)]
+        return v
