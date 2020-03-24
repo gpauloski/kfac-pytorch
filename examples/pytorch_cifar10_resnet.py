@@ -36,8 +36,8 @@ parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
                     help='number of warmup epochs (default: 5)')
 
 # Optimizer Parameters
-parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
-                    help='learning rate (default: 0.1)')
+parser.add_argument('--base-lr', type=float, default=0.1, metavar='LR',
+                    help='base learning rate (default: 0.1)')
 parser.add_argument('--lr-decay', nargs='+', type=int, default=[100, 150],
                     help='epoch intervals to decay lr')
 parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
@@ -144,14 +144,14 @@ if verbose:
     summary(model, (3, 32, 32))
 
 criterion = nn.CrossEntropyLoss()
-args.lr = args.lr * hvd.size()
+args.base_lr = args.base_lr * hvd.size()
 use_kfac = True if args.kfac_update_freq > 0 else False
 
-optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
+optimizer = optim.SGD(model.parameters(), lr=args.base_lr, momentum=args.momentum,
                       weight_decay=args.weight_decay)
 
 if use_kfac:
-    preconditioner = kfac.KFAC(model, lr=args.lr, stat_decay=args.stat_decay, 
+    preconditioner = kfac.KFAC(model, lr=args.base_lr, stat_decay=args.stat_decay, 
                                damping=args.damping, kl_clip=args.kl_clip, 
                                TCov=args.kfac_cov_update_freq, 
                                TInv=args.kfac_update_freq,
@@ -179,6 +179,9 @@ def train(epoch):
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
     
+    for scheduler in lr_scheduler:
+        scheduler.step()
+
     with tqdm(total=len(train_loader), 
               desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
               disable=not verbose) as t:
@@ -204,9 +207,6 @@ def train(epoch):
     if log_writer:
         log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
-
-    for scheduler in lr_scheduler:
-        scheduler.step()
 
 def test(epoch):
     model.eval()
