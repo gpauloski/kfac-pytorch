@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import itertools
 
 def try_contiguous(x):
     if not x.is_contiguous():
@@ -9,6 +9,29 @@ def try_contiguous(x):
 
     return x
 
+class cycle:
+    def __init__(self, iterable):
+        """Iterator that produces tuples indefinitely.
+
+        Example:
+          iterator = tuple_cycle([1,2,3], 2)
+          assert iterator.next(2) == (1, 2)
+          assert iterator.next(1) == (3,)
+          assert iterator.next(4) == (1, 2, 3, 1)
+
+        Args:
+          iterable: Any iterable to iterate over indefinitely
+        """
+        self.iterator = itertools.cycle(iterable)
+
+    def next(self, size):
+        """Get next tuple of size in rotation.
+
+        Returns:
+          iterator that returns a tuple of size each time next
+          is called.
+        """
+        return tuple([next(self.iterator) for x in range(size)])
 
 def _extract_patches(x, kernel_size, stride, padding):
     """
