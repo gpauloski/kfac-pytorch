@@ -57,22 +57,16 @@ class KFAC(optim.Optimizer):
 
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.TCov == 0:
-            #aa = self.CovAHandler(input[0].data, module)
-            # Initialize buffers
-            #if self.steps == 0:
-            #    self.m_aa[module] = torch.diag(aa.new(aa.size(0)).fill_(1))
-            #update_running_stat(aa, self.m_aa[module], self.stat_decay)
             self.m_a[module] = input[0].data
+            # Initialize buffer on every worker at start of training
+            #if self.steps == 0:
+            #    self._update_cov_a(module)
 
     def _save_grad_output(self, module, grad_input, grad_output):
-        # Accumulate statistics for Fisher matrices
         if self.steps % self.TCov == 0:
-            #gg = self.CovGHandler(grad_output[0].data, module, self.batch_averaged)
-            # Initialize buffers
-            #if self.steps == 0:
-            #    self.m_gg[module] = torch.diag(gg.new(gg.size(0)).fill_(1))
-            #update_running_stat(gg, self.m_gg[module], self.stat_decay)
             self.m_g[module] = grad_output[0].data
+            #if self.steps == 0:
+            #    self._update_cov_g(module)
 
     def _update_cov_a(self, module): 
         aa = self.CovAHandler(self.m_a[module], module)
@@ -83,7 +77,6 @@ class KFAC(optim.Optimizer):
 
     def _update_cov_g(self, module):
         gg = self.CovGHandler(self.m_g[module], module, self.batch_averaged)
-        # Initialize buffers
         if self.steps == 0:
             self.m_gg[module] = torch.diag(gg.new(gg.size(0)).fill_(1))
         update_running_stat(gg, self.m_gg[module], self.stat_decay)
@@ -106,6 +99,22 @@ class KFAC(optim.Optimizer):
 
         self.d_g[m].mul_((self.d_g[m] > eps).float())
         self.d_a[m].mul_((self.d_a[m] > eps).float())
+
+    def _update_eigen_a(self, m):
+        eps = 1e-10  # for numerical stability
+        self.d_a[m], self.Q_a[m] = torch.symeig(
+            self.m_aa[m], eigenvectors=True)
+        self.d_a[m].mul_((self.d_a[m] > eps).float())
+        self.d_a[m] = try_contiguous(self.d_a[m])
+        self.Q_a[m] = try_contiguous(self.Q_a[m])
+
+    def _update_eigen_g(self, m):
+        eps = 1e-10  # for numerical stability
+        self.d_g[m], self.Q_g[m] = torch.symeig(
+            self.m_gg[m], eigenvectors=True)
+        self.d_g[m].mul_((self.d_g[m] > eps).float())
+        self.d_g[m] = try_contiguous(self.d_g[m])
+        self.Q_g[m] = try_contiguous(self.Q_g[m])
 
     @staticmethod
     def _get_matrix_form_grad(m, classname):
@@ -173,31 +182,39 @@ class KFAC(optim.Optimizer):
 
         if self.steps % self.TCov == 0:
             for module in self.modules:
-                self._update_cov(module)
+                self._update_cov_a(module)
+                self._update_cov_g(module)
             if hvd.size() > 1:
                 self.sync_handles()
 
-        for i, m in enumerate(self.modules):
-            #rank = self.rank_iter.next(1)
-            #if hvd.rank() in rank:
-            if i % hvd.size() == hvd.rank():
-                classname = m.__class__.__name__
-                if self.steps % self.TInv == 0:
-                    self._update_inv(m)
-                p_grad_mat = self._get_matrix_form_grad(m, classname)
-                v = self._get_natural_grad(m, p_grad_mat, damping)
-                v = [try_contiguous(x) for x in v]
-            else:
-                v = self.get_zeros_like(m)
+        if self.steps % self.TInv == 0:
+            for m in self.modules:
+                rank = self.rank_iter.next(1)
+                if hvd.rank() in rank:
+                    self._update_eigen_a(m)
+                    self._update_eigen_g(m)
+                else:
+                    aa = self.m_aa[m]
+                    gg = self.m_gg[m]
+                    self.Q_a[m] = aa.new_zeros(aa.shape)
+                    self.Q_g[m] = gg.new_zeros(gg.shape)
+                    self.d_a[m] = aa.new_zeros(aa.shape[0])
+                    self.d_g[m] = gg.new_zeros(gg.shape[0])
 
-            updates[m] = v
-
-            if hvd.size() > 1:
-                for x in updates[m]:
-                    handles.append(hvd.allreduce_async_(x, op=hvd.Sum))
+                if hvd.size() > 1:
+                    handles.append(hvd.allreduce_async_(self.Q_a[m], op=hvd.Sum))
+                    handles.append(hvd.allreduce_async_(self.Q_g[m], op=hvd.Sum))
+                    handles.append(hvd.allreduce_async_(self.d_a[m], op=hvd.Sum))
+                    handles.append(hvd.allreduce_async_(self.d_g[m], op=hvd.Sum))
     
         for handle in handles:
             hvd.synchronize(handle)
+
+        for m in self.modules:
+            classname = m.__class__.__name__
+            p_grad_mat = self._get_matrix_form_grad(m, classname)
+            v = self._get_natural_grad(m, p_grad_mat, damping)
+            updates[m] = v
 
         self._kl_clip_and_update_grad(updates, lr)
 
@@ -220,10 +237,6 @@ class KFAC(optim.Optimizer):
         for m in self.modules:
             handles.append(hvd.allreduce_async_(self.m_aa[m].data, op=hvd.Average))
             handles.append(hvd.allreduce_async_(self.m_gg[m].data, op=hvd.Average))
-            #if m.weight.grad is not None:
-            #    handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
-            #    if m.bias is not None:
-            #        handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
 
         for handle in handles:
             hvd.synchronize(handle)
