@@ -53,33 +53,31 @@ class KFAC(optim.Optimizer):
         self.TInv = TInv
         self.inv_block_count = inv_block_count
 
+        self.distribute_eigen_factors = False
         self.rank_iter = cycle(list(range(hvd.size())))
 
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.TCov == 0:
             self.m_a[module] = input[0].data
-            # Initialize buffer on every worker at start of training
-            #if self.steps == 0:
-            #    self._update_cov_a(module)
 
     def _save_grad_output(self, module, grad_input, grad_output):
         if self.steps % self.TCov == 0:
             self.m_g[module] = grad_output[0].data
-            #if self.steps == 0:
-            #    self._update_cov_g(module)
 
-    def _update_cov_a(self, module): 
-        aa = self.CovAHandler(self.m_a[module], module)
-        # Initialize buffers
-        if self.steps == 0:
-            self.m_aa[module] = torch.diag(aa.new(aa.size(0)).fill_(1))
-        update_running_stat(aa, self.m_aa[module], self.stat_decay)
+    def _update_cov_a(self):
+        for module in self.modules: 
+            aa = self.CovAHandler(self.m_a[module], module)
+            # Initialize buffers
+            if self.steps == 0:
+                self.m_aa[module] = torch.diag(aa.new(aa.size(0)).fill_(1))
+            update_running_stat(aa, self.m_aa[module], self.stat_decay)
 
-    def _update_cov_g(self, module):
-        gg = self.CovGHandler(self.m_g[module], module, self.batch_averaged)
-        if self.steps == 0:
-            self.m_gg[module] = torch.diag(gg.new(gg.size(0)).fill_(1))
-        update_running_stat(gg, self.m_gg[module], self.stat_decay)
+    def _update_cov_g(self):
+        for module in self.modules:
+            gg = self.CovGHandler(self.m_g[module], module, self.batch_averaged)
+            if self.steps == 0:
+                self.m_gg[module] = torch.diag(gg.new(gg.size(0)).fill_(1))
+            update_running_stat(gg, self.m_gg[module], self.stat_decay)
 
     def _prepare_model(self):
         for module in self.model.modules():
@@ -88,17 +86,8 @@ class KFAC(optim.Optimizer):
                 self.modules.append(module)
                 module.register_forward_pre_hook(self._save_input)
                 module.register_backward_hook(self._save_grad_output)
-
-    def _update_inv(self, m):
-        eps = 1e-10  # for numerical stability
-
-        self.d_a[m], self.Q_a[m] = torch.symeig(
-            self.m_aa[m], eigenvectors=True)
-        self.d_g[m], self.Q_g[m] = torch.symeig(
-            self.m_gg[m], eigenvectors=True)
-
-        self.d_g[m].mul_((self.d_g[m] > eps).float())
-        self.d_a[m].mul_((self.d_a[m] > eps).float())
+        if hvd.size() > len(self.modules):
+            self.distribute_eigen_factors = True
 
     def _update_eigen_a(self, m):
         eps = 1e-10  # for numerical stability
@@ -181,24 +170,31 @@ class KFAC(optim.Optimizer):
             self.allreduce_grads()
 
         if self.steps % self.TCov == 0:
-            for module in self.modules:
-                self._update_cov_a(module)
-                self._update_cov_g(module)
+            self._update_cov_a()
+            self._update_cov_g()
             if hvd.size() > 1:
                 self.sync_handles()
 
         if self.steps % self.TInv == 0:
             for m in self.modules:
-                rank = self.rank_iter.next(1)
-                if hvd.rank() in rank:
+                rank_a = self.rank_iter.next(1)
+                if self.distribute_eigen_factors:
+                    rank_g = self.rank_iter.next(1)
+                else:
+                    rank_g = rank_a
+
+                if hvd.rank() in rank_a:
                     self._update_eigen_a(m)
-                    self._update_eigen_g(m)
                 else:
                     aa = self.m_aa[m]
-                    gg = self.m_gg[m]
                     self.Q_a[m] = aa.new_zeros(aa.shape)
-                    self.Q_g[m] = gg.new_zeros(gg.shape)
                     self.d_a[m] = aa.new_zeros(aa.shape[0])
+
+                if hvd.rank() in rank_g:
+                    self._update_eigen_g(m)
+                else:
+                    gg = self.m_gg[m]
+                    self.Q_g[m] = gg.new_zeros(gg.shape)
                     self.d_g[m] = gg.new_zeros(gg.shape[0])
 
                 if hvd.size() > 1:
@@ -222,12 +218,13 @@ class KFAC(optim.Optimizer):
 
     def allreduce_grads(self):
         handles = []
+
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is None:
                     continue
-
                 handles.append(hvd.allreduce_async_(p.grad, op=hvd.Average))
+
         for handle in handles:
             hvd.synchronize(handle)
 
@@ -240,11 +237,3 @@ class KFAC(optim.Optimizer):
 
         for handle in handles:
             hvd.synchronize(handle)
-
-    def get_zeros_like(self, m):
-        if m.bias is not None:
-            v = [torch.zeros_like(m.weight.grad),
-                 torch.zeros_like(m.bias.grad)]
-        else:
-            v = [torch.zeros_like(m.weight.grad)]
-        return v
