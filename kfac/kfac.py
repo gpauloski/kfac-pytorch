@@ -57,11 +57,11 @@ class KFAC(optim.Optimizer):
 
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.TCov == 0:
-            self.m_a[module] = input[0].data
+            self.m_a[module] = input[0]
 
     def _save_grad_output(self, module, grad_input, grad_output):
         if self.steps % self.TCov == 0:
-            self.m_g[module] = grad_output[0].data
+            self.m_g[module] = grad_output[0]
 
     def _prepare_model(self):
         for module in self.model.modules():
@@ -153,7 +153,7 @@ class KFAC(optim.Optimizer):
             vg_sum += (v[0] * m.weight.grad.data * lr ** 2).sum().item()
             if m.bias is not None:
                 vg_sum += (v[1] * m.bias.grad.data * lr ** 2).sum().item()
-        nu = min(1.0, math.sqrt(self.kl_clip / vg_sum))
+        nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
         for m in self.modules:
             v = updates[m]
@@ -177,6 +177,9 @@ class KFAC(optim.Optimizer):
                 self.allreduce_covs()
 
         if self.steps % self.TInv == 0:
+            # reset rank iter so device get the same layers
+            # to compute to take advantage of caching
+            self.rank_iter.reset() 
             for m in self.modules:
                 rank_a = self.rank_iter.next(1)
                 if self.distribute_eigen_factors:
