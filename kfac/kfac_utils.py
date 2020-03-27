@@ -22,7 +22,12 @@ class cycle:
         Args:
           iterable: Any iterable to iterate over indefinitely
         """
-        self.iterator = itertools.cycle(iterable)
+        self.iterable = iterable
+        self.reset()
+
+    def reset(self):
+        """Reset iterable to start"""
+        self.iterator = itertools.cycle(self.iterable)
 
     def next(self, size):
         """Get next tuple of size in rotation.
