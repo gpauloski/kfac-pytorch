@@ -156,14 +156,14 @@ if use_kfac:
                                TCov=args.kfac_cov_update_freq, 
                                TInv=args.kfac_update_freq,
                                inv_block_count=args.inv_block_count)
-else:
-    # KFAC guarentees grads are equal across ranks before opt.step() is called
-    # so if we do not use kfac we need to wrap the optimizer with horovod
-    compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
-    optimizer = hvd.DistributedOptimizer(optimizer, 
-                                         named_parameters=model.named_parameters(),
-                                         compression=compression,
-                                         op=hvd.Average)
+
+# KFAC guarentees grads are equal across ranks before opt.step() is called
+# so if we do not use kfac we need to wrap the optimizer with horovod
+compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
+optimizer = hvd.DistributedOptimizer(optimizer, 
+                                     named_parameters=model.named_parameters(),
+                                     compression=compression,
+                                     op=hvd.Average)
 
 hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 hvd.broadcast_parameters(model.state_dict(), root_rank=0)
@@ -196,9 +196,11 @@ def train(epoch):
             train_accuracy.update(accuracy(output, target))
             loss.backward()
 
+            optimizer.synchronize()
             if use_kfac:
                 preconditioner.step()
-            optimizer.step()
+            with optimizer.skip_synchronize():
+                optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
                     train_loss.avg.item(), 100*train_accuracy.avg.item()))
