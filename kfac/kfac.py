@@ -45,10 +45,6 @@ class KFAC(optim.Optimizer):
         self.Q_a, self.Q_g = {}, {}
         self.d_a, self.d_g = {}, {}
 
-        self.m_aa_handles, self.m_gg_handles = {}, {}
-        self.Q_a_handles, self.Q_g_handles = {}, {}
-        self.d_a_handles, self.d_g_handles = {}, {}
-
         self.stat_decay = stat_decay
         self.kl_clip = kl_clip
         self.TCov = TCov
@@ -81,23 +77,11 @@ class KFAC(optim.Optimizer):
         self.m_aa[module] = torch.diag(factor.new(factor.shape[0]).fill_(1))
         self.d_a[module] = factor.new_zeros(factor.shape[0])
         self.Q_a[module] = factor.new_zeros(factor.shape)
-        self.m_aa_handles[module] = hvd.allreduce_async_(
-                self.m_aa[module], op=hvd.Average)
-        self.d_a_handles[module] = hvd.allreduce_async_(
-                self.d_a[module], op=hvd.Sum)
-        self.Q_a_handles[module] = hvd.allreduce_async_(
-                self.Q_a[module], op=hvd.Sum)
 
     def _init_g_buffers(self, factor, module):
         self.m_gg[module] = torch.diag(factor.new(factor.shape[0]).fill_(1))
         self.d_g[module] = factor.new_zeros(factor.shape[0])
         self.Q_g[module] = factor.new_zeros(factor.shape)
-        self.m_gg_handles[module] = hvd.allreduce_async_(
-                self.m_gg[module], op=hvd.Average)
-        self.d_g_handles[module] = hvd.allreduce_async_(
-                self.d_g[module], op=hvd.Sum)
-        self.Q_g_handles[module] = hvd.allreduce_async_(
-                self.Q_g[module], op=hvd.Sum)
 
     def _update_cov_a(self):
         for module in self.modules: 
@@ -212,20 +196,8 @@ class KFAC(optim.Optimizer):
                     self.Q_g[m].fill_(0)
                     self.d_g[m].fill_(0)
 
-                if hvd.size() > 1:
-                    handles.append(hvd.allreduce_async_(self.Q_a[m], op=hvd.Sum))
-                    handles.append(hvd.allreduce_async_(self.Q_g[m], op=hvd.Sum))
-                    handles.append(hvd.allreduce_async_(self.d_a[m], op=hvd.Sum))
-                    handles.append(hvd.allreduce_async_(self.d_g[m], op=hvd.Sum))
-    
-        for handle in handles: #self.d_a_handles.values():
-            hvd.synchronize(handle)
-        #for handle in self.d_g_handles.values():
-        #    hvd.synchronize(handle)
-        #for handle in self.Q_a_handles.values():
-        #    hvd.synchronize(handle)
-        #for handle in self.Q_g_handles.values():
-        #    hvd.synchronize(handle)
+            if hvd.size() > 1:
+                self.allreduce_eigens()
 
         for m in self.modules:
             classname = m.__class__.__name__
@@ -243,16 +215,18 @@ class KFAC(optim.Optimizer):
         for m in self.modules:
             handles.append(hvd.allreduce_async_(self.m_aa[m].data, op=hvd.Average))
             handles.append(hvd.allreduce_async_(self.m_gg[m].data, op=hvd.Average))
-            #if m.weight.grad is not None:
-            #    handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
-            #    if m.bias is not None:
-            #        handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
 
         for handle in handles:
             hvd.synchronize(handle)
 
-        return
-        for handle in self.m_aa_handles.values():
-            hvd.synchronize(handle)
-        for handle in self.m_gg_handles.values():
+    def allreduce_eigens(self):
+        handles = []
+
+        for m in self.modules:
+            handles.append(hvd.allreduce_async_(self.Q_a[m], op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.Q_g[m], op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.d_a[m], op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.d_g[m], op=hvd.Sum))
+    
+        for handle in handles:
             hvd.synchronize(handle)
