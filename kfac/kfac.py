@@ -57,11 +57,11 @@ class KFAC(optim.Optimizer):
 
     def _save_input(self, module, input):
         if torch.is_grad_enabled() and self.steps % self.TCov == 0:
-            self.m_a[module] = input[0]
+            self.m_a[module] = input[0].data
 
     def _save_grad_output(self, module, grad_input, grad_output):
         if self.steps % self.TCov == 0:
-            self.m_g[module] = grad_output[0]
+            self.m_g[module] = grad_output[0].data
 
     def _prepare_model(self):
         for module in self.model.modules():
@@ -226,10 +226,10 @@ class KFAC(optim.Optimizer):
         handles = []
 
         for m in self.modules:
-            handles.append(hvd.allreduce_async_(self.Q_a[m], op=hvd.Sum))
-            handles.append(hvd.allreduce_async_(self.Q_g[m], op=hvd.Sum))
-            handles.append(hvd.allreduce_async_(self.d_a[m], op=hvd.Sum))
-            handles.append(hvd.allreduce_async_(self.d_g[m], op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.Q_a[m].data, op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.Q_g[m].data, op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.d_a[m].data, op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.d_g[m].data, op=hvd.Sum))
     
         for handle in handles:
             hvd.synchronize(handle)
