@@ -188,15 +188,13 @@ def get_model(args):
                 TInv=args.kfac_update_freq,
                 inv_block_count=args.inv_block_count)
     else:
-        # KFAC guarentees grads are equal across ranks before opt.step() is 
-        # called so if we do not use kfac we need to wrap the optimizer 
-        # with horovod
-        compression = hvd.Compression.fp16 if args.fp16_allreduce \
-                                           else hvd.Compression.none
-        optimizer = hvd.DistributedOptimizer(
-                optimizer, named_parameters=model.named_parameters(),
-                compression=compression, op=hvd.Average)
         preconditioner = None
+
+    compression = hvd.Compression.fp16 if args.fp16_allreduce \
+                                       else hvd.Compression.none
+    optimizer = hvd.DistributedOptimizer(
+            optimizer, named_parameters=model.named_parameters(),
+           compression=compression, op=hvd.Average)
 
     # Restore from a previous checkpoint, if initial_epoch is specified.
     # Horovod: restore on the first worker which will broadcast weights 

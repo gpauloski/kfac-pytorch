@@ -34,8 +34,6 @@ class KFAC(optim.Optimizer):
         self.known_modules = {'Linear', 'Conv2d'}
 
         self.modules = []
-        self.known_params = []
-        self.grad_outputs = {}
 
         self.model = model
         self._prepare_model()
@@ -47,12 +45,17 @@ class KFAC(optim.Optimizer):
         self.Q_a, self.Q_g = {}, {}
         self.d_a, self.d_g = {}, {}
 
+        self.m_aa_handles, self.m_gg_handles = {}, {}
+        self.Q_a_handles, self.Q_g_handles = {}, {}
+        self.d_a_handles, self.d_g_handles = {}, {}
+
         self.stat_decay = stat_decay
         self.kl_clip = kl_clip
         self.TCov = TCov
         self.TInv = TInv
         self.inv_block_count = inv_block_count
 
+        self.eps = 1e-10  # for numerical stability
         self.distribute_eigen_factors = False
         self.rank_iter = cycle(list(range(hvd.size())))
 
@@ -64,21 +67,6 @@ class KFAC(optim.Optimizer):
         if self.steps % self.TCov == 0:
             self.m_g[module] = grad_output[0].data
 
-    def _update_cov_a(self):
-        for module in self.modules: 
-            aa = self.CovAHandler(self.m_a[module], module)
-            # Initialize buffers
-            if self.steps == 0:
-                self.m_aa[module] = torch.diag(aa.new(aa.size(0)).fill_(1))
-            update_running_stat(aa, self.m_aa[module], self.stat_decay)
-
-    def _update_cov_g(self):
-        for module in self.modules:
-            gg = self.CovGHandler(self.m_g[module], module, self.batch_averaged)
-            if self.steps == 0:
-                self.m_gg[module] = torch.diag(gg.new(gg.size(0)).fill_(1))
-            update_running_stat(gg, self.m_gg[module], self.stat_decay)
-
     def _prepare_model(self):
         for module in self.model.modules():
             classname = module.__class__.__name__
@@ -89,21 +77,53 @@ class KFAC(optim.Optimizer):
         if hvd.size() > len(self.modules):
             self.distribute_eigen_factors = True
 
+    def _init_a_buffers(self, factor, module):
+        self.m_aa[module] = torch.diag(factor.new(factor.shape[0]).fill_(1))
+        self.d_a[module] = factor.new_zeros(factor.shape[0])
+        self.Q_a[module] = factor.new_zeros(factor.shape)
+        self.m_aa_handles[module] = hvd.allreduce_async_(
+                self.m_aa[module], op=hvd.Average)
+        self.d_a_handles[module] = hvd.allreduce_async_(
+                self.d_a[module], op=hvd.Sum)
+        self.Q_a_handles[module] = hvd.allreduce_async_(
+                self.Q_a[module], op=hvd.Sum)
+
+    def _init_g_buffers(self, factor, module):
+        self.m_gg[module] = torch.diag(factor.new(factor.shape[0]).fill_(1))
+        self.d_g[module] = factor.new_zeros(factor.shape[0])
+        self.Q_g[module] = factor.new_zeros(factor.shape)
+        self.m_gg_handles[module] = hvd.allreduce_async_(
+                self.m_gg[module], op=hvd.Average)
+        self.d_g_handles[module] = hvd.allreduce_async_(
+                self.d_g[module], op=hvd.Sum)
+        self.Q_g_handles[module] = hvd.allreduce_async_(
+                self.Q_g[module], op=hvd.Sum)
+
+    def _update_cov_a(self):
+        for module in self.modules: 
+            aa = self.CovAHandler(self.m_a[module], module)
+            if self.steps == 0:
+                self._init_a_buffers(aa, module)
+            update_running_stat(aa, self.m_aa[module], self.stat_decay)
+
+    def _update_cov_g(self):
+        for module in self.modules:
+            gg = self.CovGHandler(self.m_g[module], module, self.batch_averaged)
+            if self.steps == 0:
+                self._init_g_buffers(gg, module)
+            update_running_stat(gg, self.m_gg[module], self.stat_decay)
+
     def _update_eigen_a(self, m):
-        eps = 1e-10  # for numerical stability
-        self.d_a[m], self.Q_a[m] = torch.symeig(
-            self.m_aa[m], eigenvectors=True)
-        self.d_a[m].mul_((self.d_a[m] > eps).float())
-        self.d_a[m] = try_contiguous(self.d_a[m])
-        self.Q_a[m] = try_contiguous(self.Q_a[m])
+        d, Q = torch.symeig(self.m_aa[m], eigenvectors=True)
+        d = torch.mul(d, (d > self.eps).float())
+        self.d_a[m].copy_(d)
+        self.Q_a[m].copy_(Q)
 
     def _update_eigen_g(self, m):
-        eps = 1e-10  # for numerical stability
-        self.d_g[m], self.Q_g[m] = torch.symeig(
-            self.m_gg[m], eigenvectors=True)
-        self.d_g[m].mul_((self.d_g[m] > eps).float())
-        self.d_g[m] = try_contiguous(self.d_g[m])
-        self.Q_g[m] = try_contiguous(self.Q_g[m])
+        d, Q = torch.symeig(self.m_gg[m], eigenvectors=True)
+        d = torch.mul(d, (d > self.eps).float())
+        self.d_g[m].copy_(d)
+        self.Q_g[m].copy_(Q)
 
     @staticmethod
     def _get_matrix_form_grad(m, classname):
@@ -166,14 +186,11 @@ class KFAC(optim.Optimizer):
         updates = {}
         handles = []
 
-        if hvd.size() > 1:
-            self.allreduce_grads()
-
         if self.steps % self.TCov == 0:
             self._update_cov_a()
             self._update_cov_g()
             if hvd.size() > 1:
-                self.sync_handles()
+                self.allreduce_covs()
 
         if self.steps % self.TInv == 0:
             for m in self.modules:
@@ -186,16 +203,14 @@ class KFAC(optim.Optimizer):
                 if hvd.rank() in rank_a:
                     self._update_eigen_a(m)
                 else:
-                    aa = self.m_aa[m]
-                    self.Q_a[m] = aa.new_zeros(aa.shape)
-                    self.d_a[m] = aa.new_zeros(aa.shape[0])
+                    self.Q_a[m].fill_(0)
+                    self.d_a[m].fill_(0)
 
                 if hvd.rank() in rank_g:
                     self._update_eigen_g(m)
                 else:
-                    gg = self.m_gg[m]
-                    self.Q_g[m] = gg.new_zeros(gg.shape)
-                    self.d_g[m] = gg.new_zeros(gg.shape[0])
+                    self.Q_g[m].fill_(0)
+                    self.d_g[m].fill_(0)
 
                 if hvd.size() > 1:
                     handles.append(hvd.allreduce_async_(self.Q_a[m], op=hvd.Sum))
@@ -203,8 +218,14 @@ class KFAC(optim.Optimizer):
                     handles.append(hvd.allreduce_async_(self.d_a[m], op=hvd.Sum))
                     handles.append(hvd.allreduce_async_(self.d_g[m], op=hvd.Sum))
     
-        for handle in handles:
+        for handle in handles: #self.d_a_handles.values():
             hvd.synchronize(handle)
+        #for handle in self.d_g_handles.values():
+        #    hvd.synchronize(handle)
+        #for handle in self.Q_a_handles.values():
+        #    hvd.synchronize(handle)
+        #for handle in self.Q_g_handles.values():
+        #    hvd.synchronize(handle)
 
         for m in self.modules:
             classname = m.__class__.__name__
@@ -216,24 +237,22 @@ class KFAC(optim.Optimizer):
 
         self.steps += 1
 
-    def allreduce_grads(self):
-        handles = []
-
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                handles.append(hvd.allreduce_async_(p.grad, op=hvd.Average))
-
-        for handle in handles:
-            hvd.synchronize(handle)
-
-    def sync_handles(self):
+    def allreduce_covs(self):
         handles = []
 
         for m in self.modules:
             handles.append(hvd.allreduce_async_(self.m_aa[m].data, op=hvd.Average))
             handles.append(hvd.allreduce_async_(self.m_gg[m].data, op=hvd.Average))
+            #if m.weight.grad is not None:
+            #    handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
+            #    if m.bias is not None:
+            #        handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
 
         for handle in handles:
+            hvd.synchronize(handle)
+
+        return
+        for handle in self.m_aa_handles.values():
+            hvd.synchronize(handle)
+        for handle in self.m_gg_handles.values():
             hvd.synchronize(handle)
