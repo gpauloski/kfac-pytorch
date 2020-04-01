@@ -38,6 +38,20 @@ class cycle:
         """
         return tuple([next(self.iterator) for x in range(size)])
 
+def get_block_boundary(index, block_count, shape):
+    if index >= block_count:
+        raise ValueError("Index ({}) greater than number of requested blocks "
+                         "({})".format(index, block_count))
+    if block_count > min(shape):
+        raise ValueError("Requested blocks ({}) greater than minimum possible "
+                         "blocks for shape {}".format(block_count, shape))
+    block_shape = [x // block_count for x in shape]
+    block_start = [x * index for x in block_shape]
+    block_end = [x * (index+1) if (index+1) < block_count 
+                           else shape[i] 
+                 for i, x in enumerate(block_shape)]
+    return block_start, block_end
+
 def _extract_patches(x, kernel_size, stride, padding):
     """
     :param x: The input feature maps.  (batch_size, in_c, h, w)
