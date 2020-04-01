@@ -7,6 +7,7 @@ from kfac_utils import (ComputeCovA, ComputeCovG)
 from kfac_utils import update_running_stat
 from kfac_utils import try_contiguous
 from kfac_utils import cycle
+from kfac_utils import get_block_boundary
 
 import horovod.torch as hvd
 
@@ -20,11 +21,8 @@ class KFAC(optim.Optimizer):
                  TCov=10,
                  TInv=100,
                  batch_averaged=True,
-                 inv_block_count=1):
+                 diag_blocks=1):
        
-        if inv_block_count > 1:
-            raise ValueError("Inv block count > 1 not implemented yet")
- 
         defaults = dict(lr=lr, damping=damping)
         super(KFAC, self).__init__(model.parameters(), defaults)
         self.CovAHandler = ComputeCovA()
@@ -49,7 +47,7 @@ class KFAC(optim.Optimizer):
         self.kl_clip = kl_clip
         self.TCov = TCov
         self.TInv = TInv
-        self.inv_block_count = inv_block_count
+        self.diag_blocks = diag_blocks
 
         self.eps = 1e-10  # for numerical stability
         self.distribute_eigen_factors = False
@@ -97,17 +95,35 @@ class KFAC(optim.Optimizer):
                 self._init_g_buffers(gg, module)
             update_running_stat(gg, self.m_gg[module], self.stat_decay)
 
-    def _update_eigen_a(self, m):
-        d, Q = torch.symeig(self.m_aa[m], eigenvectors=True)
-        d = torch.mul(d, (d > self.eps).float())
-        self.d_a[m].copy_(d)
-        self.Q_a[m].copy_(Q)
+    def _update_eigen_a(self, m, ranks):
+        i = ranks.index(hvd.rank())
+        n = len(ranks)
+        a = self.m_aa[m]
+        if n > min(a.shape):
+            n = min(a.shape)
 
-    def _update_eigen_g(self, m):
-        d, Q = torch.symeig(self.m_gg[m], eigenvectors=True)
-        d = torch.mul(d, (d > self.eps).float())
-        self.d_g[m].copy_(d)
-        self.Q_g[m].copy_(Q)
+        if i < n:
+            start, end = get_block_boundary(i, n, a.shape)
+            block = a[start[0]:end[0], start[1]:end[1]]
+            d, Q = torch.symeig(block, eigenvectors=True)
+            d = torch.mul(d, (d > self.eps).float())
+            self.d_a[m].data[start[0]:end[0]].copy_(d)
+            self.Q_a[m].data[start[0]:end[0], start[1]:end[1]].copy_(Q)
+
+    def _update_eigen_g(self, m, ranks):
+        i = ranks.index(hvd.rank())
+        n = len(ranks)
+        g = self.m_gg[m]
+        if n > min(g.shape):
+            n = min(g.shape)
+
+        if i < n:
+            start, end = get_block_boundary(i, n, g.shape)
+            block = g[start[0]:end[0], start[1]:end[1]]
+            d, Q = torch.symeig(block, eigenvectors=True)
+            d = torch.mul(d, (d > self.eps).float())
+            self.d_g[m].data[start[0]:end[0]].copy_(d)
+            self.Q_g[m].data[start[0]:end[0], start[1]:end[1]].copy_(Q)
 
     @staticmethod
     def _get_matrix_form_grad(m, classname):
@@ -181,20 +197,20 @@ class KFAC(optim.Optimizer):
             # to compute to take advantage of caching
             self.rank_iter.reset() 
             for m in self.modules:
-                rank_a = self.rank_iter.next(1)
+                ranks_a = self.rank_iter.next(self.diag_blocks)
                 if self.distribute_eigen_factors:
-                    rank_g = self.rank_iter.next(1)
+                    ranks_g = self.rank_iter.next(self.diag_blocks)
                 else:
-                    rank_g = rank_a
+                    ranks_g = ranks_a
 
-                if hvd.rank() in rank_a:
-                    self._update_eigen_a(m)
+                if hvd.rank() in ranks_a:
+                    self._update_eigen_a(m, ranks_a)
                 else:
                     self.Q_a[m].fill_(0)
                     self.d_a[m].fill_(0)
 
-                if hvd.rank() in rank_g:
-                    self._update_eigen_g(m)
+                if hvd.rank() in ranks_g:
+                    self._update_eigen_g(m, ranks_g)
                 else:
                     self.Q_g[m].fill_(0)
                     self.d_g[m].fill_(0)
