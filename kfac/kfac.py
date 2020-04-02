@@ -147,6 +147,17 @@ class KFAC(optim.Optimizer):
         :param p_grad_mat: the gradients in matrix form
         :return: a list of gradients w.r.t to the parameters in `m`
         """
+        if hvd.rank() == 0:
+            print("m", m)
+            print("m weight", m.weight.data.size())
+            print("m weight grad", m.weight.grad.size())
+            print("m aa", self.m_aa[m].size())
+            print("m gg", self.m_gg[m].size())
+            print("pgradmat", p_grad_mat.size())
+            print("q_g", self.Q_g[m].size())
+            print("q_a", self.Q_a[m].size())
+            print("d_g", self.d_g[m].size())
+            print("d_a", self.d_a[m].size())
         v1 = self.Q_g[m].t() @ p_grad_mat @ self.Q_a[m]
         v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + damping)
         v = self.Q_g[m] @ v2 @ self.Q_a[m].t()
