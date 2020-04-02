@@ -56,7 +56,7 @@ parser.add_argument('--damping', type=float, default=0.003,
                     help='KFAC damping factor (defaultL 0.003)')
 parser.add_argument('--kl-clip', type=float, default=0.001,
                     help='KL clip (default: 0.001)')
-parser.add_argument('--inv-block-count', type=int, default=1,
+parser.add_argument('--diag-blocks', type=int, default=1,
                     help='Number of blocks to approx inv with (default: 1)')
 
 # Other Parameters
@@ -155,7 +155,7 @@ if use_kfac:
                                damping=args.damping, kl_clip=args.kl_clip, 
                                TCov=args.kfac_cov_update_freq, 
                                TInv=args.kfac_update_freq,
-                               inv_block_count=args.inv_block_count)
+                               diag_blocks=args.diag_blocks)
 
 # KFAC guarentees grads are equal across ranks before opt.step() is called
 # so if we do not use kfac we need to wrap the optimizer with horovod
