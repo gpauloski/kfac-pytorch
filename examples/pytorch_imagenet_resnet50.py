@@ -243,9 +243,11 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             train_accuracy.update(accuracy(output, target))
             loss.backward()
 
+            optimizer.synchronize()
             if preconditioner is not None:
                 preconditioner.step()
-            optimizer.step()
+            with optimizer.skip_synchronize():
+                optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
                     train_loss.avg.item(), 100*train_accuracy.avg.item()))
