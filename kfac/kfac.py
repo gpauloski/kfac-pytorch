@@ -21,7 +21,8 @@ class KFAC(optim.Optimizer):
                  TCov=10,
                  TInv=100,
                  batch_averaged=True,
-                 diag_blocks=1):
+                 diag_blocks=1,
+                 diag_warmup=0):
        
         defaults = dict(lr=lr, damping=damping)
         super(KFAC, self).__init__(model.parameters(), defaults)
@@ -48,6 +49,7 @@ class KFAC(optim.Optimizer):
         self.TCov = TCov
         self.TInv = TInv
         self.diag_blocks = diag_blocks
+        self.diag_warmup = diag_warmup
 
         self.eps = 1e-10  # for numerical stability
         self.distribute_eigen_factors = False
@@ -179,12 +181,14 @@ class KFAC(optim.Optimizer):
                 m.bias.grad.data.copy_(v[1])
                 m.bias.grad.data.mul_(nu)
 
-    def step(self, closure=None):
+    def step(self, epoch=0, closure=None):
         group = self.param_groups[0]
         lr = group['lr']
         damping = group['damping']
         updates = {}
         handles = []
+
+        diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
 
         if self.steps % self.TCov == 0:
             self._update_cov_a()
@@ -197,11 +201,13 @@ class KFAC(optim.Optimizer):
             # to compute to take advantage of caching
             self.rank_iter.reset() 
             for m in self.modules:
-                ranks_a = self.rank_iter.next(self.diag_blocks)
-                if self.distribute_eigen_factors:
-                    ranks_g = self.rank_iter.next(1)
-                else:
-                    ranks_g = ranks_a
+                n = diag_blocks if m.__class__.__name__ == 'Conv2d' else 1
+                ranks_a = self.rank_iter.next(n)
+                ranks_g = self.rank_iter.next(1) # do not diagonalize g
+                #if self.distribute_eigen_factors:
+                #    ranks_g = self.rank_iter.next(1)
+                #else:
+                #    ranks_g = (ranks_a[0],)
 
                 if hvd.rank() in ranks_a:
                     self._update_eigen_a(m, ranks_a)
