@@ -73,6 +73,8 @@ def initialize():
                         help='KL clip (default: 0.001)')
     parser.add_argument('--diag-blocks', type=int, default=1,
                         help='Number of blocks to approx layer factor with (default: 1)')
+    parser.add_argument('--diag-warmup', type=int, default=5,
+                        help='Epoch to start diag block approximation at (default: 5)')
 
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
@@ -186,7 +188,8 @@ def get_model(args):
                 damping=args.damping, kl_clip=args.kl_clip,
                 TCov=args.kfac_cov_update_freq,
                 TInv=args.kfac_update_freq,
-                diag_blocks=args.diag_blocks)
+                diag_blocks=args.diag_blocks,
+                diag_warmup=args.diag_warmup)
     else:
         preconditioner = None
 
@@ -245,7 +248,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
 
             optimizer.synchronize()
             if preconditioner is not None:
-                preconditioner.step()
+                preconditioner.step(epoch)
             with optimizer.skip_synchronize():
                 optimizer.step()
 
