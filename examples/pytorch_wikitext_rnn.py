@@ -9,12 +9,13 @@ import torch.nn as nn
 import torch.onnx
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
+import torch.utils.data as torch_data
 from torch.optim.lr_scheduler import LambdaLR
+from torchtext.experimental import datasets
 from distutils.version import LooseVersion
 from datetime import datetime, timedelta
 from tqdm import tqdm
 
-import rnn_language_utils.data as data
 import rnn_language_utils.model as models
 from utils import *
 
@@ -36,14 +37,14 @@ def initialize():
                         help='number of layers')
     parser.add_argument('--base-lr', type=float, default=20,
                         help='initial learning rate, scaled by num workers')
-    parser.add_argument('--lr-decay', nargs='+', type=int, default=[10, 15, 25, 30],
+    parser.add_argument('--lr-decay', nargs='+', type=int, default=[10, 15, 20, 25, 30, 35],
                         help='epoch intervals to decay lr')
     parser.add_argument('--warmup-epochs', type=float, default=5,
                         help='number of warmup epochs')
-    parser.add_argument('--momentum', type=float, default=0.9,
-                        help='SGD momentum')
-    parser.add_argument('--wd', type=float, default=0.00005,
-                        help='weight decay')
+    parser.add_argument('--momentum', type=float, default=0.0,
+                        help='SGD momentum (default 0.0)')
+    parser.add_argument('--wd', type=float, default=0.0,
+                        help='weight decay (default 0.0)')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
     parser.add_argument('--epochs', type=int, default=40,
@@ -60,7 +61,7 @@ def initialize():
                         help='random seed')
     parser.add_argument('--no-cuda', action='store_true',
                         help='do not use CUDA')
-    parser.add_argument('--log-interval', type=int, default=200, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='report interval')
     parser.add_argument('--log-dir', default='./logs',
                         help='tensorboard/checkpoint log directory')
@@ -124,34 +125,33 @@ def initialize():
 
 
 def get_datasets(args):
-    corpus = data.Corpus(args.data)
+    #corpus = data.Corpus(args.data)
 
-    # Starting from sequential data, batchify arranges the dataset into columns.
-    # For instance, with the alphabet as the sequence and batch size 4, we'd get
-    # ┌ a g m s ┐
-    # │ b h n t │
-    # │ c i o u │
-    # │ d j p v │
-    # │ e k q w │
-    # └ f l r x ┘.
-    # These columns are treated as independent by the model, which means that the
-    # dependence of e. g. 'g' on 'f' can not be learned, but allows more efficient
-    # batch processing.
+    #train_data = data.batchify(corpus.train, args.batch_size)
+    #val_data = data.batchify(corpus.valid, args.batch_size)
+    #test_data = data.batchify(corpus.test, args.batch_size)
 
-    def batchify(data, bsz):
-        # Work out how cleanly we can divide the dataset into bsz parts.
-        nbatch = data.size(0) // bsz
-        # Trim off any extra elements that wouldn't cleanly fit (remainders).
-        data = data.narrow(0, 0, nbatch * bsz)
-        # Evenly divide the data across the bsz batches.
-        data = data.view(bsz, -1).t().contiguous()
-        return data.to(args.device)
+    #train_dataset = data.wiki_dataset(train_data, args.bptt)
+    #val_dataset = data.wiki_dataset(val_data, args.bptt)
+    #test_dataset = data.wiki_dataset(test_data, args.bptt)
 
-    train_data = batchify(corpus.train, args.batch_size)
-    val_data = batchify(corpus.valid, args.batch_size)
-    test_data = batchify(corpus.test, args.batch_size)
+    kwargs = {'num_workers': 0, 'pin_memory': True} if args.cuda else {}
 
-    return train_data, val_data, test_data, len(corpus.dictionary) 
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+            train_dataset, num_replicas=hvd.size(), rank=hvd.rank())
+    train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=1, sampler=train_sampler, **kwargs)
+    val_sampler = torch.utils.data.distributed.DistributedSampler(
+            val_dataset, num_replicas=hvd.size(), rank=hvd.rank())
+    val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=1, sampler=val_sampler, **kwargs)
+    test_sampler = torch.utils.data.distributed.DistributedSampler(
+            test_dataset, num_replicas=hvd.size(), rank=hvd.rank())
+    test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=1, sampler=test_sampler, **kwargs)
+
+    return (train_sampler, train_loader), (val_sampler, val_loader), \
+           (test_sampler, test_loader), len(corpus.dictionary) 
 
 
 def get_model(args):
@@ -198,69 +198,54 @@ def get_model(args):
 
 def repackage_hidden(h):
     """Wraps hidden states in new Tensors, to detach them from their history."""
-
     if isinstance(h, torch.Tensor):
         return h.detach()
     else:
         return tuple(repackage_hidden(v) for v in h)
 
 
-# get_batch subdivides the source data into chunks of length args.bptt.
-# If source is equal to the example output of the batchify function, with
-# a bptt-limit of 2, we'd get the following two Variables for i = 0:
-# ┌ a g m s ┐ ┌ b h n t ┐
-# └ b h n t ┘ └ c i o u ┘
-# Note that despite the name of the function, the subdivison of data is not
-# done along the batch dimension (i.e. dimension 1), since that was handled
-# by the batchify function. The chunks are along dimension 0, corresponding
-# to the seq_len dimension in the LSTM.
-def get_batch(source, i):
-    seq_len = min(args.bptt, len(source) - 1 - i)
-    data = source[i:i+seq_len]
-    target = source[i+1:i+1+seq_len].view(-1)
-    return data, target
-
-
-def evaluate(epoch, model, criterion, data_source, args):
+def evaluate(epoch, model, criterion, data_loader, args):
     model.eval()
     val_loss = Metric('val_loss')
 
     if args.model != 'Transformer':
         hidden = model.init_hidden(args.batch_size)
-    length = len(range(0, data_source.size(0) - 1, args.bptt))
     verbose = args.verbose if epoch is not None else False
 
-    with tqdm(total=length,
+    with tqdm(total=len(data_loader),
               bar_format='{l_bar}{bar}|{postfix}',
-              desc='           '.format(epoch + 1, args.epochs),
+              desc='           ',
               disable=not verbose) as t:
         with torch.no_grad():
-            for i in range(0, data_source.size(0) - 1, args.bptt):
-                data, targets = get_batch(data_source, i)
+            for i, (data, target) in enumerate(data_loader):
+                if args.cuda:
+                    data, target = data.cuda(), target.cuda()
+                data, target = torch.squeeze(data), torch.squeeze(target)
                 if args.model == 'Transformer':
                     output = model(data)
                     output = output.view(-1, ntokens)
                 else:
                     output, hidden = model(data, hidden)
                     hidden = repackage_hidden(hidden)
-                loss = criterion(output, targets)
+                loss = criterion(output, target)
                 val_loss.update(loss)
                 t.update(1) 
 
             t.set_postfix_str("\b\b val_loss: {:4.2f}, val_ppl: {:6.2f}".format(
                             val_loss.avg.item(), math.exp(val_loss.avg.item())), 
                             refresh=False)
-     
+
     if args.log_writer is not None and epoch is not None:
         args.log_writer.add_scalar('val/loss', val_loss.avg, epoch)
         args.log_writer.add_scalar('val/ppl', torch.exp(val_loss.avg), epoch)
 
-    return val_loss
+    return val_loss.avg.item()
 
 
 def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
-          criterion, train_data, args):
+          criterion, train_sampler, train_loader, args):
     model.train()
+    train_sampler.set_epoch(epoch)
     total_loss = 0.
     train_loss = Metric('train_loss')
 
@@ -270,13 +255,14 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
 
     if args.model != 'Transformer':
         hidden = model.init_hidden(args.batch_size)
-    length = len(range(0, train_data.size(0) - 1, args.bptt))
 
-    with tqdm(total=length, 
+    with tqdm(total=len(train_loader), 
               desc='Epoch {:2d}/{:2d}'.format(epoch + 1, args.epochs),
               disable=not args.verbose) as t:
-        for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
-            data, targets = get_batch(train_data, i)
+        for batch_idx, (data, target) in enumerate(train_loader):
+            if args.cuda:
+                data, target = data.cuda(), target.cuda()
+            data, target = torch.squeeze(data), torch.squeeze(target)
             # Starting each batch, we detach the hidden state from how it was 
             # previously produced. If we didn't, the model would try backpropagating 
             # all the way to start of the dataset.
@@ -285,11 +271,13 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
                 output = model(data)
                 output = output.view(-1, args.ntokens)
             else:
-                 hidden = repackage_hidden(hidden)
-                 output, hidden = model(data, hidden)
-            loss = criterion(output, targets)
+                hidden = repackage_hidden(hidden)
+                output, hidden = model(data, hidden)
+            loss = criterion(output, target)
+
             loss.backward()
-            total_loss += loss.item()
+            train_loss.update(loss)
+            #total_loss += loss.item()
 
             # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
@@ -299,14 +287,12 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             with optimizer.skip_synchronize():
                 optimizer.step() 
 
-            if batch % args.log_interval == 0 and batch > 0:
-                loss = torch.tensor(total_loss / args.log_interval)
-                train_loss.update(loss)
+            #if batch_idx % args.log_interval == 0 and batch_idx > 0:
+            #train_loss.update(torch.tensor(total_loss / args.log_interval))
+            #total_loss = 0.
 
-                total_loss = 0.
-            
             t.set_postfix_str("loss: {:4.2f}, ppl: {:6.2f}".format(
-                    train_loss.avg.item(), math.exp(train_loss.avg.item()), lr))
+                     train_loss.avg.item(), math.exp(train_loss.avg.item())))
             t.update(1)
 
     if args.log_writer is not None:
@@ -324,33 +310,29 @@ if __name__ == '__main__':
     args.ntokens = ntokens
     model, opt, preconditioner, lr_schedules, lrs, loss_func = get_model(args)
 
+    if args.verbose:
+        print(model)
+
     start = time.time()
 
     try: 
         for epoch in range(args.epochs):
             train(epoch, model, opt, preconditioner, lr_schedules, lrs,
-                  loss_func, train_data, args)
-            evaluate(epoch, model, loss_func, val_data, args)
-            with open(args.save, 'wb') as f:
-                torch.save(model, f)
+                  loss_func, train_data[0], train_data[1], args)
+            evaluate(epoch, model, loss_func, val_data[1], args)
+            if args.verbose:
+                with open(args.save, 'wb') as f:
+                    torch.save(model, f)
     except KeyboardInterrupt:
         pass
 
     if args.verbose:
         print("\nTraining time:", str(timedelta(seconds=time.time() - start)))
 
-    # Load the best saved model.
-    with open(args.save, 'rb') as f:
-        model = torch.load(f)
-        # after load the rnn params are not a continuous chunk of memory
-        # this makes them a continuous chunk, and will speed up forward pass
-        # Currently, only rnn model supports flatten_parameters function.
-        if args.model in ['RNN_TANH', 'RNN_RELU', 'LSTM', 'GRU']:
-            model.rnn.flatten_parameters()
-
     # Run on test data.
-    loss = evaluate(None, model, loss_func, test_data, args)
-    print('=' * 89)
-    print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
-          test_loss, math.exp(test_loss)))
-    print('=' * 89)
+    test_loss = evaluate(None, model, loss_func, test_data[1], args)
+    if args.verbose:
+        print('=' * 89)
+        print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
+              test_loss, math.exp(test_loss)))
+        print('=' * 89)
