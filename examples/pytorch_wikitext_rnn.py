@@ -128,6 +128,8 @@ def initialize():
 
 
 def get_datasets(args):
+    download = True if hvd.local_rank() == 0 else False
+    if not download: hvd.allreduce(torch.tensor(1), name="barrier")
     args.dir = os.path.join(args.dir, args.dataset)
     os.makedirs(args.dir, exist_ok=True)
     tokenizer = get_tokenizer("basic_english")
@@ -136,14 +138,17 @@ def get_datasets(args):
     elif args.dataset == 'wikitext103':
         WikiText = datasets.WikiText103
     train_data, val_data, test_data = WikiText(tokenizer=tokenizer, root=args.dir)
+    if args.verbose: print("")
+    if download: hvd.allreduce(torch.tensor(1), name="barrier")
+
     ntokens = len(train_data.get_vocab())
     batch_size = args.batch_size * (args.bptt + 1)
 
     def collate(data):
         data = torch.stack(data)
-        source = data.view(args.batch_size, -1).t().contiguous()
-        data = source[:-1]
-        target = source[1:].view(-1)
+        source = data.view(args.batch_size, -1).contiguous()
+        data = source[:, :-1]
+        target = source[:, 1:].contiguous().view(-1)
         return data, target
 
     torch.set_num_threads(4)
@@ -231,7 +236,6 @@ def evaluate(epoch, model, criterion, data_loader, args):
             for i, (data, target) in enumerate(data_loader):
                 if args.cuda:
                     data, target = data.cuda(), target.cuda()
-                data, target = torch.squeeze(data), torch.squeeze(target)
                 output, hidden = model(data, hidden)
                 hidden = repackage_hidden(hidden)
                 loss = criterion(output, target)
@@ -260,9 +264,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
     for scheduler in lr_schedules:
         scheduler.step()
     lr = args.base_lr * lrs(epoch)
-
-    if args.model != 'Transformer':
-        hidden = model.init_hidden(args.batch_size)
+    hidden = model.init_hidden(args.batch_size)
 
     with tqdm(total=len(train_loader), 
               desc='Epoch {:2d}/{:2d}'.format(epoch + 1, args.epochs),
@@ -270,7 +272,6 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
         for batch_idx, (data, target) in enumerate(train_loader):
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
-            data, target = torch.squeeze(data), torch.squeeze(target)
             # Starting each batch, we detach the hidden state from how it was 
             # previously produced. If we didn't, the model would try backpropagating 
             # all the way to start of the dataset.
