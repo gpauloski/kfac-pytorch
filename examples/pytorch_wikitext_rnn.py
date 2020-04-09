@@ -12,11 +12,12 @@ import torch.optim as optim
 import torch.utils.data as torch_data
 from torch.optim.lr_scheduler import LambdaLR
 from torchtext.experimental import datasets
+from torchtext.data.utils import get_tokenizer
 from distutils.version import LooseVersion
 from datetime import datetime, timedelta
 from tqdm import tqdm
 
-import rnn_language_utils.model as models
+import wikitext_models as models
 from utils import *
 
 import horovod.torch as hvd
@@ -24,9 +25,11 @@ sys.path.append("./kfac")
 import kfac
 
 def initialize():
-    parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM/GRU/Transformer Language Model')
-    parser.add_argument('--data', type=str, default='examples/rnn_language_utils/data/wikitext-2',
-                        help='location of the data corpus')
+    parser = argparse.ArgumentParser(description='PyTorch Wikitext-103 Language Model')
+    parser.add_argument('--dataset', type=str, default='wikitext2',
+                        help='data corpus to use (wikitext2, wikitext103)')
+    parser.add_argument('--dir', type=str, default='/tmp/',
+                        help='location to download the data corpus')
     parser.add_argument('--model', type=str, default='LSTM',
                         help='type of recurrent net (RNN_TANH, RNN_RELU, LSTM, GRU, Transformer)')
     parser.add_argument('--emsize', type=int, default=200,
@@ -61,7 +64,7 @@ def initialize():
                         help='random seed')
     parser.add_argument('--no-cuda', action='store_true',
                         help='do not use CUDA')
-    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=200, metavar='N',
                         help='report interval')
     parser.add_argument('--log-dir', default='./logs',
                         help='tensorboard/checkpoint log directory')
@@ -125,42 +128,50 @@ def initialize():
 
 
 def get_datasets(args):
-    #corpus = data.Corpus(args.data)
+    args.dir = os.path.join(args.dir, args.dataset)
+    os.makedirs(args.dir, exist_ok=True)
+    tokenizer = get_tokenizer("basic_english")
+    if args.dataset == 'wikitext2':
+        WikiText = datasets.WikiText2
+    elif args.dataset == 'wikitext103':
+        WikiText = datasets.WikiText103
+    train_data, val_data, test_data = WikiText(tokenizer=tokenizer, root=args.dir)
+    ntokens = len(train_data.get_vocab())
+    batch_size = args.batch_size * (args.bptt + 1)
 
-    #train_data = data.batchify(corpus.train, args.batch_size)
-    #val_data = data.batchify(corpus.valid, args.batch_size)
-    #test_data = data.batchify(corpus.test, args.batch_size)
+    def collate(data):
+        data = torch.stack(data)
+        source = data.view(args.batch_size, -1).t().contiguous()
+        data = source[:-1]
+        target = source[1:].view(-1)
+        return data, target
 
-    #train_dataset = data.wiki_dataset(train_data, args.bptt)
-    #val_dataset = data.wiki_dataset(val_data, args.bptt)
-    #test_dataset = data.wiki_dataset(test_data, args.bptt)
-
-    kwargs = {'num_workers': 0, 'pin_memory': True} if args.cuda else {}
+    torch.set_num_threads(4)
+    kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_dataset, num_replicas=hvd.size(), rank=hvd.rank())
+            train_data, num_replicas=hvd.size(), rank=hvd.rank())
     train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=1, sampler=train_sampler, **kwargs)
+            train_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
+            sampler=train_sampler, shuffle=False, **kwargs)
     val_sampler = torch.utils.data.distributed.DistributedSampler(
-            val_dataset, num_replicas=hvd.size(), rank=hvd.rank())
+            val_data, num_replicas=hvd.size(), rank=hvd.rank())
     val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=1, sampler=val_sampler, **kwargs)
+            val_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
+            sampler=val_sampler, shuffle=False, **kwargs)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-            test_dataset, num_replicas=hvd.size(), rank=hvd.rank())
+            test_data, num_replicas=hvd.size(), rank=hvd.rank())
     test_loader = torch.utils.data.DataLoader(
-            test_dataset, batch_size=1, sampler=test_sampler, **kwargs)
+            test_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
+            sampler=test_sampler, shuffle=False, **kwargs)
 
     return (train_sampler, train_loader), (val_sampler, val_loader), \
-           (test_sampler, test_loader), len(corpus.dictionary) 
+           (test_sampler, test_loader), ntokens
 
 
 def get_model(args):
-    if args.model == 'Transformer':
-        model = models.TransformerModel(args.ntokens, args.emsize, args.nhead, args.nhid, 
-                                        args.nlayers, args.dropout).to(args.device)
-    else:
-        model = models.RNNModel(args.model, args.ntokens, args.emsize, args.nhid, 
-                                args.nlayers, args.dropout, args.tied).to(args.device)
+    model = models.RNNModel(args.model, args.ntokens, args.emsize, args.nhid, 
+                            args.nlayers, args.dropout, args.tied).to(args.device)
 
     # Horovod: scale learning rate by the number of GPUs.
     args.base_lr = args.base_lr * hvd.size()
@@ -221,12 +232,8 @@ def evaluate(epoch, model, criterion, data_loader, args):
                 if args.cuda:
                     data, target = data.cuda(), target.cuda()
                 data, target = torch.squeeze(data), torch.squeeze(target)
-                if args.model == 'Transformer':
-                    output = model(data)
-                    output = output.view(-1, ntokens)
-                else:
-                    output, hidden = model(data, hidden)
-                    hidden = repackage_hidden(hidden)
+                output, hidden = model(data, hidden)
+                hidden = repackage_hidden(hidden)
                 loss = criterion(output, target)
                 val_loss.update(loss)
                 t.update(1) 
@@ -246,8 +253,9 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
           criterion, train_sampler, train_loader, args):
     model.train()
     train_sampler.set_epoch(epoch)
-    total_loss = 0.
     train_loss = Metric('train_loss')
+    total_loss = torch.tensor(0.)
+    elapsed_steps = 0
 
     for scheduler in lr_schedules:
         scheduler.step()
@@ -267,33 +275,29 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             # previously produced. If we didn't, the model would try backpropagating 
             # all the way to start of the dataset.
             model.zero_grad()
-            if args.model == 'Transformer':
-                output = model(data)
-                output = output.view(-1, args.ntokens)
-            else:
-                hidden = repackage_hidden(hidden)
-                output, hidden = model(data, hidden)
+            hidden = repackage_hidden(hidden)
+            output, hidden = model(data, hidden)
             loss = criterion(output, target)
+            total_loss += loss
 
             loss.backward()
-            train_loss.update(loss)
-            #total_loss += loss.item()
+            elapsed_steps += 1
 
             # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.synchronize()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             if preconditioner is not None:
                 preconditioner.step(epoch)
             with optimizer.skip_synchronize():
                 optimizer.step() 
 
-            #if batch_idx % args.log_interval == 0 and batch_idx > 0:
-            #train_loss.update(torch.tensor(total_loss / args.log_interval))
-            #total_loss = 0.
-
-            t.set_postfix_str("loss: {:4.2f}, ppl: {:6.2f}".format(
-                     train_loss.avg.item(), math.exp(train_loss.avg.item())))
-            t.update(1)
+            if batch_idx % args.log_interval == 0 or batch_idx + 1 == len(train_loader):
+                train_loss.update(total_loss / elapsed_steps)
+                t.set_postfix_str("loss: {:4.2f}, ppl: {:6.2f}".format(
+                         train_loss.avg.item(), math.exp(train_loss.avg.item())))
+                t.update(elapsed_steps)
+                total_loss.fill_(0.)
+                elapsed_steps = 0
 
     if args.log_writer is not None:
         args.log_writer.add_scalar('train/loss', train_loss.avg, epoch)
@@ -302,7 +306,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
 
 
 if __name__ == '__main__':
-    torch.multiprocessing.set_start_method('spawn')
+    torch.multiprocessing.set_start_method('fork')
 
     args = initialize()
 
