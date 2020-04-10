@@ -50,6 +50,7 @@ class KFAC(optim.Optimizer):
         self.TInv = TInv
         self.diag_blocks = diag_blocks
         self.diag_warmup = diag_warmup
+        self.have_cleared_Q = True if self.diag_warmup == 0 else False
 
         self.eps = 1e-10  # for numerical stability
         self.rank_iter = cycle(list(range(hvd.size())))
@@ -189,6 +190,17 @@ class KFAC(optim.Optimizer):
 
         diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
 
+        # if we are switching from no approx to approx, we need to clear
+        # off-block-diagonal elements
+        if not self.have_cleared_Q and \
+                epoch == self.diag_warmup and \
+                self.steps % self.TInv == 0:
+            for m in self.modules:
+                self.Q_a[m].fill_(0)
+                self.Q_g[m].fill_(0)
+            self.have_cleared_Q = True
+            
+
         if self.steps % self.TCov == 0:
             self._update_cov_a()
             self._update_cov_g()
@@ -196,12 +208,6 @@ class KFAC(optim.Optimizer):
                 self.allreduce_covs()
 
         if self.steps % self.TInv == 0:
-            # if we are switching from no approx to approx, we need to clear
-            # off-block-diagonal elements
-            if epoch == self.diag_warmup:
-                for m in self.modules:
-                    self.Q_a[m].fill_(0)
-                    self.Q_g[m].fill_(0)
             # reset rank iter so device get the same layers
             # to compute to take advantage of caching
             self.rank_iter.reset() 
