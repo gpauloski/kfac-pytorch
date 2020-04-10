@@ -52,7 +52,6 @@ class KFAC(optim.Optimizer):
         self.diag_warmup = diag_warmup
 
         self.eps = 1e-10  # for numerical stability
-        self.distribute_eigen_factors = False
         self.rank_iter = cycle(list(range(hvd.size())))
 
     def _save_input(self, module, input):
@@ -204,11 +203,7 @@ class KFAC(optim.Optimizer):
                 n = diag_blocks if m.__class__.__name__ == 'Conv2d' else 1
                 ranks_a = self.rank_iter.next(n)
                 ranks_g = self.rank_iter.next(1) # do not diagonalize g
-                #if self.distribute_eigen_factors:
-                #    ranks_g = self.rank_iter.next(1)
-                #else:
-                #    ranks_g = (ranks_a[0],)
-
+                
                 if hvd.rank() in ranks_a:
                     self._update_eigen_a(m, ranks_a)
                 else:
