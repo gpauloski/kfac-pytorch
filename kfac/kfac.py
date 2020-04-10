@@ -196,6 +196,12 @@ class KFAC(optim.Optimizer):
                 self.allreduce_covs()
 
         if self.steps % self.TInv == 0:
+            # if we are switching from no approx to approx, we need to clear
+            # off-block-diagonal elements
+            if epoch == self.diag_warmup:
+                for m in self.modules:
+                    self.Q_a[m].fill_(0)
+                    self.Q_g[m].fill_(0)
             # reset rank iter so device get the same layers
             # to compute to take advantage of caching
             self.rank_iter.reset() 
