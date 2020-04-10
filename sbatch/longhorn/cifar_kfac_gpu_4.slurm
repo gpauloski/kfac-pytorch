@@ -27,10 +27,10 @@ cat /tmp/hostfile
 
 mpiexec -hostfile /tmp/hostfile -N 4 \
    python examples/pytorch_cifar10_resnet.py \
-     --lr 0.1 \
+     --base-lr 0.1 \
      --epochs 100 \
      --kfac-update-freq 10 \
      --model resnet32 \
-     --lr-decay 60 80
+     --lr-decay 40 80
 
 # -----------------------------------------------------------------------------
