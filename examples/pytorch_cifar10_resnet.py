@@ -50,16 +50,26 @@ parser.add_argument('--kfac-update-freq', type=int, default=10,
                     help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
 parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
                     help='iters between kfac cov ops (default: 1)')
+parser.add_argument('--kfac-update-freq-alpha', type=float, default=10,
+                    help='KFAC update freq multiplier (default: 10)')
+parser.add_argument('--kfac-update-freq-decay', nargs='+', type=int, default=None,
+                    help='KFAC update freq schedule (default None)')
 parser.add_argument('--stat-decay', type=float, default=0.95,
                     help='Alpha value for covariance accumulation (default: 0.95)')
 parser.add_argument('--damping', type=float, default=0.003,
                     help='KFAC damping factor (defaultL 0.003)')
+parser.add_argument('--damping-alpha', type=float, default=0.5,
+                    help='KFAC damping decay factor (default: 0.5)')
+parser.add_argument('--damping-decay', nargs='+', type=int, default=None,
+                    help='KFAC damping decay schedule (default None)')
 parser.add_argument('--kl-clip', type=float, default=0.001,
                     help='KL clip (default: 0.001)')
 parser.add_argument('--diag-blocks', type=int, default=1,
                     help='Number of blocks to approx layer factor with (default: 1)')
 parser.add_argument('--diag-warmup', type=int, default=5,
                     help='Epoch to start diag block approximation at (default: 5)')
+parser.add_argument('--distribute-layer-factors', action='store_true', default=False,
+                    help='Compute A and G for a single layer on different workers')
 
 # Other Parameters
 parser.add_argument('--log-dir', default='./logs',
@@ -155,10 +165,16 @@ optimizer = optim.SGD(model.parameters(), lr=args.base_lr, momentum=args.momentu
 if use_kfac:
     preconditioner = kfac.KFAC(model, lr=args.base_lr, stat_decay=args.stat_decay, 
                                damping=args.damping, kl_clip=args.kl_clip, 
-                               TCov=args.kfac_cov_update_freq, 
-                               TInv=args.kfac_update_freq,
+                               cov_update_freq=args.kfac_cov_update_freq, 
+                               inv_update_freq=args.kfac_update_freq,
                                diag_blocks=args.diag_blocks,
-                               diag_warmup=args.diag_warmup)
+                               diag_warmup=args.diag_warmup
+                               distribute_layer_factors=args.distribute_layer_factors)
+    kfac_param_scheduler = kfac.KFACParamScheduler(preconditioner,
+            damping_alpha=args.damping_alpha,
+            damping_schedule=args.damping_decay,
+            update_freq_alpha=args.kfac_update_freq_alpha,
+            update_freq_schedule=args.kfac_update_freq_decay)
 
 # KFAC guarentees grads are equal across ranks before opt.step() is called
 # so if we do not use kfac we need to wrap the optimizer with horovod
@@ -184,7 +200,9 @@ def train(epoch):
     
     for scheduler in lr_scheduler:
         scheduler.step()
-
+    if use_kfac:
+        kfac_param_scheduler.step(epoch)
+    
     with tqdm(total=len(train_loader), 
               desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
               disable=not verbose) as t:
