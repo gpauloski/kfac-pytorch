@@ -18,20 +18,19 @@ class KFAC(optim.Optimizer):
                  stat_decay=0.95,
                  damping=0.001,
                  kl_clip=0.001,
-                 TCov=10,
-                 TInv=100,
+                 cov_update_freq=10,
+                 inv_update_freq=100,
                  batch_averaged=True,
                  diag_blocks=1,
-                 diag_warmup=0):
-       
-        defaults = dict(lr=lr, damping=damping)
+                 diag_warmup=0,
+                 distribute_layer_factors=False): 
+        defaults = dict(lr=lr, damping=damping, cov_update_freq=cov_update_freq,
+                        inv_update_freq=inv_update_freq)
         super(KFAC, self).__init__(model.parameters(), defaults)
         self.CovAHandler = ComputeCovA()
         self.CovGHandler = ComputeCovG()
-        self.batch_averaged = batch_averaged
 
         self.known_modules = {'Linear', 'Conv2d'}
-
         self.modules = []
 
         self.model = model
@@ -45,22 +44,25 @@ class KFAC(optim.Optimizer):
         self.d_a, self.d_g = {}, {}
 
         self.stat_decay = stat_decay
+        self.damping = damping
         self.kl_clip = kl_clip
-        self.TCov = TCov
-        self.TInv = TInv
+        self.cov_update_freq = cov_update_freq
+        self.inv_update_freq = inv_update_freq
+        self.batch_averaged = batch_averaged
         self.diag_blocks = diag_blocks
         self.diag_warmup = diag_warmup
-        self.have_cleared_Q = True if self.diag_warmup == 0 else False
 
+        self.distribute_layer_factors = distribute_layer_factors
+        self.have_cleared_Q = True if self.diag_warmup == 0 else False
         self.eps = 1e-10  # for numerical stability
         self.rank_iter = cycle(list(range(hvd.size())))
 
     def _save_input(self, module, input):
-        if torch.is_grad_enabled() and self.steps % self.TCov == 0:
+        if torch.is_grad_enabled() and self.steps % self.cov_update_freq == 0:
             self.m_a[module] = input[0].data
 
     def _save_grad_output(self, module, grad_input, grad_output):
-        if self.steps % self.TCov == 0:
+        if self.steps % self.cov_update_freq == 0:
             self.m_g[module] = grad_output[0].data
 
     def _prepare_model(self):
@@ -143,14 +145,15 @@ class KFAC(optim.Optimizer):
             p_grad_mat = torch.cat([p_grad_mat, m.bias.grad.data.view(-1, 1)], 1)
         return p_grad_mat
 
-    def _get_natural_grad(self, m, p_grad_mat, damping):
+    def _get_natural_grad(self, m, p_grad_mat):
         """
         :param m:  the layer
         :param p_grad_mat: the gradients in matrix form
         :return: a list of gradients w.r.t to the parameters in `m`
         """
         v1 = self.Q_g[m].t() @ p_grad_mat @ self.Q_a[m]
-        v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + damping)
+        v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + 
+                   self.damping)
         v = self.Q_g[m] @ v2 @ self.Q_a[m].t()
 
         if m.bias is not None:
@@ -163,14 +166,14 @@ class KFAC(optim.Optimizer):
             v = [v.view(m.weight.grad.data.size())]
         return v
 
-    def _kl_clip_and_update_grad(self, updates, lr):
+    def _kl_clip_and_update_grad(self, updates):
         # do kl clip
         vg_sum = 0
         for m in self.modules:
             v = updates[m]
-            vg_sum += (v[0] * m.weight.grad.data * lr ** 2).sum().item()
+            vg_sum += (v[0] * m.weight.grad.data * self.lr ** 2).sum().item()
             if m.bias is not None:
-                vg_sum += (v[1] * m.bias.grad.data * lr ** 2).sum().item()
+                vg_sum += (v[1] * m.bias.grad.data * self.lr ** 2).sum().item()
         nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
         for m in self.modules:
@@ -183,8 +186,10 @@ class KFAC(optim.Optimizer):
 
     def step(self, epoch=0, closure=None):
         group = self.param_groups[0]
-        lr = group['lr']
-        damping = group['damping']
+        self.lr = group['lr']
+        self.damping = group['damping']
+        self.cov_update_freq = group['cov_update_freq']
+        self.inv_update_freq = group['inv_update_freq']
         updates = {}
         handles = []
 
@@ -194,27 +199,30 @@ class KFAC(optim.Optimizer):
         # off-block-diagonal elements
         if not self.have_cleared_Q and \
                 epoch == self.diag_warmup and \
-                self.steps % self.TInv == 0:
+                self.steps % self.inv_update_freq == 0:
             for m in self.modules:
                 self.Q_a[m].fill_(0)
                 self.Q_g[m].fill_(0)
             self.have_cleared_Q = True
             
 
-        if self.steps % self.TCov == 0:
+        if self.steps % self.cov_update_freq == 0:
             self._update_cov_a()
             self._update_cov_g()
             if hvd.size() > 1:
                 self.allreduce_covs()
 
-        if self.steps % self.TInv == 0:
+        if self.steps % self.inv_update_freq == 0:
             # reset rank iter so device get the same layers
             # to compute to take advantage of caching
             self.rank_iter.reset() 
             for m in self.modules:
                 n = diag_blocks if m.__class__.__name__ == 'Conv2d' else 1
                 ranks_a = self.rank_iter.next(n)
-                ranks_g = self.rank_iter.next(1) # do not diagonalize g
+                if self.distribute_layer_factors:
+                    ranks_g = self.rank_iter.next(1)
+                else:
+                    ranks_g = (ranks_a[0],)
                 
                 if hvd.rank() in ranks_a:
                     self._update_eigen_a(m, ranks_a)
@@ -234,10 +242,10 @@ class KFAC(optim.Optimizer):
         for m in self.modules:
             classname = m.__class__.__name__
             p_grad_mat = self._get_matrix_form_grad(m, classname)
-            v = self._get_natural_grad(m, p_grad_mat, damping)
+            v = self._get_natural_grad(m, p_grad_mat)
             updates[m] = v
 
-        self._kl_clip_and_update_grad(updates, lr)
+        self._kl_clip_and_update_grad(updates)
 
         self.steps += 1
 
@@ -262,3 +270,62 @@ class KFAC(optim.Optimizer):
     
         for handle in handles:
             hvd.synchronize(handle)
+
+
+class KFACParamScheduler():
+    def __init__(self,
+                 kfac,
+                 damping_alpha=1,
+                 damping_schedule=None,
+                 update_freq_alpha=1,
+                 update_freq_schedule=None,
+                 start_epoch=0):
+
+        self.kfac = kfac
+        params = self.kfac.param_groups[0]
+
+        self.damping_base = params['damping']
+        self.damping_alpha = damping_alpha
+        self.damping_schedule = damping_schedule
+        self.damping_factor_func = \
+                self.get_factor_func(self.damping_schedule,
+                                     self.damping_alpha)
+
+        self.cov_update_freq_base = params['cov_update_freq']
+        self.inv_update_freq_base = params['inv_update_freq']
+        self.update_freq_alpha = update_freq_alpha
+        self.update_freq_schedule = update_freq_schedule
+        self.update_freq_factor_func = \
+                self.get_factor_func(self.update_freq_schedule,
+                                     self.update_freq_alpha)
+
+        self.epoch = start_epoch
+
+    def get_factor_func(self, schedule, alpha):
+        if schedule is not None:
+            schedule.sort(reverse=True)
+        else:
+            schedule = []
+
+        def factor_func(epoch):
+            factor = 1.
+            for e in schedule:
+                if epoch >= e:
+                    factor *= alpha
+            return factor
+
+        return factor_func
+
+    def step(self, epoch=None):
+        if epoch is not None:
+            self.epoch = epoch
+        else:
+            self.epoch += 1
+
+        params = self.kfac.param_groups[0]
+
+        params['damping'] = self.damping_base * self.damping_factor_func(self.epoch)
+
+        factor = self.update_freq_factor_func(self.epoch)
+        params['cov_update_freq'] = int(self.cov_update_freq_base * factor)
+        params['inv_update_freq'] = int(self.inv_update_freq_base * factor)
