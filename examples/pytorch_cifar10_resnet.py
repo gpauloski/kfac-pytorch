@@ -219,7 +219,7 @@ def train(epoch):
 
             optimizer.synchronize()
             if use_kfac:
-                preconditioner.step(epoch)
+                preconditioner.step(epoch=epoch)
             with optimizer.skip_synchronize():
                 optimizer.step()
 
