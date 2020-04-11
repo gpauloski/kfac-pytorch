@@ -267,7 +267,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
 
             optimizer.synchronize()
             if preconditioner is not None:
-                preconditioner.step(epoch)
+                preconditioner.step(epoch=epoch)
             with optimizer.skip_synchronize():
                 optimizer.step()
 

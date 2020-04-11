@@ -163,9 +163,9 @@ class ComputeCovA:
     def linear(a, layer):
         # a: batch_size * in_dim
         batch_size = a.size(0)
-        if len(a.shape) > 2:
+        #if len(a.shape) > 2:
         #    a = a.view(-1, a.shape[-1])
-            a = torch.mean(a, list(range(len(a.shape)))[1:-1])
+        #    a = torch.mean(a, list(range(len(a.shape)))[1:-1])
         if layer.bias is not None:
             a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
         return a.t() @ (a / batch_size)
@@ -216,9 +216,9 @@ class ComputeCovG:
     def linear(g, layer, batch_averaged):
         # g: batch_size * out_dim
         batch_size = g.size(0)
-        if len(g.shape) > 2:
-            #g = g.view(-1, g.shape[-1])
-            g = torch.mean(g, list(range(len(g.shape)))[1:-1])
+        #if len(g.shape) > 2:
+        #    #g = g.view(-1, g.shape[-1])
+        #    g = torch.mean(g, list(range(len(g.shape)))[1:-1])
         if batch_averaged:
             cov_g = g.t() @ (g * batch_size)
         else:

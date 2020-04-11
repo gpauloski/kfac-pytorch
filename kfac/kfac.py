@@ -184,7 +184,7 @@ class KFAC(optim.Optimizer):
                 m.bias.grad.data.copy_(v[1])
                 m.bias.grad.data.mul_(nu)
 
-    def step(self, epoch=0, closure=None):
+    def step(self, closure=None, epoch=None):
         group = self.param_groups[0]
         self.lr = group['lr']
         self.damping = group['damping']
@@ -193,7 +193,13 @@ class KFAC(optim.Optimizer):
         updates = {}
         handles = []
 
-        diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
+        if epoch is not None:
+            if self.diag_warmup > 0:
+                print("WARNING: diag_warmup is > 0 but the epoch was not passed"
+                      "to step. Defaulting to no diag_warmup")
+            diag_blocks = self.diag_blocks
+        else:
+            diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
 
         # if we are switching from no approx to approx, we need to clear
         # off-block-diagonal elements
@@ -223,6 +229,11 @@ class KFAC(optim.Optimizer):
                     ranks_g = self.rank_iter.next(1)
                 else:
                     ranks_g = (ranks_a[0],)
+                #ranks_a = self.rank_iter.next(self.diag_blocks)
+                #if self.distribute_eigen_factors:
+                #    ranks_g = self.rank_iter.next(1)
+                #else:
+                #    ranks_g = ranks_a
                 
                 if hvd.rank() in ranks_a:
                     self._update_eigen_a(m, ranks_a)
