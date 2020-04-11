@@ -193,7 +193,7 @@ class KFAC(optim.Optimizer):
         updates = {}
         handles = []
 
-        if epoch is not None:
+        if epoch is None:
             if self.diag_warmup > 0:
                 print("WARNING: diag_warmup is > 0 but the epoch was not passed"
                       "to step. Defaulting to no diag_warmup")
