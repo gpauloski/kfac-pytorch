@@ -81,8 +81,8 @@ def initialize():
                         help='KL clip (default: 0.001)')
     parser.add_argument('--diag-blocks', type=int, default=1,
                         help='Number of blocks to approx layer factor with (default: 1)')
-    parser.add_argument('--diag-warmup', type=int, default=5,
-                        help='Epoch to start diag block approximation at (default: 5)')
+    parser.add_argument('--diag-warmup', type=int, default=0,
+                        help='Epoch to start diag block approximation at (default: 0)')
     parser.add_argument('--distribute-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on different workers')
 
