@@ -83,8 +83,10 @@ def initialize():
                         help='Number of blocks to approx layer factor with (default: 1)')
     parser.add_argument('--diag-warmup', type=int, default=0,
                         help='Epoch to start diag block approximation at (default: 0)')
-    parser.add_argument('--distribute-layer-factors', action='store_true', default=False,
-                        help='Compute A and G for a single layer on different workers')
+    parser.add_argument('--distribute-layer-factors', action='store_true', default=None,
+                        help='Compute A and G for a single layer on different workers. '
+                              'None to determine automatically based on worker and '
+                              'layer count.')
 
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
