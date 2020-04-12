@@ -23,9 +23,10 @@ class KFAC(optim.Optimizer):
                  batch_averaged=True,
                  diag_blocks=1,
                  diag_warmup=0,
-                 distribute_layer_factors=False): 
+                 distribute_layer_factors=None):
+
         defaults = dict(lr=lr, damping=damping, cov_update_freq=cov_update_freq,
-                        inv_update_freq=inv_update_freq)
+                        inv_update_freq=inv_update_freq) 
         super(KFAC, self).__init__(model.parameters(), defaults)
         self.CovAHandler = ComputeCovA()
         self.CovGHandler = ComputeCovG()
@@ -44,15 +45,19 @@ class KFAC(optim.Optimizer):
         self.d_a, self.d_g = {}, {}
 
         self.stat_decay = stat_decay
-        self.damping = damping
         self.kl_clip = kl_clip
         self.cov_update_freq = cov_update_freq
         self.inv_update_freq = inv_update_freq
-        self.batch_averaged = batch_averaged
         self.diag_blocks = diag_blocks
         self.diag_warmup = diag_warmup
+        self.batch_averaged = batch_averaged
+        
+        if distribute_layer_factors is None:
+            self.distribute_layer_factors = True \
+                    if hvd.size() > len(self.modules) else False
+        else:
+            self.distribute_layer_factors = distribute_layer_factors
 
-        self.distribute_layer_factors = distribute_layer_factors
         self.have_cleared_Q = True if self.diag_warmup == 0 else False
         self.eps = 1e-10  # for numerical stability
         self.rank_iter = cycle(list(range(hvd.size())))
@@ -72,8 +77,6 @@ class KFAC(optim.Optimizer):
                 self.modules.append(module)
                 module.register_forward_pre_hook(self._save_input)
                 module.register_backward_hook(self._save_grad_output)
-        if hvd.size() > len(self.modules):
-            self.distribute_eigen_factors = True
 
     def _init_a_buffers(self, factor, module):
         self.m_aa[module] = torch.diag(factor.new(factor.shape[0]).fill_(1))
@@ -115,6 +118,7 @@ class KFAC(optim.Optimizer):
             self.Q_a[m].data[start[0]:end[0], start[1]:end[1]].copy_(Q)
 
     def _update_eigen_g(self, m, ranks):
+        # Only compute g on first rank to enter this function
         i = ranks.index(hvd.rank())
         n = len(ranks)
         g = self.m_gg[m]
@@ -195,11 +199,17 @@ class KFAC(optim.Optimizer):
 
         if epoch is None:
             if self.diag_warmup > 0:
-                print("WARNING: diag_warmup is > 0 but the epoch was not passed"
-                      "to step. Defaulting to no diag_warmup")
+                print("WARNING: diag_warmup > 0 but epoch was not passed to "
+                      "KFAC.step(). Defaulting to no diag_warmup")
             diag_blocks = self.diag_blocks
         else:
             diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
+
+        if self.steps % self.cov_update_freq == 0:
+            self._update_cov_a()
+            self._update_cov_g()
+            if hvd.size() > 1:
+                self.allreduce_covs()
 
         # if we are switching from no approx to approx, we need to clear
         # off-block-diagonal elements
@@ -210,13 +220,6 @@ class KFAC(optim.Optimizer):
                 self.Q_a[m].fill_(0)
                 self.Q_g[m].fill_(0)
             self.have_cleared_Q = True
-            
-
-        if self.steps % self.cov_update_freq == 0:
-            self._update_cov_a()
-            self._update_cov_g()
-            if hvd.size() > 1:
-                self.allreduce_covs()
 
         if self.steps % self.inv_update_freq == 0:
             # reset rank iter so device get the same layers
@@ -226,15 +229,10 @@ class KFAC(optim.Optimizer):
                 n = diag_blocks if m.__class__.__name__ == 'Conv2d' else 1
                 ranks_a = self.rank_iter.next(n)
                 if self.distribute_layer_factors:
-                    ranks_g = self.rank_iter.next(1)
+                    ranks_g = self.rank_iter.next(n)
                 else:
-                    ranks_g = (ranks_a[0],)
-                #ranks_a = self.rank_iter.next(self.diag_blocks)
-                #if self.distribute_eigen_factors:
-                #    ranks_g = self.rank_iter.next(1)
-                #else:
-                #    ranks_g = ranks_a
-                
+                    ranks_g = ranks_a
+
                 if hvd.rank() in ranks_a:
                     self._update_eigen_a(m, ranks_a)
                 else:
