@@ -41,6 +41,8 @@ def initialize():
                         help='use fp16 compression during allreduce')
 
     # Default settings from https://arxiv.org/abs/1706.02677.
+    parser.add_argument('--model', default='resnet50',
+                        help='Model (resnet35, resnet50, resnet101, resnet152, resnext50, resnext101)')
     parser.add_argument('--batch-size', type=int, default=32,
                         help='input batch size for training')
     parser.add_argument('--val-batch-size', type=int, default=32,
@@ -184,8 +186,21 @@ def get_datasets(args):
     return train_sampler, train_loader, val_sampler, val_loader
 
 def get_model(args):
-    # Set up standard ResNet-50 model.
-    model = models.resnet50()
+    if args.model.lower() == 'resnet34':
+        model = models.resnet34()
+    elif args.model.lower() == 'resnet50':
+        model = models.resnet50()
+    elif args.model.lower() == 'resnet101':
+        model = models.resnet101()
+    elif args.model.lower() == 'resnet152':
+        model = models.resnet152()
+    elif args.model.lower() == 'resnext50':
+        model = models.resnext50_32x4d()
+    elif args.model.lower() == 'resnext101':
+        model = models.resnext101_32x8d()
+    else:
+        raise ValueError('Unknown model \'{}\''.format(args.model))
+
     if args.cuda:
         model.cuda()
 
