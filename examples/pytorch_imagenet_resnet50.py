@@ -14,10 +14,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data.distributed
 from torch.optim.lr_scheduler import LambdaLR
-from torchvision import datasets, transforms, models
+from torchvision import datasets, transforms
 import horovod.torch as hvd
 from tqdm import tqdm
 from distutils.version import LooseVersion
+import imagenet_resnet as models
 from utils import *
 
 sys.path.append("./kfac")
@@ -331,6 +332,9 @@ if __name__ == '__main__':
 
     train_sampler, train_loader, _, val_loader = get_datasets(args)
     model, opt, preconditioner, lr_schedules, lrs, loss_func = get_model(args)
+
+    if args.verbose:
+        print("MODEL:", args.model)
 
     start = time.time()
 
