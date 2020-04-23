@@ -1,3 +1,12 @@
+'''
+ResNet and ResNext Models
+
+Note: All development was done on PyTorch 1.1 and Torchvision 0.2 which does
+note have ResNext so this file is taken from Torchvision 0.5.
+
+Source: https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py
+'''
+
 import torch
 import torch.nn as nn
 #from .utils import load_state_dict_from_url

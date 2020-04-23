@@ -1,4 +1,13 @@
 # coding: utf-8
+
+'''
+Modified WikiText Language Model for Distributed Training with Horovod
+
+NOTE: This is a work-in-progress and does not work with K-FAC yet.
+
+Source: https://github.com/pytorch/examples/tree/master/word_language_model
+'''
+
 import argparse
 import time
 import math

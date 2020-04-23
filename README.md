@@ -16,7 +16,7 @@ This code is validated to run with PyTorch v1.1, Horovod 0.19.0, CUDA 10.0/1, CU
 
 The K-FAC Preconditioner can be easily added to exisiting training scripts that use `horovod.DistributedOptimizer()`.
 
-```
+```Python
 ... 
 optimizer = optim.SGD(model.parameters(), ...)
 optimizer = hvd.DistributedOptimizer(optimizer, ...)
