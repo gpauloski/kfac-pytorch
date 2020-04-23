@@ -14,10 +14,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data.distributed
 from torch.optim.lr_scheduler import LambdaLR
-from torchvision import datasets, transforms, models
+from torchvision import datasets, transforms
 import horovod.torch as hvd
 from tqdm import tqdm
 from distutils.version import LooseVersion
+import imagenet_resnet as models
 from utils import *
 
 sys.path.append("./kfac")
@@ -41,6 +42,8 @@ def initialize():
                         help='use fp16 compression during allreduce')
 
     # Default settings from https://arxiv.org/abs/1706.02677.
+    parser.add_argument('--model', default='resnet50',
+                        help='Model (resnet35, resnet50, resnet101, resnet152, resnext50, resnext101)')
     parser.add_argument('--batch-size', type=int, default=32,
                         help='input batch size for training')
     parser.add_argument('--val-batch-size', type=int, default=32,
@@ -65,14 +68,28 @@ def initialize():
                         help='iters between kfac inv ops (0 = no kfac) (default: 10)')
     parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
                         help='iters between kfac cov ops (default: 1)')
+    parser.add_argument('--kfac-update-freq-alpha', type=float, default=10,
+                        help='KFAC update freq multiplier (default: 10)')
+    parser.add_argument('--kfac-update-freq-decay', nargs='+', type=int, default=None,
+                        help='KFAC update freq schedule (default None)')
     parser.add_argument('--stat-decay', type=float, default=0.95,
                         help='Alpha value for covariance accumulation (default: 0.95)')
     parser.add_argument('--damping', type=float, default=0.002,
                         help='KFAC damping factor (default 0.003)')
+    parser.add_argument('--damping-alpha', type=float, default=0.5,
+                        help='KFAC damping decay factor (default: 0.5)')
+    parser.add_argument('--damping-decay', nargs='+', type=int, default=[40, 80],
+                        help='KFAC damping decay schedule (default [40, 80])')
     parser.add_argument('--kl-clip', type=float, default=0.001,
                         help='KL clip (default: 0.001)')
-    parser.add_argument('--inv-block-count', type=int, default=1,
-                        help='Number of blocks to approx inv with (default: 1)')
+    parser.add_argument('--diag-blocks', type=int, default=1,
+                        help='Number of blocks to approx layer factor with (default: 1)')
+    parser.add_argument('--diag-warmup', type=int, default=0,
+                        help='Epoch to start diag block approximation at (default: 0)')
+    parser.add_argument('--distribute-layer-factors', action='store_true', default=None,
+                        help='Compute A and G for a single layer on different workers. '
+                              'None to determine automatically based on worker and '
+                              'layer count.')
 
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
@@ -112,9 +129,9 @@ def initialize():
 
     # Horovod: broadcast resume_from_epoch from rank 0 (which will have
     # checkpoints) to other ranks.
-    resume_from_epoch = hvd.broadcast(torch.tensor(args.resume_from_epoch),
-                                      root_rank=0,
-                                      name='resume_from_epoch').item()
+    args.resume_from_epoch = hvd.broadcast(torch.tensor(args.resume_from_epoch),
+                                           root_rank=0,
+                                           name='resume_from_epoch').item()
 
     # Horovod: write TensorBoard logs on first worker.
     try:
@@ -170,8 +187,21 @@ def get_datasets(args):
     return train_sampler, train_loader, val_sampler, val_loader
 
 def get_model(args):
-    # Set up standard ResNet-50 model.
-    model = models.resnet50()
+    if args.model.lower() == 'resnet34':
+        model = models.resnet34()
+    elif args.model.lower() == 'resnet50':
+        model = models.resnet50()
+    elif args.model.lower() == 'resnet101':
+        model = models.resnet101()
+    elif args.model.lower() == 'resnet152':
+        model = models.resnet152()
+    elif args.model.lower() == 'resnext50':
+        model = models.resnext50_32x4d()
+    elif args.model.lower() == 'resnext101':
+        model = models.resnext101_32x8d()
+    else:
+        raise ValueError('Unknown model \'{}\''.format(args.model))
+
     if args.cuda:
         model.cuda()
 
@@ -184,19 +214,26 @@ def get_model(args):
         preconditioner = kfac.KFAC(
                 model, lr=args.base_lr, stat_decay=args.stat_decay,
                 damping=args.damping, kl_clip=args.kl_clip,
-                TCov=args.kfac_cov_update_freq,
-                TInv=args.kfac_update_freq,
-                inv_block_count=args.inv_block_count)
+                cov_update_freq=args.kfac_cov_update_freq,
+                inv_update_freq=args.kfac_update_freq,
+                diag_blocks=args.diag_blocks,
+                diag_warmup=args.diag_warmup,
+                distribute_layer_factors=args.distribute_layer_factors)
+        kfac_param_scheduler = kfac.KFACParamScheduler(
+                preconditioner,
+                damping_alpha=args.damping_alpha,
+                damping_schedule=args.damping_decay,
+                update_freq_alpha=args.kfac_update_freq_alpha,
+                update_freq_schedule=args.kfac_update_freq_decay,
+                start_epoch=args.resume_from_epoch)
     else:
-        # KFAC guarentees grads are equal across ranks before opt.step() is 
-        # called so if we do not use kfac we need to wrap the optimizer 
-        # with horovod
-        compression = hvd.Compression.fp16 if args.fp16_allreduce \
-                                           else hvd.Compression.none
-        optimizer = hvd.DistributedOptimizer(
-                optimizer, named_parameters=model.named_parameters(),
-                compression=compression, op=hvd.Average)
         preconditioner = None
+
+    compression = hvd.Compression.fp16 if args.fp16_allreduce \
+                                       else hvd.Compression.none
+    optimizer = hvd.DistributedOptimizer(
+            optimizer, named_parameters=model.named_parameters(),
+            compression=compression, op=hvd.Average)
 
     # Restore from a previous checkpoint, if initial_epoch is specified.
     # Horovod: restore on the first worker which will broadcast weights 
@@ -215,6 +252,7 @@ def get_model(args):
     lr_scheduler = [LambdaLR(optimizer, lrs)]
     if preconditioner is not None:
         lr_scheduler.append(LambdaLR(preconditioner, lrs))
+        lr_scheduler.append(kfac_param_scheduler)
 
     loss_func = LabelSmoothLoss(args.label_smoothing)
 
@@ -245,9 +283,11 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             train_accuracy.update(accuracy(output, target))
             loss.backward()
 
+            optimizer.synchronize()
             if preconditioner is not None:
-                preconditioner.step()
-            optimizer.step()
+                preconditioner.step(epoch=epoch)
+            with optimizer.skip_synchronize():
+                optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
                     train_loss.avg.item(), 100*train_accuracy.avg.item()))
@@ -292,6 +332,9 @@ if __name__ == '__main__':
 
     train_sampler, train_loader, _, val_loader = get_datasets(args)
     model, opt, preconditioner, lr_schedules, lrs, loss_func = get_model(args)
+
+    if args.verbose:
+        print("MODEL:", args.model)
 
     start = time.time()
 
