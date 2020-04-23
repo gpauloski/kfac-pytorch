@@ -22,7 +22,12 @@ class cycle:
         Args:
           iterable: Any iterable to iterate over indefinitely
         """
-        self.iterator = itertools.cycle(iterable)
+        self.iterable = iterable
+        self.reset()
+
+    def reset(self):
+        """Reset iterable to start"""
+        self.iterator = itertools.cycle(self.iterable)
 
     def next(self, size):
         """Get next tuple of size in rotation.
@@ -32,6 +37,20 @@ class cycle:
           is called.
         """
         return tuple([next(self.iterator) for x in range(size)])
+
+def get_block_boundary(index, block_count, shape):
+    if index >= block_count:
+        raise ValueError("Index ({}) greater than number of requested blocks "
+                         "({})".format(index, block_count))
+    if block_count > min(shape):
+        raise ValueError("Requested blocks ({}) greater than minimum possible "
+                         "blocks for shape {}".format(block_count, shape))
+    block_shape = [x // block_count for x in shape]
+    block_start = [x * index for x in block_shape]
+    block_end = [x * (index+1) if (index+1) < block_count 
+                           else shape[i] 
+                 for i, x in enumerate(block_shape)]
+    return block_start, block_end
 
 def _extract_patches(x, kernel_size, stride, padding):
     """
@@ -144,6 +163,9 @@ class ComputeCovA:
     def linear(a, layer):
         # a: batch_size * in_dim
         batch_size = a.size(0)
+        #if len(a.shape) > 2:
+        #    a = a.view(-1, a.shape[-1])
+        #    a = torch.mean(a, list(range(len(a.shape)))[1:-1])
         if layer.bias is not None:
             a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
         return a.t() @ (a / batch_size)
@@ -194,7 +216,9 @@ class ComputeCovG:
     def linear(g, layer, batch_averaged):
         # g: batch_size * out_dim
         batch_size = g.size(0)
-
+        #if len(g.shape) > 2:
+        #    #g = g.view(-1, g.shape[-1])
+        #    g = torch.mean(g, list(range(len(g.shape)))[1:-1])
         if batch_averaged:
             cov_g = g.t() @ (g * batch_size)
         else:

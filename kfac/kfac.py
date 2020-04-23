@@ -7,6 +7,7 @@ from kfac_utils import (ComputeCovA, ComputeCovG)
 from kfac_utils import update_running_stat
 from kfac_utils import try_contiguous
 from kfac_utils import cycle
+from kfac_utils import get_block_boundary
 
 import horovod.torch as hvd
 
@@ -17,60 +18,57 @@ class KFAC(optim.Optimizer):
                  stat_decay=0.95,
                  damping=0.001,
                  kl_clip=0.001,
-                 TCov=10,
-                 TInv=100,
+                 cov_update_freq=10,
+                 inv_update_freq=100,
                  batch_averaged=True,
-                 inv_block_count=1):
-       
-        if inv_block_count > 1:
-            raise ValueError("Inv block count > 1 not implemented yet")
- 
-        defaults = dict(lr=lr, damping=damping)
+                 diag_blocks=1,
+                 diag_warmup=0,
+                 distribute_layer_factors=None):
+
+        defaults = dict(lr=lr, damping=damping, cov_update_freq=cov_update_freq,
+                        inv_update_freq=inv_update_freq) 
         super(KFAC, self).__init__(model.parameters(), defaults)
         self.CovAHandler = ComputeCovA()
         self.CovGHandler = ComputeCovG()
-        self.batch_averaged = batch_averaged
 
         self.known_modules = {'Linear', 'Conv2d'}
-
         self.modules = []
-        self.known_params = []
-        self.grad_outputs = {}
 
         self.model = model
         self._prepare_model()
 
         self.steps = 0
 
+        self.m_a, self.m_g = {}, {}
         self.m_aa, self.m_gg = {}, {}
         self.Q_a, self.Q_g = {}, {}
         self.d_a, self.d_g = {}, {}
 
         self.stat_decay = stat_decay
         self.kl_clip = kl_clip
-        self.TCov = TCov
-        self.TInv = TInv
-        self.inv_block_count = inv_block_count
+        self.cov_update_freq = cov_update_freq
+        self.inv_update_freq = inv_update_freq
+        self.diag_blocks = diag_blocks
+        self.diag_warmup = diag_warmup
+        self.batch_averaged = batch_averaged
+        
+        if distribute_layer_factors is None:
+            self.distribute_layer_factors = True \
+                    if hvd.size() > len(self.modules) else False
+        else:
+            self.distribute_layer_factors = distribute_layer_factors
 
-        self.acc_stats = True
+        self.have_cleared_Q = True if self.diag_warmup == 0 else False
+        self.eps = 1e-10  # for numerical stability
         self.rank_iter = cycle(list(range(hvd.size())))
 
     def _save_input(self, module, input):
-        if torch.is_grad_enabled() and self.steps % self.TCov == 0:
-            aa = self.CovAHandler(input[0].data, module)
-            # Initialize buffers
-            if self.steps == 0:
-                self.m_aa[module] = torch.diag(aa.new(aa.size(0)).fill_(1))
-            update_running_stat(aa, self.m_aa[module], self.stat_decay)
+        if torch.is_grad_enabled() and self.steps % self.cov_update_freq == 0:
+            self.m_a[module] = input[0].data
 
     def _save_grad_output(self, module, grad_input, grad_output):
-        # Accumulate statistics for Fisher matrices
-        if self.acc_stats and self.steps % self.TCov == 0:
-            gg = self.CovGHandler(grad_output[0].data, module, self.batch_averaged)
-            # Initialize buffers
-            if self.steps == 0:
-                self.m_gg[module] = torch.diag(gg.new(gg.size(0)).fill_(1))
-            update_running_stat(gg, self.m_gg[module], self.stat_decay)
+        if self.steps % self.cov_update_freq == 0:
+            self.m_g[module] = grad_output[0].data
 
     def _prepare_model(self):
         for module in self.model.modules():
@@ -80,16 +78,60 @@ class KFAC(optim.Optimizer):
                 module.register_forward_pre_hook(self._save_input)
                 module.register_backward_hook(self._save_grad_output)
 
-    def _update_inv(self, m):
-        eps = 1e-10  # for numerical stability
+    def _init_a_buffers(self, factor, module):
+        self.m_aa[module] = torch.diag(factor.new(factor.shape[0]).fill_(1))
+        self.d_a[module] = factor.new_zeros(factor.shape[0])
+        self.Q_a[module] = factor.new_zeros(factor.shape)
 
-        self.d_a[m], self.Q_a[m] = torch.symeig(
-            self.m_aa[m], eigenvectors=True)
-        self.d_g[m], self.Q_g[m] = torch.symeig(
-            self.m_gg[m], eigenvectors=True)
+    def _init_g_buffers(self, factor, module):
+        self.m_gg[module] = torch.diag(factor.new(factor.shape[0]).fill_(1))
+        self.d_g[module] = factor.new_zeros(factor.shape[0])
+        self.Q_g[module] = factor.new_zeros(factor.shape)
 
-        self.d_g[m].mul_((self.d_g[m] > eps).float())
-        self.d_a[m].mul_((self.d_a[m] > eps).float())
+    def _update_cov_a(self):
+        for module in self.modules: 
+            aa = self.CovAHandler(self.m_a[module], module)
+            if self.steps == 0:
+                self._init_a_buffers(aa, module)
+            update_running_stat(aa, self.m_aa[module], self.stat_decay)
+
+    def _update_cov_g(self):
+        for module in self.modules:
+            gg = self.CovGHandler(self.m_g[module], module, self.batch_averaged)
+            if self.steps == 0:
+                self._init_g_buffers(gg, module)
+            update_running_stat(gg, self.m_gg[module], self.stat_decay)
+
+    def _update_eigen_a(self, m, ranks):
+        i = ranks.index(hvd.rank())
+        n = len(ranks)
+        a = self.m_aa[m]
+        if n > min(a.shape):
+            n = min(a.shape)
+
+        if i < n:
+            start, end = get_block_boundary(i, n, a.shape)
+            block = a[start[0]:end[0], start[1]:end[1]]
+            d, Q = torch.symeig(block, eigenvectors=True)
+            d = torch.mul(d, (d > self.eps).float())
+            self.d_a[m].data[start[0]:end[0]].copy_(d)
+            self.Q_a[m].data[start[0]:end[0], start[1]:end[1]].copy_(Q)
+
+    def _update_eigen_g(self, m, ranks):
+        # Only compute g on first rank to enter this function
+        i = ranks.index(hvd.rank())
+        n = len(ranks)
+        g = self.m_gg[m]
+        if n > min(g.shape):
+            n = min(g.shape)
+
+        if i < n:
+            start, end = get_block_boundary(i, n, g.shape)
+            block = g[start[0]:end[0], start[1]:end[1]]
+            d, Q = torch.symeig(block, eigenvectors=True)
+            d = torch.mul(d, (d > self.eps).float())
+            self.d_g[m].data[start[0]:end[0]].copy_(d)
+            self.Q_g[m].data[start[0]:end[0], start[1]:end[1]].copy_(Q)
 
     @staticmethod
     def _get_matrix_form_grad(m, classname):
@@ -107,14 +149,15 @@ class KFAC(optim.Optimizer):
             p_grad_mat = torch.cat([p_grad_mat, m.bias.grad.data.view(-1, 1)], 1)
         return p_grad_mat
 
-    def _get_natural_grad(self, m, p_grad_mat, damping):
+    def _get_natural_grad(self, m, p_grad_mat):
         """
         :param m:  the layer
         :param p_grad_mat: the gradients in matrix form
         :return: a list of gradients w.r.t to the parameters in `m`
         """
         v1 = self.Q_g[m].t() @ p_grad_mat @ self.Q_a[m]
-        v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + damping)
+        v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + 
+                   self.damping)
         v = self.Q_g[m] @ v2 @ self.Q_a[m].t()
 
         if m.bias is not None:
@@ -127,15 +170,15 @@ class KFAC(optim.Optimizer):
             v = [v.view(m.weight.grad.data.size())]
         return v
 
-    def _kl_clip_and_update_grad(self, updates, lr):
+    def _kl_clip_and_update_grad(self, updates):
         # do kl clip
         vg_sum = 0
         for m in self.modules:
             v = updates[m]
-            vg_sum += (v[0] * m.weight.grad.data * lr ** 2).sum().item()
+            vg_sum += (v[0] * m.weight.grad.data * self.lr ** 2).sum().item()
             if m.bias is not None:
-                vg_sum += (v[1] * m.bias.grad.data * lr ** 2).sum().item()
-        nu = min(1.0, math.sqrt(self.kl_clip / vg_sum))
+                vg_sum += (v[1] * m.bias.grad.data * self.lr ** 2).sum().item()
+        nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
         for m in self.modules:
             v = updates[m]
@@ -145,74 +188,153 @@ class KFAC(optim.Optimizer):
                 m.bias.grad.data.copy_(v[1])
                 m.bias.grad.data.mul_(nu)
 
-    def step(self, closure=None):
+    def step(self, closure=None, epoch=None):
         group = self.param_groups[0]
-        lr = group['lr']
-        damping = group['damping']
+        self.lr = group['lr']
+        self.damping = group['damping']
+        self.cov_update_freq = group['cov_update_freq']
+        self.inv_update_freq = group['inv_update_freq']
         updates = {}
         handles = []
 
-        if hvd.size() > 1:
-            self.allreduce_grads()
+        if epoch is None:
+            if self.diag_warmup > 0:
+                print("WARNING: diag_warmup > 0 but epoch was not passed to "
+                      "KFAC.step(). Defaulting to no diag_warmup")
+            diag_blocks = self.diag_blocks
+        else:
+            diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
 
-        if self.steps % self.TCov == 0 and hvd.size() > 1:
-            self.sync_handles()
+        if self.steps % self.cov_update_freq == 0:
+            self._update_cov_a()
+            self._update_cov_g()
+            if hvd.size() > 1:
+                self.allreduce_covs()
 
-        for i, m in enumerate(self.modules):
-            #rank = self.rank_iter.next(1)
-            #if hvd.rank() in rank:
-            if i % hvd.size() == hvd.rank():
-                classname = m.__class__.__name__
-                if self.steps % self.TInv == 0:
-                    self._update_inv(m)
-                p_grad_mat = self._get_matrix_form_grad(m, classname)
-                v = self._get_natural_grad(m, p_grad_mat, damping)
-                v = [try_contiguous(x) for x in v]
-            else:
-                v = self.get_zeros_like(m)
+        # if we are switching from no approx to approx, we need to clear
+        # off-block-diagonal elements
+        if not self.have_cleared_Q and \
+                epoch == self.diag_warmup and \
+                self.steps % self.inv_update_freq == 0:
+            for m in self.modules:
+                self.Q_a[m].fill_(0)
+                self.Q_g[m].fill_(0)
+            self.have_cleared_Q = True
 
-            updates[m] = v
+        if self.steps % self.inv_update_freq == 0:
+            # reset rank iter so device get the same layers
+            # to compute to take advantage of caching
+            self.rank_iter.reset() 
+            for m in self.modules:
+                n = diag_blocks if m.__class__.__name__ == 'Conv2d' else 1
+                ranks_a = self.rank_iter.next(n)
+                if self.distribute_layer_factors:
+                    ranks_g = self.rank_iter.next(n)
+                else:
+                    ranks_g = ranks_a
+
+                if hvd.rank() in ranks_a:
+                    self._update_eigen_a(m, ranks_a)
+                else:
+                    self.Q_a[m].fill_(0)
+                    self.d_a[m].fill_(0)
+
+                if hvd.rank() in ranks_g:
+                    self._update_eigen_g(m, ranks_g)
+                else:
+                    self.Q_g[m].fill_(0)
+                    self.d_g[m].fill_(0)
 
             if hvd.size() > 1:
-                for x in updates[m]:
-                    handles.append(hvd.allreduce_async_(x, op=hvd.Sum))
-    
-        for handle in handles:
-            hvd.synchronize(handle)
+                self.allreduce_eigens()
 
-        self._kl_clip_and_update_grad(updates, lr)
+        for m in self.modules:
+            classname = m.__class__.__name__
+            p_grad_mat = self._get_matrix_form_grad(m, classname)
+            v = self._get_natural_grad(m, p_grad_mat)
+            updates[m] = v
+
+        self._kl_clip_and_update_grad(updates)
 
         self.steps += 1
 
-    def allreduce_grads(self):
-        handles = []
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-
-                handles.append(hvd.allreduce_async_(p.grad, op=hvd.Average))
-        for handle in handles:
-            hvd.synchronize(handle)
-
-    def sync_handles(self):
+    def allreduce_covs(self):
         handles = []
 
         for m in self.modules:
             handles.append(hvd.allreduce_async_(self.m_aa[m].data, op=hvd.Average))
             handles.append(hvd.allreduce_async_(self.m_gg[m].data, op=hvd.Average))
-            if m.weight.grad is not None:
-                handles.append(hvd.allreduce_async_(m.weight.grad, op=hvd.Average))
-                if m.bias is not None:
-                    handles.append(hvd.allreduce_async_(m.bias.grad, op=hvd.Average))
 
         for handle in handles:
             hvd.synchronize(handle)
 
-    def get_zeros_like(self, m):
-        if m.bias is not None:
-            v = [torch.zeros_like(m.weight.grad),
-                 torch.zeros_like(m.bias.grad)]
+    def allreduce_eigens(self):
+        handles = []
+
+        for m in self.modules:
+            handles.append(hvd.allreduce_async_(self.Q_a[m].data, op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.Q_g[m].data, op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.d_a[m].data, op=hvd.Sum))
+            handles.append(hvd.allreduce_async_(self.d_g[m].data, op=hvd.Sum))
+    
+        for handle in handles:
+            hvd.synchronize(handle)
+
+
+class KFACParamScheduler():
+    def __init__(self,
+                 kfac,
+                 damping_alpha=1,
+                 damping_schedule=None,
+                 update_freq_alpha=1,
+                 update_freq_schedule=None,
+                 start_epoch=0):
+
+        self.kfac = kfac
+        params = self.kfac.param_groups[0]
+
+        self.damping_base = params['damping']
+        self.damping_alpha = damping_alpha
+        self.damping_schedule = damping_schedule
+        self.damping_factor_func = \
+                self.get_factor_func(self.damping_schedule,
+                                     self.damping_alpha)
+
+        self.cov_update_freq_base = params['cov_update_freq']
+        self.inv_update_freq_base = params['inv_update_freq']
+        self.update_freq_alpha = update_freq_alpha
+        self.update_freq_schedule = update_freq_schedule
+        self.update_freq_factor_func = \
+                self.get_factor_func(self.update_freq_schedule,
+                                     self.update_freq_alpha)
+
+        self.epoch = start_epoch
+
+    def get_factor_func(self, schedule, alpha):
+        if schedule is not None:
+            schedule.sort(reverse=True)
         else:
-            v = [torch.zeros_like(m.weight.grad)]
-        return v
+            schedule = []
+
+        def factor_func(epoch):
+            factor = 1.
+            for e in schedule:
+                if epoch >= e:
+                    factor *= alpha
+            return factor
+
+        return factor_func
+
+    def step(self, epoch=None):
+        if epoch is not None:
+            self.epoch = epoch
+        else:
+            self.epoch += 1
+
+        params = self.kfac.param_groups[0]
+
+        params['damping'] = self.damping_base * self.damping_factor_func(self.epoch)
+
+        factor = self.update_freq_factor_func(self.epoch)
+        params['cov_update_freq'] = int(self.cov_update_freq_base * factor)
+        params['inv_update_freq'] = int(self.inv_update_freq_base * factor)
