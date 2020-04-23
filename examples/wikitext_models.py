@@ -1,3 +1,9 @@
+'''
+RNNModel for PyTorch's word_language_model example
+
+Source: https://github.com/pytorch/examples/blob/master/word_language_model/model.py
+'''
+
 import math
 import torch
 import torch.nn as nn

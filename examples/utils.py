@@ -1,21 +1,11 @@
 import torch
 import torch.nn.functional as F
 import horovod.torch as hvd
-from PIL import Image
-
-def is_valid(filename):
-    try:
-        im=Image.open(filename)
-        im.verify()
-    except Exception:
-        return False
-    return True
 
 def accuracy(output, target):
     # get the index of the max log-probability
     pred = output.max(1, keepdim=True)[1]
     return pred.eq(target.view_as(pred)).cpu().float().mean()
-
 
 def save_checkpoint(model, optimizer, checkpoint_format, epoch):
     if hvd.rank() == 0:
