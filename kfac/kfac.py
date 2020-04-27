@@ -71,8 +71,8 @@ class KFAC(optim.Optimizer):
         if self.steps % self.fac_update_freq == 0:
             self.m_g[module] = grad_output[0].data
 
-    def _register_modules(self):
-        for module in self.model.modules():
+    def _register_modules(self, model):
+        for module in model.modules():
             classname = module.__class__.__name__
             if classname in self.known_modules:
                 self.modules.append(module)
@@ -145,7 +145,7 @@ class KFAC(optim.Optimizer):
             grad = module.weight.grad.data.view(module.weight.grad.data.size(0), -1)  
         else:
             grad = module.weight.grad.data
-        if m.bias is not None:
+        if module.bias is not None:
             grad = torch.cat([grad, module.bias.grad.data.view(-1, 1)], 1)
         return grad
 
@@ -235,13 +235,13 @@ class KFAC(optim.Optimizer):
                     ranks_g = ranks_a
 
                 if hvd.rank() in ranks_a:
-                    self._update_eigen_a(module, ranks_a)
+                    self._update_eigen_A(module, ranks_a)
                 else:
                     self.m_QA[module].fill_(0)
                     self.m_dA[module].fill_(0)
 
                 if hvd.rank() in ranks_g:
-                    self._update_eigen_g(module, ranks_g)
+                    self._update_eigen_G(module, ranks_g)
                 else:
                     self.m_QG[module].fill_(0)
                     self.m_dG[module].fill_(0)
@@ -287,7 +287,7 @@ class KFACParamScheduler():
                  kfac,
                  damping_alpha=1,
                  damping_schedule=None,
-                 update_frem_QAlpha=1,
+                 update_freq_alpha=1,
                  update_freq_schedule=None,
                  start_epoch=0):
 
@@ -303,11 +303,11 @@ class KFACParamScheduler():
 
         self.fac_update_freq_base = params['fac_update_freq']
         self.inv_update_freq_base = params['inv_update_freq']
-        self.update_frem_QAlpha = update_frem_QAlpha
+        self.update_freq_alpha = update_freq_alpha
         self.update_freq_schedule = update_freq_schedule
         self.update_freq_factor_func = \
                 self.get_factor_func(self.update_freq_schedule,
-                                     self.update_frem_QAlpha)
+                                     self.update_freq_alpha)
 
         self.epoch = start_epoch
 
