@@ -212,9 +212,9 @@ def get_model(args):
 
     if args.kfac_update_freq > 0:
         preconditioner = kfac.KFAC(
-                model, lr=args.base_lr, stat_decay=args.stat_decay,
+                model, lr=args.base_lr, factor_decay=args.stat_decay,
                 damping=args.damping, kl_clip=args.kl_clip,
-                cov_update_freq=args.kfac_cov_update_freq,
+                fac_update_freq=args.kfac_cov_update_freq,
                 inv_update_freq=args.kfac_update_freq,
                 diag_blocks=args.diag_blocks,
                 diag_warmup=args.diag_warmup,

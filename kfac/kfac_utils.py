@@ -79,7 +79,7 @@ def update_running_stat(aa, m_aa, stat_decay):
     m_aa *= (1 - stat_decay)
 
 
-class ComputeCovA:
+class ComputeA:
 
     @classmethod
     def compute_cov_a(cls, a, layer):
@@ -122,7 +122,7 @@ class ComputeCovA:
         return a.t() @ (a / batch_size)
 
 
-class ComputeCovG:
+class ComputeG:
 
     @classmethod
     def compute_cov_g(cls, g, layer, batch_averaged=False):
