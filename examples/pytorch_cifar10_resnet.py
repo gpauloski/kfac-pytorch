@@ -19,7 +19,6 @@ import horovod.torch as hvd
 from tqdm import tqdm
 from utils import *
 
-sys.path.append("./kfac")
 import kfac
 
 # Training settings
@@ -166,7 +165,7 @@ if use_kfac:
     preconditioner = kfac.KFAC(model, lr=args.base_lr, factor_decay=args.stat_decay, 
                                damping=args.damping, kl_clip=args.kl_clip, 
                                fac_update_freq=args.kfac_cov_update_freq, 
-                               inv_update_freq=args.kfac_update_freq,
+                               kfac_update_freq=args.kfac_update_freq,
                                diag_blocks=args.diag_blocks,
                                diag_warmup=args.diag_warmup,
                                distribute_layer_factors=args.distribute_layer_factors)

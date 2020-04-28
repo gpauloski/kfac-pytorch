@@ -6,17 +6,28 @@ The KFAC code was originally forked from Chaoqi Wang's [KFAC-PyTorch](https://gi
 The ResNet models for Cifar10 are from Yerlan Idelbayev's [pytorch_resnet_cifar10](https://github.com/akamaster/pytorch_resnet_cifar10).
 The CIFAR-10 and ImageNet-1k training scripts are modeled afer Horovod's example PyTorch training scripts.
 
-## Requirements
+## Install
+
+### Requirements
 
 PyTorch and Horovod are required to use K-FAC.
 
 This code is validated to run with PyTorch v1.1, Horovod 0.19.0, CUDA 10.0/1, CUDNN 7.6.4, and NCCL 2.4.7.
+
+### Installation
+
+```
+$ git clone https://github.com/gpauloski/kfac_pytorch.git
+$ cd kfac_pytorch
+$ pip install .
+```
 
 ## Usage
 
 The K-FAC Preconditioner can be easily added to exisiting training scripts that use `horovod.DistributedOptimizer()`.
 
 ```Python
+from kfac import KFAC
 ... 
 optimizer = optim.SGD(model.parameters(), ...)
 optimizer = hvd.DistributedOptimizer(optimizer, ...)

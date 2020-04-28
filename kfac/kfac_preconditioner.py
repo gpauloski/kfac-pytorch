@@ -3,11 +3,11 @@ import torch
 import torch.optim as optim
 import horovod.torch as hvd
 
-from kfac_utils import (ComputeA, ComputeG)
-from kfac_utils import update_running_avg
-from kfac_utils import try_contiguous
-from kfac_utils import cycle
-from kfac_utils import get_block_boundary
+from kfac.utils import (ComputeA, ComputeG)
+from kfac.utils import update_running_avg
+from kfac.utils import try_contiguous
+from kfac.utils import cycle
+from kfac.utils import get_block_boundary
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
@@ -254,7 +254,7 @@ class KFAC(optim.Optimizer):
             evalues.data[start[0]:end[0]].copy_(d)
             evectors.data[start[0]:end[0], start[1]:end[1]].copy_(Q)
 
-    def _get_diag_blocks(module, diag_blocks):
+    def _get_diag_blocks(self, module, diag_blocks):
         """Helper method for determining number of diag_blocks to use
 
         Overrides `diag_blocks` if the `module` does not support
@@ -389,7 +389,8 @@ class KFAC(optim.Optimizer):
                 # Get ranks to compute this layer on
                 n = self._get_diag_blocks(module, diag_blocks)
                 ranks_a = self.rank_iter.next(n)
-                ranks_g = self.rank_iter.next(n) if self.distribute_layer_factors else ranks_a
+                ranks_g = self.rank_iter.next(n) if self.distribute_layer_factors \
+                                                 else ranks_a
 
                 self._update_eigen_A(module, ranks_a)
                 self._update_eigen_G(module, ranks_g)
@@ -473,7 +474,7 @@ class KFACParamScheduler():
         self.damping_alpha = damping_alpha
         self.damping_schedule = damping_schedule
         self.damping_factor_func = \
-                self.get_factor_func(self.damping_schedule,
+                self._get_factor_func(self.damping_schedule,
                                      self.damping_alpha)
 
         self.fac_update_freq_base = params['fac_update_freq']
