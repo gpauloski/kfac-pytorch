@@ -1,7 +1,7 @@
+import itertools
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import itertools
 
 def try_contiguous(x):
     if not x.is_contiguous():
@@ -39,6 +39,7 @@ class cycle:
         return tuple([next(self.iterator) for x in range(size)])
 
 def get_block_boundary(index, block_count, shape):
+    """Computes start and end indicies when block diagonalizing a matrix"""
     if index >= block_count:
         raise ValueError("Index ({}) greater than number of requested blocks "
                          "({})".format(index, block_count))
@@ -53,12 +54,16 @@ def get_block_boundary(index, block_count, shape):
     return block_start, block_end
 
 def _extract_patches(x, kernel_size, stride, padding):
-    """
-    :param x: The input feature maps.  (batch_size, in_c, h, w)
-    :param kernel_size: the kernel size of the conv filter (tuple of two elements)
-    :param stride: the stride of conv operation  (tuple of two elements)
-    :param padding: number of paddings. be a tuple of two elements
-    :return: (batch_size, out_h, out_w, in_c*kh*kw)
+    """Extract patches from convolutional layer
+
+    Args:
+      x: The input feature maps.  (batch_size, in_c, h, w)
+      kernel_size: the kernel size of the conv filter (tuple of two elements)
+      stride: the stride of conv operation  (tuple of two elements)
+      padding: number of paddings. be a tuple of two elements
+    
+    Returns:
+      Tensor of shape (batch_size, out_h, out_w, in_c*kh*kw)
     """
     if padding[0] + padding[1] > 0:
         x = F.pad(x, (padding[1], padding[1], padding[0],
@@ -72,14 +77,17 @@ def _extract_patches(x, kernel_size, stride, padding):
     return x
 
 
-def update_running_stat(aa, m_aa, stat_decay):
-    # using inplace operation to save memory!
-    m_aa *= stat_decay / (1 - stat_decay)
-    m_aa += aa
-    m_aa *= (1 - stat_decay)
+def update_running_avg(new, current, alpha):
+    """Compute running average of matrix in-place
+
+    current = alpha*new + (1-alpha)*current
+    """
+    current *= alpha / (1 - alpha)
+    current += new
+    current *= (1 - alpha)
 
 
-class ComputeCovA:
+class ComputeA:
 
     @classmethod
     def compute_cov_a(cls, a, layer):
@@ -92,9 +100,7 @@ class ComputeCovA:
         elif isinstance(layer, nn.Conv2d):
             cov_a = cls.conv2d(a, layer)
         else:
-            # FIXME(CW): for extension to other layers.
-            # raise NotImplementedError
-            cov_a = None
+            raise NotImplementedError("KFAC does not support layer: ".format(layer))
 
         return cov_a
 
@@ -122,7 +128,7 @@ class ComputeCovA:
         return a.t() @ (a / batch_size)
 
 
-class ComputeCovG:
+class ComputeG:
 
     @classmethod
     def compute_cov_g(cls, g, layer, batch_averaged=False):
@@ -142,7 +148,7 @@ class ComputeCovG:
         elif isinstance(layer, nn.Linear):
             cov_g = cls.linear(g, layer, batch_averaged)
         else:
-            cov_g = None
+            raise NotImplementedError("KFAC does not support layer: ".format(layer))
 
         return cov_g
 
@@ -175,19 +181,3 @@ class ComputeCovG:
         else:
             cov_g = g.t() @ (g / batch_size)
         return cov_g
-
-
-
-if __name__ == '__main__':
-    def test_ComputeCovA():
-        pass
-
-    def test_ComputeCovG():
-        pass
-
-
-
-
-
-
-
