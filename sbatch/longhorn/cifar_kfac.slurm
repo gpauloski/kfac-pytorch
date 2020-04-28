@@ -10,14 +10,12 @@
 #SBATCH -N 1                       # Total # of nodes 
 #SBATCH -n 4                       # Total # of mpi tasks
 #SBATCH -t 4:00:00                # Run time (hh:mm:ss)
-#SBATCH --mail-user=jgpauloski@utexas.edu
+#SBATCH --mail-user=XXX
 #SBATCH --mail-type=end            # Send email at begin and end of job
 #SBATCH -p v100
-#SBATCH -A Deep-Learning-at-Sca    # Allocation
+#SBATCH -A XXX    # Allocation
 
 mkdir -p sbatch_logs
-
-module load cuda/10.1
 
 source $SCRATCH/anaconda3/bin/activate pytorch
 
@@ -31,6 +29,6 @@ mpiexec -hostfile /tmp/hostfile -N 4 \
      --epochs 100 \
      --kfac-update-freq 10 \
      --model resnet32 \
-     --lr-decay 40 80
+     --lr-decay 35 75 90
 
 # -----------------------------------------------------------------------------
