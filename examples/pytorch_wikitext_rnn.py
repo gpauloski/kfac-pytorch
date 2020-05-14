@@ -1,13 +1,4 @@
 # coding: utf-8
-
-'''
-Modified WikiText Language Model for Distributed Training with Horovod
-
-NOTE: This is a work-in-progress and does not work with K-FAC yet.
-
-Source: https://github.com/pytorch/examples/tree/master/word_language_model
-'''
-
 import argparse
 import time
 import math
@@ -30,7 +21,6 @@ import wikitext_models as models
 from utils import *
 
 import horovod.torch as hvd
-sys.path.append("./kfac")
 import kfac
 
 def initialize():
@@ -95,8 +85,8 @@ def initialize():
                         help='KL clip (default: 0.001)')
     parser.add_argument('--diag-blocks', type=int, default=1,
                         help='Number of blocks to approx layer factor with (default: 1)')
-    parser.add_argument('--diag-warmup', type=int, default=5,
-                        help='Epoch to start diag block approximation at (default: 5)')
+    parser.add_argument('--diag-warmup', type=int, default=0,
+                        help='Epoch to start diag block approximation at (default: 0)')
 
 
     args = parser.parse_args()
@@ -137,8 +127,6 @@ def initialize():
 
 
 def get_datasets(args):
-    download = True if hvd.local_rank() == 0 else False
-    if not download: hvd.allreduce(torch.tensor(1), name="barrier")
     args.dir = os.path.join(args.dir, args.dataset)
     os.makedirs(args.dir, exist_ok=True)
     tokenizer = get_tokenizer("basic_english")
@@ -147,34 +135,31 @@ def get_datasets(args):
     elif args.dataset == 'wikitext103':
         WikiText = datasets.WikiText103
     train_data, val_data, test_data = WikiText(tokenizer=tokenizer, root=args.dir)
-    if args.verbose: print("")
-    if download: hvd.allreduce(torch.tensor(1), name="barrier")
-
     ntokens = len(train_data.get_vocab())
     batch_size = args.batch_size * (args.bptt + 1)
 
     def collate(data):
         data = torch.stack(data)
         source = data.view(args.batch_size, -1).contiguous()
-        data = source[:, :-1]
-        target = source[:, 1:].contiguous().view(-1)
+        data = source[:,:-1]
+        target = source[:,1:].contiguous().view(-1)
         return data, target
 
     torch.set_num_threads(4)
     kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_data, num_replicas=hvd.size(), rank=hvd.rank())
+            train_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
     train_loader = torch.utils.data.DataLoader(
             train_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=train_sampler, shuffle=False, **kwargs)
-    val_sampler = torch.utils.data.distributed.DistributedSampler(
-            val_data, num_replicas=hvd.size(), rank=hvd.rank())
+    val_sampler =torch.utils.data.distributed.DistributedSampler(
+            val_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
     val_loader = torch.utils.data.DataLoader(
             val_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=val_sampler, shuffle=False, **kwargs)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-            test_data, num_replicas=hvd.size(), rank=hvd.rank())
+            test_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
     test_loader = torch.utils.data.DataLoader(
             test_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=test_sampler, shuffle=False, **kwargs)
@@ -194,10 +179,10 @@ def get_model(args):
 
     if args.kfac_update_freq > 0:
         preconditioner = kfac.KFAC(
-                model, lr=args.base_lr, stat_decay=args.stat_decay,
+                model, lr=args.base_lr, factor_decay=args.stat_decay,
                 damping=args.damping, kl_clip=args.kl_clip,
-                TCov=args.kfac_cov_update_freq,
-                TInv=args.kfac_update_freq,
+                fac_update_freq=args.kfac_cov_update_freq,
+                kfac_update_freq=args.kfac_update_freq,
                 diag_blocks=args.diag_blocks,
                 diag_warmup=args.diag_warmup)
     else:
@@ -233,8 +218,7 @@ def evaluate(epoch, model, criterion, data_loader, args):
     model.eval()
     val_loss = Metric('val_loss')
 
-    if args.model != 'Transformer':
-        hidden = model.init_hidden(args.batch_size)
+    hidden = model.init_hidden(args.batch_size)
     verbose = args.verbose if epoch is not None else False
 
     with tqdm(total=len(data_loader),
@@ -245,6 +229,7 @@ def evaluate(epoch, model, criterion, data_loader, args):
             for i, (data, target) in enumerate(data_loader):
                 if args.cuda:
                     data, target = data.cuda(), target.cuda()
+                data, target = torch.squeeze(data), torch.squeeze(target)
                 output, hidden = model(data, hidden)
                 hidden = repackage_hidden(hidden)
                 loss = criterion(output, target)
@@ -265,7 +250,7 @@ def evaluate(epoch, model, criterion, data_loader, args):
 def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
           criterion, train_sampler, train_loader, args):
     model.train()
-    train_sampler.set_epoch(epoch)
+    #train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
     total_loss = torch.tensor(0.)
     elapsed_steps = 0
@@ -273,7 +258,9 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
     for scheduler in lr_schedules:
         scheduler.step()
     lr = args.base_lr * lrs(epoch)
-    hidden = model.init_hidden(args.batch_size)
+
+    if args.model != 'Transformer':
+        hidden = model.init_hidden(args.batch_size)
 
     with tqdm(total=len(train_loader), 
               desc='Epoch {:2d}/{:2d}'.format(epoch + 1, args.epochs),
@@ -281,6 +268,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
         for batch_idx, (data, target) in enumerate(train_loader):
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
+            data, target = torch.squeeze(data), torch.squeeze(target)
             # Starting each batch, we detach the hidden state from how it was 
             # previously produced. If we didn't, the model would try backpropagating 
             # all the way to start of the dataset.
