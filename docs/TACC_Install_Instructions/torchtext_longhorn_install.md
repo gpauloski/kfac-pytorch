@@ -7,7 +7,7 @@ $ git clone https://github.com/google/sentencepiece.git
 $ cd /path/to/sentencepiece
 $ mkdir build
 $ cd build
-$ cmake -DCMAKE_PREFIX_PATH=/path/to/install ..
+$ cmake -DCMAKE_INSTALL_PREFIX=/path/to/install ..
 $ make -j $(nproc)
 $ make install
 $ export LD_LIBRARY_PATH=/path/to/install/lib:$LD_LIBRARY_PATH  # can add to ~/.bashrc

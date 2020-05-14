@@ -53,6 +53,8 @@ parser.add_argument('--kfac-update-freq-alpha', type=float, default=10,
                     help='KFAC update freq multiplier (default: 10)')
 parser.add_argument('--kfac-update-freq-schedule', nargs='+', type=int, default=None,
                     help='KFAC update freq schedule (default None)')
+parser.add_argument('--use-inv-kfac', action='store_true', default=False,
+                    help='Use inverse KFAC update instead of eigen (default False)')
 parser.add_argument('--stat-decay', type=float, default=0.95,
                     help='Alpha value for covariance accumulation (default: 0.95)')
 parser.add_argument('--damping', type=float, default=0.003,
@@ -166,6 +168,7 @@ if use_kfac:
                                damping=args.damping, kl_clip=args.kl_clip, 
                                fac_update_freq=args.kfac_cov_update_freq, 
                                kfac_update_freq=args.kfac_update_freq,
+                               use_eigen_decomp=not args.use_inv_kfac,
                                diag_blocks=args.diag_blocks,
                                diag_warmup=args.diag_warmup,
                                distribute_layer_factors=args.distribute_layer_factors)
