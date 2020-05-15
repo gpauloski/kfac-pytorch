@@ -6,7 +6,8 @@ from kfac.utils import update_running_avg
 from kfac.utils import try_contiguous
 from kfac.utils import get_block_boundary
 
-KNOWN_MODULES = {'Linear', 'Conv2d', 'Embedding'}
+#KNOWN_MODULES = {'Linear', 'Conv2d', 'Embedding'}
+KNOWN_MODULES = {'Conv2d', 'Embedding'}
 
 def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
                    factor_decay=0.95, batch_averaged=True):
@@ -414,16 +415,8 @@ class EmbeddingLayer(KFACLayer):
             precon_grad = G_inv.t() @ grad @ A_inv
         where @ is torch.matmul() and * is torch.mv()/
         """
-        # TODO(gpauloski) A is vector now
         grad = self.get_gradient()
-        print('\ngrad', torch.min(grad), torch.max(grad))
-        print('A', torch.min(self.A_inv), torch.max(self.A_inv))
-        print('G', torch.min(self.G_inv), torch.max(self.G_inv))
-        v1 = torch.matmul(self.G_inv, grad.t())
-        #v2 = torch.matmul(v1, self.A_inv).cuda().t()
-        v2 = v1 * self.A_inv
-        print('precond', torch.min(v2), torch.max(v2))
-        return v2
+        return torch.matmul(self.G_inv, grad.t()) * self.A_inv
     
     def _precondition_gradient_eigen(self):
         """Compute preconditioned gradient for eigendecomp method"""
