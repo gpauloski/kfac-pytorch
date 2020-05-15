@@ -50,6 +50,8 @@ class Metric(object):
         return self.sum / self.n
 
 def create_lr_schedule(workers, warmup_epochs, decay_schedule, alpha=0.1):
+    # TODO(gpauloski): when optim.step() called before lr.step(), the first
+    # epoch using the default lr instead of the warmup lr
     def lr_schedule(epoch):
         lr_adj = 1.
         if epoch < warmup_epochs:
