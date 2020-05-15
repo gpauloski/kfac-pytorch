@@ -114,34 +114,30 @@ class KFAC(optim.Optimizer):
         self.diag_warmup = diag_warmup
         self.batch_averaged = batch_averaged
         
-        self.layers = []
+        self.layers = {}  # key: nn.Module, value: KFACLayer
         self._register_layers(model)
 
         # Compute ideal value for `distribute_layer_factors` based on
         # registered module count
         if distribute_layer_factors is None:
             self.distribute_layer_factors = True \
-                    if hvd.size() > len(self.modules) else False
+                    if hvd.size() > len(self.layers) else False
         else:
             self.distribute_layer_factors = distribute_layer_factors
 
         self.have_cleared_Q = True if self.diag_warmup == 0 else False
         self.rank_iter = cycle(list(range(hvd.size())))
 
-    def _get_input_hook(self, kfac_layer):
-        def _save_input(module, input):
-            """Hook for saving layer input"""
-            if (torch.is_grad_enabled() and 
-                self.steps % self.fac_update_freq == 0):
-                kfac_layer.save_input(input)
-        return _save_input
+    def _save_input(self, module, input):
+        """Hook for saving layer input"""
+        if (torch.is_grad_enabled() and 
+            self.steps % self.fac_update_freq == 0):
+            self.layers[module].save_input(input)
 
-    def _get_output_hook(self, kfac_layer):
-        def _save_grad_output(module, grad_input, grad_output):
-            """Hook for saving gradient w.r.t output"""
-            if self.steps % self.fac_update_freq == 0:
-                kfac_layer.save_grad_output(grad_output)
-        return _save_grad_output
+    def _save_grad_output(self, module, grad_input, grad_output):
+        """Hook for saving gradient w.r.t output"""
+        if self.steps % self.fac_update_freq == 0:
+            self.layers[module].save_grad_output(grad_output)
 
     def _register_layers(self, model):
         """Register hooks to all supported layers in the model"""
@@ -150,22 +146,9 @@ class KFAC(optim.Optimizer):
                 continue
             kfac_layer = get_kfac_layer(module, self.use_eigen_decomp,
                     self.damping, self.factor_decay, self.batch_averaged)
-            self.layers.append(kfac_layer)
-            module.register_forward_pre_hook(self._get_input_hook(kfac_layer))
-            module.register_backward_hook(self._get_output_hook(kfac_layer))
-
-    def _get_diag_blocks(self, module, diag_blocks):
-        """Helper method for determining number of diag_blocks to use
-
-        Overrides `diag_blocks` if the `module` does not support
-        `diag_blocks>1`. I.e. for a Linear layer, we do not want to
-        use a `diag_blocks>1`.
-
-        Args:
-          module: module
-          diag_blocks (int): default number of diag blocks to use
-        """
-        return diag_blocks if module.__class__.__name__ == 'Conv2d' else 1
+            self.layers[module] = kfac_layer
+            module.register_forward_pre_hook(self._save_input)
+            module.register_backward_hook(self._save_grad_output)
 
     def _update_scale_grad(self, updates):
         """Update the gradients in place and scale
@@ -177,20 +160,18 @@ class KFAC(optim.Optimizer):
           updates (dict): dict of {module: precon_grad}
         """
         vg_sum = 0
-        for layer in self.layers:
-            module = layer.module
+        for module in self.layers:
             v = updates[module]
             vg_sum += (v[0] * module.weight.grad.data * self.lr ** 2).sum().item()
-            if module.bias is not None:
+            if hasattr(module, 'bias') and module.bias is not None:
                 vg_sum += (v[1] * module.bias.grad.data * self.lr ** 2).sum().item()
         nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
-        for layer in self.layers:
-            module = layer.module
+        for module in self.layers:
             v = updates[module]
             module.weight.grad.data.copy_(v[0])
             module.weight.grad.data.mul_(nu)
-            if module.bias is not None:
+            if hasattr(module, 'bias') and module.bias is not None:
                 module.bias.grad.data.copy_(v[1])
                 module.bias.grad.data.mul_(nu)
 
@@ -228,7 +209,7 @@ class KFAC(optim.Optimizer):
             diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
 
         if self.steps % self.fac_update_freq == 0:
-            for layer in self.layers:
+            for layer in self.layers.values():
                 layer.update_A()
                 layer.update_G()
             if hvd.size() > 1:
@@ -239,7 +220,7 @@ class KFAC(optim.Optimizer):
         if not self.have_cleared_Q and \
                 epoch == self.diag_warmup and \
                 self.steps % self.kfac_update_freq == 0:
-            for layer in self.layers:
+            for layer in self.layers.values():
                 layer.clear_inverse()
             self.have_cleared_Q = True
 
@@ -248,9 +229,9 @@ class KFAC(optim.Optimizer):
             # to compute to take advantage of caching
             self.rank_iter.reset() 
 
-            for layer in self.layers:
+            for module, layer in self.layers.items():
                 # Get ranks to compute this layer on
-                n = self._get_diag_blocks(layer.module, diag_blocks)
+                n = layer.get_diag_blocks(diag_blocks)
                 ranks_a = self.rank_iter.next(n)
                 ranks_g = self.rank_iter.next(n) if self.distribute_layer_factors \
                                                  else ranks_a
@@ -261,9 +242,9 @@ class KFAC(optim.Optimizer):
             if hvd.size() > 1:
                 self._allreduce_inverses()
 
-        for layer in self.layers:
+        for module, layer in self.layers.items():
             # TODO: make layer hashable so we don't need to use module as key
-            updates[layer.module] = layer.get_preconditioned_gradient()
+            updates[module] = layer.get_preconditioned_gradient()
 
         self._update_scale_grad(updates)
 
@@ -273,7 +254,7 @@ class KFAC(optim.Optimizer):
         """Allreduce the factors for all layers"""
         handles = []
 
-        for layer in self.layers:
+        for layer in self.layers.values():
             handles.extend(layer.get_factor_handles())
 
         for handle in handles:
@@ -283,90 +264,9 @@ class KFAC(optim.Optimizer):
         """Allreduce the eigendecomp/invs for all layers"""
         handles = []
 
-        for layer in self.layers:
+        for layer in self.layers.values():
             handles.extend(layer.get_inverse_handles())
    
         for handle in handles:
             hvd.synchronize(handle)
 
-
-class KFACParamScheduler():
-    """Updates KFAC parameters according to the epoch
-
-    Similar to `torch.optim.lr_scheduler.StepLR()`
-
-    Usage:
-      Call KFACParamScheduler.step() each epoch to compute new parameter
-      values.
-
-    Args:
-      kfac (KFAC): wrapped KFAC preconditioner
-      damping_alpha (float, optional): multiplicative factor of the damping 
-          (default: 1)
-      damping_schedule (list, optional): list of epochs to update the damping
-          by `damping_alpha` (default: None)
-      update_freq_alpha (float, optional): multiplicative factor of the KFAC
-          update freq (default: 1)
-      update_freq_schedule (list, optional): list of epochs to update the KFAC
-          update freq by `update_freq_alpha` (default: None)
-      start_epoch (int, optional): starting epoch, for use if resuming training
-          from checkpoint (default: 0)
-    """
-    def __init__(self,
-                 kfac,
-                 damping_alpha=1,
-                 damping_schedule=None,
-                 update_freq_alpha=1,
-                 update_freq_schedule=None,
-                 start_epoch=0):
-
-        self.kfac = kfac
-        params = self.kfac.param_groups[0]
-
-        self.damping_base = params['damping']
-        self.damping_alpha = damping_alpha
-        self.damping_schedule = damping_schedule
-        self.damping_factor_func = \
-                self._get_factor_func(self.damping_schedule,
-                                     self.damping_alpha)
-
-        self.fac_update_freq_base = params['fac_update_freq']
-        self.kfac_update_freq_base = params['kfac_update_freq']
-        self.update_freq_alpha = update_freq_alpha
-        self.update_freq_schedule = update_freq_schedule
-        self.update_freq_factor_func = \
-                self._get_factor_func(self.update_freq_schedule,
-                                     self.update_freq_alpha)
-
-        self.epoch = start_epoch
-
-    def _get_factor_func(self, schedule, alpha):
-        """Returns a function to compute an update factor using the epoch"""
-        if schedule is not None:
-            schedule.sort(reverse=True)
-        else:
-            schedule = []
-
-        def factor_func(epoch):
-            factor = 1.
-            for e in schedule:
-                if epoch >= e:
-                    factor *= alpha
-            return factor
-
-        return factor_func
-
-    def step(self, epoch=None):
-        """Update KFAC parameters"""
-        if epoch is not None:
-            self.epoch = epoch
-        else:
-            self.epoch += 1
-
-        params = self.kfac.param_groups[0]
-
-        params['damping'] = self.damping_base * self.damping_factor_func(self.epoch)
-
-        factor = self.update_freq_factor_func(self.epoch)
-        params['fac_update_freq'] = int(self.fac_update_freq_base * factor)
-        params['kfac_update_freq'] = int(self.kfac_update_freq_base * factor)

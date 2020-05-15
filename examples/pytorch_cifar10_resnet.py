@@ -199,12 +199,7 @@ def train(epoch):
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
-    
-    for scheduler in lr_scheduler:
-        scheduler.step()
-    if use_kfac:
-        kfac_param_scheduler.step(epoch)
-    
+     
     with tqdm(total=len(train_loader), 
               desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
               disable=not verbose) as t:
@@ -232,6 +227,11 @@ def train(epoch):
     if log_writer:
         log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
+    
+    for scheduler in lr_scheduler:
+        scheduler.step()
+    if use_kfac:
+        kfac_param_scheduler.step(epoch)
 
 def test(epoch):
     model.eval()
