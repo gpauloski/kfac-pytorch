@@ -77,6 +77,8 @@ def initialize():
                         help='iters between kfac inv ops (0 = no kfac) (default: 10)')
     parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
                         help='iters between kfac cov ops (default: 1)')
+    parser.add_argument('--use-inv-kfac', action='store_true', default=False,
+                        help='Use inverse KFAC update instead of eigen (default False)')
     parser.add_argument('--stat-decay', type=float, default=0.95,
                         help='Alpha value for covariance accumulation (default: 0.95)')
     parser.add_argument('--damping', type=float, default=0.002,
@@ -183,6 +185,7 @@ def get_model(args):
                 damping=args.damping, kl_clip=args.kl_clip,
                 fac_update_freq=args.kfac_cov_update_freq,
                 kfac_update_freq=args.kfac_update_freq,
+                use_eigen_decomp=not args.use_inv_kfac,
                 diag_blocks=args.diag_blocks,
                 diag_warmup=args.diag_warmup)
     else:

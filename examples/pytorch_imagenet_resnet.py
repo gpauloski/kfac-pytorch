@@ -265,9 +265,6 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
 
-    for scheduler in lr_schedules:
-        scheduler.step()
-
     with tqdm(total=len(train_loader), 
               desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
               disable=not args.verbose) as t:
@@ -296,6 +293,9 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
         args.log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         args.log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
         args.log_writer.add_scalar('train/lr', args.base_lr * lrs(epoch), epoch)
+
+    for scheduler in lr_schedules:
+        scheduler.step()
 
 def validate(epoch, model, loss_func, val_loader, args):
     model.eval()
