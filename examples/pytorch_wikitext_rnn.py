@@ -258,9 +258,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
     total_loss = torch.tensor(0.)
     elapsed_steps = 0
 
-    for scheduler in lr_schedules:
-        scheduler.step()
-    lr = args.base_lr * lrs(epoch)
+    lr = args.base_lr * lrs(epoch-1)
 
     if args.model != 'Transformer':
         hidden = model.init_hidden(args.batch_size)
@@ -304,6 +302,9 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
         args.log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         args.log_writer.add_scalar('train/ppl', torch.exp(train_loss.avg), epoch)
         args.log_writer.add_scalar('train/lr', lr, epoch)
+
+    for scheduler in lr_schedules:
+        scheduler.step()
 
 
 if __name__ == '__main__':

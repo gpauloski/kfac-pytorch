@@ -347,6 +347,19 @@ class EmbeddingLayer(KFACLayer):
         self.has_bias = False
         self.use_eigen_decomp = False
 
+    def _init_buffers_A(self, factor):
+        """Create buffers for factor A and its inv
+
+        For embedding layers, A is a diagonal matrix so we just store the
+        diagonal to save memory.
+        """
+        self.A_factor = factor.new(self.module.num_embeddings).fill_(1)
+        if self.use_eigen_decomp:
+            raise NotImplementedError('Use inv method for embedding layers')
+        else:
+            shape = factor.shape
+        self.A_inv = factor.new_zeros(shape)
+
     def _compute_A(self):
         """Compute A for Embedding layer
 
@@ -361,26 +374,29 @@ class EmbeddingLayer(KFACLayer):
         """
         a = self.a_input
         batch_size = a.size(0)
-        tokens = torch.LongTensor(batch_size, self.module.num_embeddings)
+        tokens = torch.LongTensor(batch_size, self.module.num_embeddings).cuda()
         tokens.zero_()
-        tokens.scatter_(1, a.cpu(), 1) # scatter seems to require cpu backend
-        tokens = torch.mean(tokens.float(), dim=0)
-        return torch.diag(tokens)
+        tokens.scatter_(1, a, 1)
+        return torch.mean(tokens.float(), dim=0)
 
     def _compute_G(self):       
-        # g: batch_size * out_dim
         g = self.g_output
         batch_size = g.size(0)
         if len(g.shape) > 2:
+            # TODO(gpauloski): should we average middle dim here?
             g = torch.mean(g, list(range(len(g.shape)))[1:-1])
         if self.batch_averaged:
-            return g.t() @ (g * batch_size)
+            G = g.t() @ (g * batch_size)
         else:
-            return g.t() @ (g / batch_size)
+            G = g.t() @ (g / batch_size)
+        return G
     
-    def _get_diag_block_inv(self, block):
-        """Compute inverse of diagonal tensor"""
-        return block.pow(-1)
+    def _get_vector_inv(self, v):
+        """Compute inverse of each non-zero element of v"""
+        assert len(v.shape) == 1
+        idx = v.nonzero()
+        v[idx[:, 0]] = 1 / v[idx[:, 0]]
+        return v
 
     def _get_block_eigen(self, block):
         """Compute eigendecomposition of tensor. Append eigenvalues"""
@@ -389,13 +405,24 @@ class EmbeddingLayer(KFACLayer):
     def _precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method
 
-        We compute on the CPU because the size of A is very large (order 
-        ntokens^2) and then move back to GPU
+        Note: For embedding layers, A is a diagonal matrix stored as a 1-D
+        tensors of the diagonal and the gradient is (input_size, output_size).
+        The KFAC update expects the gradient to be (output_size, input_size)
+        so we use this update:
+            precon_grad = (G_inv @ grad.t()) * A_inv
+        instead of the traditional:
+            precon_grad = G_inv.t() @ grad @ A_inv
+        where @ is torch.matmul() and * is torch.mv()/
         """
+        # TODO(gpauloski) A is vector now
         grad = self.get_gradient()
+        print('\ngrad', torch.min(grad), torch.max(grad))
+        print('A', torch.min(self.A_inv), torch.max(self.A_inv))
+        print('G', torch.min(self.G_inv), torch.max(self.G_inv))
         v1 = torch.matmul(self.G_inv, grad.t())
-        v1 = v1.cpu()
-        v2 = torch.matmul(v1, self.A_inv).cuda().t()
+        #v2 = torch.matmul(v1, self.A_inv).cuda().t()
+        v2 = v1 * self.A_inv
+        print('precond', torch.min(v2), torch.max(v2))
         return v2
     
     def _precondition_gradient_eigen(self):
@@ -411,7 +438,7 @@ class EmbeddingLayer(KFACLayer):
           ranks: list of horovod ranks (i.e. workers) to use.
         """
         if hvd.rank() == ranks[0]:
-            self.A_inv.copy_(self._get_diag_block_inv(self.A_factor))
+            self.A_inv.copy_(self._get_vector_inv(self.A_factor))
         else:
             self.A_inv.fill_(0)
 
