@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="kfac-pytorch",
-    version="0.1.0",
+    version="0.2.0",
     author="Greg Pauloski",
     author_email="jgpauloski@uchicago.edu",
     description="Distributed K-FAC Preconditioner for PyTorch + Horovod",
@@ -16,7 +16,7 @@ setuptools.setup(
     ],
     python_requires='>=3.6',
     install_requires=[
-        "torch >= 1.0",
+        "torch >= 1.1",
         "horovod",
     ],
 )

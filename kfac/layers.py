@@ -89,16 +89,16 @@ class KFACLayer(object):
           module: module/layer to get gradient of
 
         Returns:
-          Formatted gradient with shape [input_dim, output_dim] for module
+          Formatted gradient with shape [ouput_dim, input_dim] for module
         """
         grad = self.module.weight.grad.data
-        if self.module.bias is not None:
+        if self.has_bias:
             grad = torch.cat([grad, self.module.bias.grad.data.view(-1, 1)], 1)
         return grad
 
     def _precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method"""
-        grad = self.get_gradient()
+        grad = self.get_gradient() 
         return self.G_inv @ grad @ self.A_inv
     
     def _precondition_gradient_eigen(self):
@@ -118,14 +118,14 @@ class KFACLayer(object):
           grad: formatted gradient from `_get_grad()`
 
         Returns:
-          preconditioned gradient with shape [input_dim, output_dim]
+          preconditioned gradient with shape [output_dim, input_dim]
         """
         if self.use_eigen_decomp:
             v = self._precondition_gradient_eigen()
         else:
             v = self._precondition_gradient_inv()
 
-        if self.module.bias is not None:
+        if self.has_bias:
             v = [v[:, :-1], v[:, -1:]]
             v[0] = v[0].view(self.module.weight.grad.data.size())
             v[1] = v[1].view(self.module.bias.grad.data.size())
@@ -159,14 +159,22 @@ class KFACLayer(object):
         """Compute inverse of tensor"""
         diag = block.new(block.shape[0]).fill_(self.damping)
         cholesky = torch.cholesky(block + torch.diag(diag))
-        return try_contiguous(torch.cholesky_inverse(cholesky))
+        return torch.cholesky_inverse(cholesky)
 
     def _get_block_eigen(self, block):
         """Compute eigendecomposition of tensor. Append eigenvalues"""
         d, Q = torch.symeig(block, eigenvectors=True)
         d = torch.mul(d, (d > self.eps).float())
         d = d.unsqueeze(1)
-        return try_contiguous(torch.cat([Q, d], 1))
+        return torch.cat([Q, d], 1)
+
+    def get_diag_blocks(self, diag_blocks):
+        """Helper method for determining number of diag_blocks to use
+
+        Overrides `diag_blocks` if the `module` does not support
+        `diag_blocks>1`.
+        """
+        return 1
 
     def _distributed_factor_inv(self, factor, inv, ranks):
         """Computes the inv/eigendecomp of a factor across ranks
@@ -237,10 +245,19 @@ class KFACLayer(object):
 
 
 class LinearLayer(KFACLayer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.has_bias = True
+
+    def get_diag_blocks(self, diag_blocks):
+        return diag_blocks
+
     def _compute_A(self):
         # a: batch_size * in_dim
         a = self.a_input
         batch_size = a.size(0)
+        if len(a.shape) > 2:
+            a = torch.mean(a, list(range(len(a.shape)))[1:-1])
         if self.module.bias is not None:
             a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
         return a.t() @ (a / batch_size)
@@ -249,6 +266,8 @@ class LinearLayer(KFACLayer):
         # g: batch_size * out_dim
         g = self.g_output
         batch_size = g.size(0)
+        if len(g.shape) > 2:
+            g = torch.mean(g, list(range(len(g.shape)))[1:-1])
         if self.batch_averaged:
             return g.t() @ (g * batch_size)
         else:
@@ -256,12 +275,19 @@ class LinearLayer(KFACLayer):
 
 
 class Conv2dLayer(KFACLayer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.has_bias = self.module.bias is not None
+
     def get_gradient(self):
         grad = self.module.weight.grad.data.view(
                 self.module.weight.grad.data.size(0), -1)  
         if self.module.bias is not None:
             grad = torch.cat([grad, module.bias.grad.data.view(-1, 1)], 1)
         return grad
+
+    def get_diag_blocks(self, diag_blocks):
+        return diag_blocks
 
     # TODO: refactor extract_params to not reuire x arg
     def _extract_patches(self, x):
@@ -316,15 +342,30 @@ class Conv2dLayer(KFACLayer):
 
 
 class EmbeddingLayer(KFACLayer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.has_bias = False
+        self.use_eigen_decomp = False
+
     def _compute_A(self):
-        # a: batch_size * in_dim
+        """Compute A for Embedding layer
+
+        Input to Embedding layer is (batch_size, input_size) representing
+        indicies into the embedding matrix of size [vocab_size, embed_size].
+        The factor is represented by:
+          (1/batch_size) sum_{i} diag(one_hot(inputs[i]) ** 2)
+        where inputs[i] is the input for the ith batch and the output is size
+        [vocab_size, vocab_size]
+
+        source: https://github.com/tensorflow/kfac/blob/master/kfac/python/ops/fisher_factors.py#L1107
+        """
         a = self.a_input
         batch_size = a.size(0)
-        if len(a.shape) > 2:
-            a = torch.mean(a, list(range(len(a.shape)))[1:-1])
-        if self.module.bias is not None:
-            a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
-        return a.t() @ (a / batch_size)
+        tokens = torch.LongTensor(batch_size, self.module.num_embeddings)
+        tokens.zero_()
+        tokens.scatter_(1, a.cpu(), 1) # scatter seems to require cpu backend
+        tokens = torch.mean(tokens.float(), dim=0)
+        return torch.diag(tokens)
 
     def _compute_G(self):       
         # g: batch_size * out_dim
@@ -336,3 +377,51 @@ class EmbeddingLayer(KFACLayer):
             return g.t() @ (g * batch_size)
         else:
             return g.t() @ (g / batch_size)
+    
+    def _get_diag_block_inv(self, block):
+        """Compute inverse of diagonal tensor"""
+        return block.pow(-1)
+
+    def _get_block_eigen(self, block):
+        """Compute eigendecomposition of tensor. Append eigenvalues"""
+        raise NotImplementedError('Use inv method for embedding layers')
+
+    def _precondition_gradient_inv(self):
+        """Compute preconditioned gradient for inverse method
+
+        We compute on the CPU because the size of A is very large (order 
+        ntokens^2) and then move back to GPU
+        """
+        grad = self.get_gradient()
+        v1 = torch.matmul(self.G_inv, grad.t())
+        v1 = v1.cpu()
+        v2 = torch.matmul(v1, self.A_inv).cuda().t()
+        return v2
+    
+    def _precondition_gradient_eigen(self):
+        """Compute preconditioned gradient for eigendecomp method"""
+        raise NotImplementedError('Use inv method for embedding layers')
+    
+    def compute_A_inv(self, ranks):
+        """Compute inv of A for module on specified workers
+
+        Note: Embedding layer currently ignores all but first rank
+
+        Args:
+          ranks: list of horovod ranks (i.e. workers) to use.
+        """
+        if hvd.rank() == ranks[0]:
+            self.A_inv.copy_(self._get_diag_block_inv(self.A_factor))
+        else:
+            self.A_inv.fill_(0)
+
+    def compute_G_inv(self, ranks):
+        """Compute inv of G for module on specified workers
+
+        See `compute_A_inv` for more info`
+        """
+        if hvd.rank() == ranks[0]:
+            self.G_inv.copy_(self._get_block_inv(self.G_factor))
+        else:
+            self.G_inv.fill_(0)
+
