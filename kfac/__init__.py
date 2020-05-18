@@ -1,2 +1,2 @@
-from kfac.preconditioner import KFAC
-from kfac.scheduler import KFACParamScheduler
+from .preconditioner import KFAC
+from .scheduler import KFACParamScheduler

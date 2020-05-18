@@ -51,7 +51,7 @@ def initialize():
                         help='gradient clipping')
     parser.add_argument('--epochs', type=int, default=40,
                         help='upper epoch limit')
-    parser.add_argument('--batch_size', type=int, default=20, metavar='N',
+    parser.add_argument('--batch-size', type=int, default=20, metavar='N',
                         help='batch size')
     parser.add_argument('--bptt', type=int, default=35,
                         help='sequence length')
@@ -176,8 +176,9 @@ def get_model(args):
 
     # Horovod: scale learning rate by the number of GPUs.
     args.base_lr = args.base_lr * hvd.size()
-    optimizer = optim.SGD(model.parameters(), lr=args.base_lr,
-                          momentum=args.momentum, weight_decay=args.wd)
+    #optimizer = optim.SGD(model.parameters(), lr=args.base_lr,
+    #                      momentum=args.momentum, weight_decay=args.wd)
+    optimizer = optim.Adam(model.parameters(), lr=args.base_lr)
 
     if args.kfac_update_freq > 0:
         preconditioner = kfac.KFAC(
