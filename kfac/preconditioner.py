@@ -3,9 +3,8 @@ import torch
 import torch.optim as optim
 import horovod.torch as hvd
 
-from kfac.layers import get_kfac_layer
-from kfac.layers import KNOWN_MODULES
-from kfac.utils import cycle
+from .layers import *
+from .utils import cycle
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner

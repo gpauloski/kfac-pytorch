@@ -8,7 +8,7 @@ setuptools.setup(
     description="Distributed K-FAC Preconditioner for PyTorch + Horovod",
     long_description=open('README.md').read(),
     url="https://github.com/gpauloski/kfac_pytorch",
-    packages=["kfac"],
+    packages=setuptools.find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
