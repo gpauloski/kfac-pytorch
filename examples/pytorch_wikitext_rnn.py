@@ -176,9 +176,9 @@ def get_model(args):
 
     # Horovod: scale learning rate by the number of GPUs.
     args.base_lr = args.base_lr * hvd.size()
-    #optimizer = optim.SGD(model.parameters(), lr=args.base_lr,
-    #                      momentum=args.momentum, weight_decay=args.wd)
-    optimizer = optim.Adam(model.parameters(), lr=args.base_lr)
+    optimizer = optim.SGD(model.parameters(), lr=args.base_lr,
+                          momentum=args.momentum, weight_decay=args.wd)
+    #optimizer = optim.Adam(model.parameters(), lr=args.base_lr)
 
     if args.kfac_update_freq > 0:
         preconditioner = kfac.KFAC(
