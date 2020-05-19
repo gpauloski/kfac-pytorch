@@ -44,7 +44,7 @@ class EmbeddingLayer(KFACLayer):
         batch_size = g.size(0)
         if len(g.shape) > 2:
             # TODO(gpauloski): should we average middle dim here?
-            g = torch.mean(g, list(range(len(g.shape)))[1:-1])
+            g = torch.sum(g, list(range(len(g.shape)))[1:-1])
         if self.batch_averaged:
             G = g.t() @ (g * batch_size)
         else:
