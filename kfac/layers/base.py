@@ -2,8 +2,6 @@ import math
 import torch
 import horovod.torch as hvd
 
-from kfac.utils import update_running_avg
-from kfac.utils import try_contiguous
 from kfac.utils import get_block_boundary
 
 
@@ -21,136 +19,65 @@ class KFACLayer(object):
         self.batch_averaged = batch_averaged
         self.eps = 1e-10
 
-        self.a_input = None
-        self.g_output = None
-        self.A_factor = None
-        self.G_factor = None
+        # Should be set by implementing class
+        self.has_bias = None
+        self.num_weights = None
 
-    def save_input(self, a):
-        """Save input `a` locally"""
-        self.a_input = a[0].data
+        # Note: each of the following is a list of tensors b/c
+        # torch modules can have multiple inputs/outputs and weights
+        self.a_inputs  = None
+        self.g_outputs = None
+        self.A_factors = None
+        self.G_factors = None
+        self.A_invs    = None
+        self.G_invs    = None
 
-    def save_grad_output(self, g):
-        """Save grad w.r.t output `g` locally"""
-        self.g_output = g[0].data
-
-    def _init_buffers_A(self, factor):
-        """Create buffers for factor A and its inv"""
-        self.A_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
-        if self.use_eigen_decomp:
-            # add one axtra column for eigenvalues
-            shape = (factor.shape[0], factor.shape[0] + 1)
-        else:
-            shape = factor.shape
-        self.A_inv = factor.new_zeros(shape)
-
-    def _init_buffers_G(self, factor):
-        """Create buffers for factor G and its inv"""
-        self.G_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
-        if self.use_eigen_decomp:
-            # add one axtra column for eigenvalues
-            shape = (factor.shape[0], factor.shape[0] + 1)
-        else:
-            shape = factor.shape
-        self.G_inv = factor.new_zeros(shape)
-
-    def clear_inverse(self):
+    def clear_inverses(self):
         """Clear inverse buffers
 
         Useful for when switching between `diag_blocks=1` and `diag-blocks>1`
         because eigendecompositions saved in place and the off-diagonals must
         be cleared.
         """
-        if self.A_inv is not None:
-            self.A_inv.fill_(0)
-        if self.G_inv is not None:
-            self.G_inv.fill_(0)
+        if self.A_invs is not None:
+            for A_inv in self.A_invs:
+                A_inv.fill_(0)
+        if self.G_invs is not None:
+            for G_inv in self.G_invs:
+                G_inv.fill_(0)
 
-    def get_gradient(self):
-        """Get formated gradient of module
+    def compute_A_invs(self, ranks):
+        """Compute A inverses on specified ranks
 
-        Args:
-          module: module/layer to get gradient of
+        Note: all ranks will enter this function but only the ranks specified
+        in `ranks` will continue to actually compute the inverses.
+        All other ranks will simply zero out their inverse buffers for. This 
+        is done so we can sum the inverses across all ranks to communicate the
+        results of locally computed inverses.
 
-        Returns:
-          Formatted gradient with shape [ouput_dim, input_dim] for module
-        """
-        grad = self.module.weight.grad.data
-        if self.has_bias:
-            grad = torch.cat([grad, self.module.bias.grad.data.view(-1, 1)], 1)
-        return grad
-
-    def _precondition_gradient_inv(self):
-        """Compute preconditioned gradient for inverse method"""
-        grad = self.get_gradient() 
-        return self.G_inv @ grad @ self.A_inv
-    
-    def _precondition_gradient_eigen(self):
-        """Compute preconditioned gradient for eigendecomp method"""
-        QA, QG = self.A_inv[:,:-1], self.G_inv[:,:-1]
-        dA, dG = self.A_inv[:,-1], self.G_inv[:,-1]
-        grad = self.get_gradient()
-        v1 = QG.t() @ grad @ QA
-        v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + self.damping)
-        return QG @ v2 @ QA.t()
-
-    def get_preconditioned_gradient(self):
-        """Precondition gradient of module
+        TODO(gpauloski): refactor this code and compute_G_invs to helper func
 
         Args:
-          module: module to compute preconditioned gradient for
-          grad: formatted gradient from `_get_grad()`
-
-        Returns:
-          preconditioned gradient with shape [output_dim, input_dim]
+          ranks: list of horovod ranks (i.e. workers) to use.
         """
-        if self.use_eigen_decomp:
-            v = self._precondition_gradient_eigen()
+        if hvd.rank() in ranks:
+            for factor, inv in zip(self.A_factors, self.A_invs):
+                self._distributed_factor_inv(factor, inv, ranks)
         else:
-            v = self._precondition_gradient_inv()
+            for inv in self.A_invs:
+                inv.fill_(0)
 
-        if self.has_bias:
-            v = [v[:, :-1], v[:, -1:]]
-            v[0] = v[0].view(self.module.weight.grad.data.size())
-            v[1] = v[1].view(self.module.bias.grad.data.size())
+    def compute_G_invs(self, ranks):
+        """Compute G inverses on specified ranks
+
+        See `compute_A_inv` for more info`
+        """
+        if hvd.rank() in ranks:
+            for factor, inv in zip(self.G_factors, self.G_invs):
+                self._distributed_factor_inv(factor, inv, ranks)
         else:
-            v = [v.view(self.module.weight.grad.data.size())]
-        return v
-
-    def _compute_A(self):
-        """Compute factor A"""
-        raise NotImplementedError
-
-    def _compute_G(self):
-        """Compute factor G"""
-        raise NotImplementedError
-
-    def update_A(self):
-        """Compute factor A and add to running average"""
-        A = self._compute_A()
-        if self.A_factor is None:
-            self._init_buffers_A(A)
-        update_running_avg(A, self.A_factor, self.factor_decay)
-
-    def update_G(self):
-        """Compute factor G and add to running average"""
-        G = self._compute_G()
-        if self.G_factor is None:
-            self._init_buffers_G(G)
-        update_running_avg(G, self.G_factor, self.factor_decay)
-
-    def _get_block_inv(self, block):
-        """Compute inverse of tensor"""
-        diag = block.new(block.shape[0]).fill_(self.damping)
-        cholesky = torch.cholesky(block + torch.diag(diag))
-        return torch.cholesky_inverse(cholesky)
-
-    def _get_block_eigen(self, block):
-        """Compute eigendecomposition of tensor. Append eigenvalues"""
-        d, Q = torch.symeig(block, eigenvectors=True)
-        d = torch.mul(d, (d > self.eps).float())
-        d = d.unsqueeze(1)
-        return torch.cat([Q, d], 1)
+            for inv in self.G_invs:
+                inv.fill_(0)
 
     def get_diag_blocks(self, diag_blocks):
         """Helper method for determining number of diag_blocks to use
@@ -160,17 +87,106 @@ class KFACLayer(object):
         """
         return 1
 
+    def get_gradients(self):
+        """Get formated gradients of each weight in module
+
+        Returns:
+          List of formatted gradients for each weight where each gradient has
+          shape [ouput_dim, input_dim].
+        """
+        grads = []
+        for i in range(self.num_weights):
+            g = self._get_weight(i).grad.data
+            if self.has_bias:
+                g = torch.cat([g, self._get_bias(i).grad.data.view(-1, 1)], 1)
+            grads.append(g)
+        return grads
+
+    def get_factor_handles(self, op=hvd.Average):
+        """Get list of handles to call to average factors"""
+        return ([hvd.allreduce_async_(a, op=op) for a in self.A_factors] +
+                [hvd.allreduce_async_(g, op=op) for g in self.G_factors])
+
+    def get_inverse_handles(self, op=hvd.Sum):
+        """Get list of handles to call to sum inverses"""
+        return ([hvd.allreduce_async_(a, op=op) for a in self.A_invs] +
+                [hvd.allreduce_async_(g, op=op) for g in self.G_invs])
+
+    def get_preconditioned_gradients(self):
+        """Get precondition gradients of each weight in module
+
+        Returns:
+          List of preconditioned gradients for each weight where each has 
+          shape [output_dim, input_dim].
+        """
+        # Compute preconditioned gradient using specified inverse method
+        if self.use_eigen_decomp:
+            grads = self._precondition_gradients_eigen()
+        else:
+            grads = self._precondition_gradients_inv()
+
+        # Reshape appropriately
+        for i, grad in enumerate(grads):
+            if self.has_bias:
+                grad = [grad[:, :-1], grad[:, -1:]]
+                grad[0] = grad[0].view(self._get_weight(i).grad.data.size())
+                grad[1] = grad[1].view(self._get_bias(i).grad.data.size())
+            else:
+                grad = [grad.view(self._get_weight(i).grad.data.size())]
+            grads[i] = grad
+        return grads
+
+    def save_inputs(self, input):
+        """Save inputs locally"""
+        self.a_inputs = [a.data for a in input if a is not None]
+
+    def save_grad_outputs(self, grad_output):
+        """Save grad w.r.t outputs locally"""
+        self.g_outputs = [g.data for g in grad_output if g is not None]
+
+    def update_A_factors(self):
+        """Compute factors A and add to running averages"""
+        A_new = self._compute_A_factors()
+        if self.A_factors is None:
+            self._init_A_buffers(A_new)
+        for A, A_factor in zip(A_new, self.A_factors):
+            self._update_running_avg(A, A_factor)
+
+    def update_G_factors(self):
+        """Compute factors G and add to running averages"""
+        G_new = self._compute_G_factors()
+        if self.G_factors is None:
+            self._init_G_buffers(G_new)
+        for G, G_factor in zip(G_new, self.G_factors):
+            self._update_running_avg(G, G_factor)
+
+    def _compute_A_factors(self):
+        """Compute A factors
+
+        Returns:
+          list of factors A for each weight in module
+        """
+        raise NotImplementedError
+
+    def _compute_G_factors(self):
+        """Compute G factors
+
+        Returns:
+          list of factors G for each weight in module
+        """
+        raise NotImplementedError
+
     def _distributed_factor_inv(self, factor, inv, ranks):
-        """Computes the inv/eigendecomp of a factor across ranks
+        """Computes the inverse of a factor across ranks
 
         Assigns each rank in `ranks` to enter this function to compute a
         diagonal block of `factor`. If `len(ranks)==1`, then that rank 
         computes the inv/eigendecomp of the entire `factor`.
 
         Args:
-            factor (tensor): tensor to eigendecompose
-            inv (tensor): tensor to save inplace inverse to
-            ranks (list): list of ranks that will enter this function
+          factor (tensor): tensor to invert
+          inv (tensor): tensor to save inplace inverse to
+          ranks (list): list of ranks that will enter this function
         """
         i = ranks.index(hvd.rank())
         n = len(ranks)
@@ -189,41 +205,116 @@ class KFACLayer(object):
                 block_inv = self._get_block_inv(block)
                 inv.data[start[0]:end[0], start[1]:end[1]].copy_(block_inv)
 
-    def compute_A_inv(self, ranks):
-        """Compute eigendecomp/inv of A for module on specified workers
-
-        Note: all ranks will enter this function but only the ranks specified
-        in `ranks` will continue to actually compute the eigendecomp/inv.
-        All other ranks will simply zero out their buffer for the
-        eigendecomp/inv for the current module. This is done so we can sum
-        the eigendecomp/inv across all ranks to communicate the results
-        of locally computed eigendecomp/inv.
+    def _get_block_eigen(self, block):
+        """Compute eigendecomposition of a block.
 
         Args:
-          ranks: list of horovod ranks (i.e. workers) to use.
+          block (tensor): block of shape (x, x) to eigendecompose
+
+        Returns:
+          Tensor of shape (x, x+1) where (0:x, 0:x) are the eigenvectors
+          and (:, -1) is the eigenvalues
         """
-        if hvd.rank() in ranks:
-            self._distributed_factor_inv(self.A_factor, self.A_inv, ranks)
-        else:
-            self.A_inv.fill_(0)
+        d, Q = torch.symeig(block, eigenvectors=True)
+        d = torch.mul(d, (d > self.eps).float())
+        d = d.unsqueeze(1)
+        return torch.cat([Q, d], 1)
 
-    def compute_G_inv(self, ranks):
-        """Compute eigendecomp/inv of A for module on specified workers
+    def _get_block_inv(self, block):
+        """Compute inverse of a block
 
-        See `compute_A_inv` for more info`
+        Adds a damping factor  `self.damping` to diagonal to prevent
+        ill-conditioned matrix inversion.
+
+        Args:
+          block (tensor): block of shape (x, x) to invert
+
+        Returns:
+          Tensor of shape (x, x), the inverse of block
         """
-        if hvd.rank() in ranks:
-            self._distributed_factor_inv(self.G_factor, self.G_inv, ranks)
+        diag = block.new(block.shape[0]).fill_(self.damping)
+        cholesky = torch.cholesky(block + torch.diag(diag))
+        return torch.cholesky_inverse(cholesky)
+
+    def _get_bias(self, i):
+        """Get i'th bias tensor in module
+
+        For most layers, there is only one bias tensor but certain layers
+        like RNNs can have multiple.
+        """
+        raise NotImplementedError
+
+    def _get_weight(self, i):
+        """Get i'th weight tensor in module
+
+        For most layers, there is only one weight but certain layers
+        like RNNs can have multiple.
+        """
+        raise NotImplementedError
+
+    def _init_A_buffers(self, factors):
+        """Create buffers for each factor A and its inverse"""
+        assert self.A_factors is None, ('A buffers have already been '
+                'initialized. Was _init_A_buffers() called more than once?')
+        self.A_factors = [factor.new(factor.shape).fill_(1) 
+                          for factor in factors]
+        if self.use_eigen_decomp:
+            # add one axtra column for eigenvalues
+            shapes = [(factor.shape[0], factor.shape[0] + 1) 
+                      for factor in factors]
         else:
-            self.G_inv.fill_(0)
+            shapes = [factor.shape for factor in factors]
+        self.A_invs = [factor.new_zeros(shape) 
+                       for factor, shape in zip(factors, shapes)]
 
-    def get_factor_handles(self, op=hvd.Average):
-        """Get list of handles to call to average factors"""
-        return [hvd.allreduce_async_(self.A_factor, op=op),
-                hvd.allreduce_async_(self.G_factor, op=op)]
+    def _init_G_buffers(self, factors):
+        """Create buffers for each factor G and its inverse"""
+        assert self.G_factors is None, ('G buffers have already been '
+                'initialized. Was _init_G_buffers() called more than once?')
+        self.G_factors = [factor.new(factor.shape).fill_(1) 
+                          for factor in factors]
+        if self.use_eigen_decomp:
+            # add one axtra column for eigenvalues
+            shapes = [(factor.shape[0], factor.shape[0] + 1) 
+                      for factor in factors]
+        else:
+            shapes = [factor.shape for factor in factors]
+        self.G_invs = [factor.new_zeros(shape) 
+                       for factor, shape in zip(factors, shapes)]
+    
+    def _precondition_gradients_eigen(self):
+        """Compute preconditioned gradients for eigendecomp method"""
+        grads = self.get_gradients()
+        precon_grads = []
+        for i, grad in enumerate(grads):
+            A_inv, G_inv = self.A_invs[i], self.G_invs[i]
+            QA, QG = A_inv[:,:-1], G_inv[:,:-1]
+            dA, dG = A_inv[:,-1], G_inv[:,-1]
+            v1 = QG.t() @ grad @ QA
+            v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + self.damping)
+            precon_grads.append(QG @ v2 @ QA.t())
+        return precon_grads
 
-    def get_inverse_handles(self, op=hvd.Sum):
-        """Get list of handles to call to sum inverse"""
-        return [hvd.allreduce_async_(self.A_inv, op=op),
-                hvd.allreduce_async_(self.G_inv, op=op)]
+    def _precondition_gradients_inv(self):
+        """Compute preconditioned gradients for inverse method"""
+        grads = self.get_gradients() 
+        precon_grads = []
+        for i, grad in enumerate(grads):
+            precon_grads.append(self.G_invs[i] @ grad @ self.A_invs[i])
+        return precon_grads
+
+    def _update_running_avg(self, new, current):
+        """Computes in-place running average
+
+        current = factor_decay*current + (1-factor_decay)*new
+
+        Args:
+          new (tensor): tensor to add to current average
+          current (tensor): tensor containing current average. Result will be
+              saved in place to this tensor.
+        """
+        if self.factor_decay != 1:
+            current *= self.factor_decay / (1 - self.factor_decay)
+            current += new
+            current *= (1 - self.factor_decay)
 
