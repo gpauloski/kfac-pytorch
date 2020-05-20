@@ -12,12 +12,12 @@ __all__ = ['get_kfac_layer']
 
 def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
                    factor_decay=0.95, batch_averaged=True):
-    #if isinstance(module, nn.Linear):
-    #    layer = LinearLayer
-    if isinstance(module, nn.Conv2d):
+    if isinstance(module, nn.Linear):
+        layer = LinearLayer
+    elif isinstance(module, nn.Conv2d):
         layer = Conv2dLayer
-    elif isinstance(module, nn.RNNBase):
-        layer = RNNLayer
+    #elif isinstance(module, nn.RNNBase):
+    #    layer = RNNLayer
     #elif isinstance(module, nn.Embedding):
     #    layer = EmbeddingLayer
     else:

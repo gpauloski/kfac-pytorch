@@ -7,18 +7,44 @@ from kfac.utils import try_contiguous
 class Conv2dLayer(KFACLayer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.num_weights = 1
         self.has_bias = self.module.bias is not None
-
-    def get_gradient(self):
-        grad = self.module.weight.grad.data.view(
-                self.module.weight.grad.data.size(0), -1)  
-        if self.module.bias is not None:
-            grad = torch.cat([grad, module.bias.grad.data.view(-1, 1)], 1)
-        return grad
 
     def get_diag_blocks(self, diag_blocks):
         return diag_blocks
 
+    def get_gradients(self):
+        grad = self.module.weight.grad.data.view(
+                self.module.weight.grad.data.size(0), -1)  
+        if self.has_bias:
+            grad = torch.cat([grad, module.bias.grad.data.view(-1, 1)], 1)
+        return [grad]
+
+    def _compute_A_factors(self):
+        a = self.a_inputs[0]
+        batch_size = a.size(0)
+        a = self._extract_patches(a)
+        spatial_size = a.size(1) * a.size(2)
+        a = a.view(-1, a.size(-1))
+        if self.has_bias:
+            a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
+        a = a / spatial_size
+        return [a.t() @ (a / batch_size)]
+
+    def _compute_G_factors(self):
+        # g: batch_size * n_filters * out_h * out_w
+        # n_filters is actually the output dimension (analogous to Linear layer)
+        g = self.g_outputs[0]
+        spatial_size = g.size(2) * g.size(3)
+        batch_size = g.shape[0]
+        g = g.transpose(1, 2).transpose(2, 3)
+        g = try_contiguous(g)
+        g = g.view(-1, g.size(-1))
+        if self.batch_averaged:
+            g = g * batch_size
+        g = g * spatial_size
+        return [g.t() @ (g / g.size(0))]
+    
     # TODO: refactor extract_params to not reuire x arg
     def _extract_patches(self, x):
         """Extract patches from convolutional layer
@@ -42,29 +68,19 @@ class Conv2dLayer(KFACLayer):
             x.size(3) * x.size(4) * x.size(5))
         return x
 
-    def _compute_A(self):
-        a = self.a_input
-        batch_size = a.size(0)
-        a = self._extract_patches(a)
-        spatial_size = a.size(1) * a.size(2)
-        a = a.view(-1, a.size(-1))
-        if self.module.bias is not None:
-            a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
-        a = a/spatial_size
-        return a.t() @ (a / batch_size)
+    def _get_bias(self, i):
+        if not self.has_bias:
+            return None
+        if i == 0:
+            return self.module.bias
+        else:
+            raise ValueError('Invalid bias index {}. Conv2d layer only has 1 '
+                             'bias tensor'.format(i))
 
-    def _compute_G(self):
-        # g: batch_size * n_filters * out_h * out_w
-        # n_filters is actually the output dimension (analogous to Linear layer)
-        g = self.g_output
-        spatial_size = g.size(2) * g.size(3)
-        batch_size = g.shape[0]
-        g = g.transpose(1, 2).transpose(2, 3)
-        g = try_contiguous(g)
-        g = g.view(-1, g.size(-1))
+    def _get_weight(self, i):
+        if i == 0:
+            return self.module.weight
+        else:
+            raise ValueError('Invalid weight index {}. Conv2d layer only has '
+                             '1 weight tensor'.format(i))
 
-        if self.batch_averaged:
-            g = g * batch_size
-        g = g * spatial_size
-
-        return g.t() @ (g / g.size(0))

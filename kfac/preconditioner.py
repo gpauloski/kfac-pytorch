@@ -130,13 +130,13 @@ class KFAC(optim.Optimizer):
     def _save_input(self, module, input):
         """Hook for saving layer input"""
         if (torch.is_grad_enabled() and 
-            self.steps % self.fac_update_freq == 0):
-            self.layers[module].save_input(input)
+                self.steps % self.fac_update_freq == 0):
+            self.layers[module].save_inputs(input)
 
     def _save_grad_output(self, module, grad_input, grad_output):
         """Hook for saving gradient w.r.t output"""
         if self.steps % self.fac_update_freq == 0:
-            self.layers[module].save_grad_output(grad_output)
+            self.layers[module].save_grad_outputs(grad_output)
 
     def _register_layers(self, model):
         """Register hooks to all supported layers in the model"""
@@ -144,7 +144,9 @@ class KFAC(optim.Optimizer):
             kfac_layer = get_kfac_layer(module, self.use_eigen_decomp,
                     self.damping, self.factor_decay, self.batch_averaged)
             if kfac_layer is not None:
-                print('Registered layer {}'.format(module.__class__.__name__))
+                if hvd.rank() == 0:
+                    print('Registered layer {}'.format(
+                            module.__class__.__name__))
                 self.layers[module] = kfac_layer
                 module.register_forward_pre_hook(self._save_input)
                 module.register_backward_hook(self._save_grad_output)
@@ -160,17 +162,18 @@ class KFAC(optim.Optimizer):
         """
         vg_sum = 0
         for module in self.layers:
-            v = updates[module]
+            assert len(updates[module]) == 1
+            v = updates[module][0]
             vg_sum += (v[0] * module.weight.grad.data * self.lr ** 2).sum().item()
-            if hasattr(module, 'bias') and module.bias is not None:
+            if module.bias is not None:
                 vg_sum += (v[1] * module.bias.grad.data * self.lr ** 2).sum().item()
         nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
         for module in self.layers:
-            v = updates[module]
+            v = updates[module][0]
             module.weight.grad.data.copy_(v[0])
             module.weight.grad.data.mul_(nu)
-            if hasattr(module, 'bias') and module.bias is not None:
+            if module.bias is not None:
                 module.bias.grad.data.copy_(v[1])
                 module.bias.grad.data.mul_(nu)
 
@@ -209,8 +212,8 @@ class KFAC(optim.Optimizer):
 
         if self.steps % self.fac_update_freq == 0:
             for layer in self.layers.values():
-                layer.update_A()
-                layer.update_G()
+                layer.update_A_factors()
+                layer.update_G_factors()
             if hvd.size() > 1:
                 self._allreduce_factors()
 
@@ -220,7 +223,7 @@ class KFAC(optim.Optimizer):
                 epoch == self.diag_warmup and \
                 self.steps % self.kfac_update_freq == 0:
             for layer in self.layers.values():
-                layer.clear_inverse()
+                layer.clear_inverses()
             self.have_cleared_Q = True
 
         if self.steps % self.kfac_update_freq == 0:
@@ -235,15 +238,15 @@ class KFAC(optim.Optimizer):
                 ranks_g = self.rank_iter.next(n) if self.distribute_layer_factors \
                                                  else ranks_a
 
-                layer.compute_A_inv(ranks_a)
-                layer.compute_G_inv(ranks_g)
+                layer.compute_A_invs(ranks_a)
+                layer.compute_G_invs(ranks_g)
 
             if hvd.size() > 1:
                 self._allreduce_inverses()
 
         for module, layer in self.layers.items():
             # TODO: make layer hashable so we don't need to use module as key
-            updates[module] = layer.get_preconditioned_gradient()
+            updates[module] = layer.get_preconditioned_gradients()
 
         self._update_scale_grad(updates)
 
