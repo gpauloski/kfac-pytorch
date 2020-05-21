@@ -18,25 +18,6 @@ class RNNLayer(KFACLayer):
         self.use_eigen_decomp = False
         self.has_bias = True
 
-    def save_input(self, a):
-        """Save input `a` locally
-
-        For RNN, we have to save input and hidden state.
-        """
-        print('a', a[0].shape, a[1].shape)
-        self.a_0 = a[0].data
-        self.a_1 = a[1].data
-
-    def save_grad_output(self, g):
-        """Save grad w.r.t output `g` locally"""
-        print('g', type(g), len(g))
-        for i in range(len(g)):
-            if g[i] is not None:
-                print('output', i, '/', len(g), g[i].shape)
-        self.g_0 = g[0].data
-        # TODO(gpauloski): Find out how to get hidden state output
-        self.g_1 = None
-
     def _init_buffers_A(self, A_0, A_1):
         """Create buffers for factors A_0, A_1 and its inv"""
         self.A_0_factor = A_0.new(A_0.shape).fill_(1)

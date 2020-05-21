@@ -5,7 +5,9 @@ from kfac.layers.embedding import EmbeddingLayer
 from kfac.layers.linear import LinearLayer
 from kfac.layers.rnn import RNNLayer
 
-__all__ = ['get_kfac_layer']
+__all__ = ['get_kfac_layer', 'KNOWN_MODULES']
+
+KNOWN_MODULES = {'Linear', 'Conv2d', 'Embedding', 'RNNBase', 'RNN', 'LSTM'}
 
 def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
                    factor_decay=0.95, batch_averaged=True):
@@ -18,7 +20,8 @@ def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
     #elif isinstance(module, nn.Embedding):
     #    layer = EmbeddingLayer
     else:
-        return None
+        raise NotImplementedError('KFAC does not support layer {}'.format(
+                                  layer))
 
     return layer(module, use_eigen_decomp, damping, factor_decay,
                  batch_averaged)
