@@ -31,6 +31,7 @@ class KFACLayer(object):
         self.G_factors = None
         self.A_invs    = None
         self.G_invs    = None
+        self.preconditioned_gradients = None
 
     def clear_inverses(self):
         """Clear inverse buffers
@@ -112,12 +113,12 @@ class KFACLayer(object):
         return ([hvd.allreduce_async_(a, op=op) for a in self.A_invs] +
                 [hvd.allreduce_async_(g, op=op) for g in self.G_invs])
 
-    def get_preconditioned_gradients(self):
-        """Get precondition gradients of each weight in module
+    def compute_preconditioned_gradients(self):
+        """Compute precondition gradients of each weight in module
 
-        Returns:
-          List of preconditioned gradients for each weight where each has 
-          shape [output_dim, input_dim].
+        Produces a list of preconditioned gradients for each weight where each
+        has shape [output_dim, input_dim]. Preconditioned gradients can be
+        applied to the actual gradients with `update_gradients()`.
         """
         # Compute preconditioned gradient using specified inverse method
         if self.use_eigen_decomp:
@@ -134,7 +135,7 @@ class KFACLayer(object):
             else:
                 grad = [grad.view(self._get_weight(i).grad.data.size())]
             grads[i] = grad
-        return grads
+        self.preconditioned_gradients = grads
 
     def save_inputs(self, input):
         """Save inputs locally"""
@@ -159,6 +160,21 @@ class KFACLayer(object):
             self._init_G_buffers(G_new)
         for G, G_factor in zip(G_new, self.G_factors):
             self._update_running_avg(G, G_factor)
+
+    def update_gradients(self, scale=None):
+        """Updates gradients of module with computed precondition gradients"""
+        if self.preconditioned_gradients is None:
+            raise RuntimeError('self.compute_preconditioned_gradients() should'
+                    ' be called before update_gradients()')
+        for i in range(self.num_weights):
+            v = self.preconditioned_gradients[i]
+            self._get_weight(i).grad.data.copy_(v[0])
+            if scale is not None:
+                self._get_weight(i).grad.mul_(scale)
+            if self.has_bias:
+                self._get_bias(i).grad.data.copy_(v[1])
+                if scale is not None:
+                    self._get_bias(i).grad.mul_(scale)
 
     def _compute_A_factors(self):
         """Compute A factors
