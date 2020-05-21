@@ -69,13 +69,13 @@ class Conv2dLayer(KFACLayer):
         return x
 
     def _get_bias(self, i):
-        if not self.has_bias:
-            return None
-        if i == 0:
+        if self.has_bias and i == 0:
             return self.module.bias
-        else:
+        elif self.has_bias and i != 0:
             raise ValueError('Invalid bias index {}. Conv2d layer only has 1 '
                              'bias tensor'.format(i))
+        else:
+            return None
 
     def _get_weight(self, i):
         if i == 0:
