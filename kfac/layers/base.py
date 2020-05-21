@@ -256,7 +256,7 @@ class KFACLayer(object):
         """Create buffers for each factor A and its inverse"""
         assert self.A_factors is None, ('A buffers have already been '
                 'initialized. Was _init_A_buffers() called more than once?')
-        self.A_factors = [factor.new(factor.shape).fill_(1) 
+        self.A_factors = [torch.diag(factor.new(factor.shape[0]).fill_(1))
                           for factor in factors]
         if self.use_eigen_decomp:
             # add one axtra column for eigenvalues
@@ -271,7 +271,7 @@ class KFACLayer(object):
         """Create buffers for each factor G and its inverse"""
         assert self.G_factors is None, ('G buffers have already been '
                 'initialized. Was _init_G_buffers() called more than once?')
-        self.G_factors = [factor.new(factor.shape).fill_(1) 
+        self.G_factors = [torch.diag(factor.new(factor.shape[0]).fill_(1))
                           for factor in factors]
         if self.use_eigen_decomp:
             # add one axtra column for eigenvalues

@@ -141,15 +141,15 @@ class KFAC(optim.Optimizer):
     def _register_layers(self, model):
         """Register hooks to all supported layers in the model"""
         for module in model.modules():
+            if module.__class__.__name__ not in KNOWN_MODULES:
+                continue
             kfac_layer = get_kfac_layer(module, self.use_eigen_decomp,
                     self.damping, self.factor_decay, self.batch_averaged)
-            if kfac_layer is not None:
-                if hvd.rank() == 0:
-                    print('Registered layer {}'.format(
-                            module.__class__.__name__))
-                self.layers[module] = kfac_layer
-                module.register_forward_pre_hook(self._save_input)
-                module.register_backward_hook(self._save_grad_output)
+            if hvd.rank() == 0:
+                print('Registered layer {}'.format(module.__class__.__name__))
+            self.layers[module] = kfac_layer
+            module.register_forward_pre_hook(self._save_input)
+            module.register_backward_hook(self._save_grad_output)
 
     def _update_scale_grad(self, updates):
         """Update the gradients in place and scale
