@@ -151,31 +151,24 @@ class KFAC(optim.Optimizer):
             module.register_forward_pre_hook(self._save_input)
             module.register_backward_hook(self._save_grad_output)
 
-    def _update_scale_grad(self, updates):
-        """Update the gradients in place and scale
+    def _compute_grad_scale(self):
+        """Computes scale factor for preconditioned gradients
 
-        Updates the gradients in-place for all modules using the preconditioned
-        gradients and scales the gradients.
-
-        Args:
-          updates (dict): dict of {module: precon_grad}
+        Returns:
+          sum_{layers} (sum_{gradients} precon_grad * grad * lr^2) 
         """
         vg_sum = 0
         for module in self.layers:
-            assert len(updates[module]) == 1
-            v = updates[module][0]
-            vg_sum += (v[0] * module.weight.grad.data * self.lr ** 2).sum().item()
-            if module.bias is not None:
-                vg_sum += (v[1] * module.bias.grad.data * self.lr ** 2).sum().item()
-        nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
-
-        for module in self.layers:
-            v = updates[module][0]
-            module.weight.grad.data.copy_(v[0])
-            module.weight.grad.data.mul_(nu)
-            if module.bias is not None:
-                module.bias.grad.data.copy_(v[1])
-                module.bias.grad.data.mul_(nu)
+            layer = self.layers[module]
+            for i in range(layer.num_weights):
+                vg_sum += (layer.preconditioned_gradients[i][0] * 
+                           layer._get_weight(i).grad.data *
+                           self.lr ** 2).sum().item()
+                if layer.has_bias:
+                    vg_sum += (layer.preconditioned_gradients[i][1] * 
+                               layer._get_bias(i).grad.data * 
+                               self.lr ** 2).sum().item()
+        return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
     def step(self, closure=None, epoch=None):
         """Perform one K-FAC step
@@ -244,11 +237,13 @@ class KFAC(optim.Optimizer):
             if hvd.size() > 1:
                 self._allreduce_inverses()
 
-        for module, layer in self.layers.items():
-            # TODO: make layer hashable so we don't need to use module as key
-            updates[module] = layer.get_preconditioned_gradients()
+        for layer in self.layers.values():
+            layer.compute_preconditioned_gradients()
 
-        self._update_scale_grad(updates)
+        nu = self._compute_grad_scale()
+
+        for layer in self.layers.values():
+            layer.update_gradients(nu)
 
         self.steps += 1
 
