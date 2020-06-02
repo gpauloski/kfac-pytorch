@@ -39,6 +39,10 @@ def initialize():
                         help='checkpoint file format')
     parser.add_argument('--fp16-allreduce', action='store_true', default=False,
                         help='use fp16 compression during allreduce')
+    parser.add_argument('--batches-per-allreduce', type=int, default=1,
+                        help='number of batches processed locally before '
+                             'executing allreduce across workers; it multiplies '
+                             'total batch size.')
 
     # Default settings from https://arxiv.org/abs/1706.02677.
     parser.add_argument('--model', default='resnet50',
@@ -175,7 +179,7 @@ def get_datasets(args):
     train_sampler = torch.utils.data.distributed.DistributedSampler(
             train_dataset, num_replicas=hvd.size(), rank=hvd.rank())
     train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size,
+            train_dataset, batch_size=args.batch_size * args.batches_per_allreduce,
             sampler=train_sampler, **kwargs)
     val_sampler = torch.utils.data.distributed.DistributedSampler(
             val_dataset, num_replicas=hvd.size(), rank=hvd.rank())
@@ -205,7 +209,7 @@ def get_model(args):
         model.cuda()
 
     # Horovod: scale learning rate by the number of GPUs.
-    args.base_lr = args.base_lr * hvd.size()
+    args.base_lr = args.base_lr * hvd.size() * args.batches_per_allreduce
     optimizer = optim.SGD(model.parameters(), lr=args.base_lr,
                           momentum=args.momentum, weight_decay=args.wd)
 
@@ -232,7 +236,8 @@ def get_model(args):
                                        else hvd.Compression.none
     optimizer = hvd.DistributedOptimizer(
             optimizer, named_parameters=model.named_parameters(),
-            compression=compression, op=hvd.Average)
+            compression=compression, op=hvd.Average,
+            backward_passes_per_step=args.batches_per_allreduce)
 
     # Restore from a previous checkpoint, if initial_epoch is specified.
     # Horovod: restore on the first worker which will broadcast weights 
@@ -275,12 +280,20 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
-            output = model(data)
 
-            loss = loss_func(output, target)
-            train_loss.update(loss)
-            train_accuracy.update(accuracy(output, target))
-            loss.backward()
+            for i in range(0, len(data), args.batch_size):
+                data_batch = data[i:i + args.batch_size]
+                target_batch = target[i:i + args.batch_size]
+                output = model(data_batch)
+
+                loss = loss_func(output, target_batch)
+
+                with torch.no_grad():
+                    train_loss.update(loss)
+                    train_accuracy.update(accuracy(output, target_batch))
+
+                loss.div_(math.ceil(float(len(data)) / args.batch_size))
+                loss.backward()        
 
             optimizer.synchronize()
             if preconditioner is not None:
