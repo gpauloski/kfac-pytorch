@@ -4,6 +4,7 @@ import time
 import os
 import sys
 import datetime
+import math
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,6 +34,10 @@ parser.add_argument('--epochs', type=int, default=200, metavar='N',
                     help='number of epochs to train (default: 200)')
 parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
                     help='number of warmup epochs (default: 5)')
+parser.add_argument('--batches-per-allreduce', type=int, default=1,
+                    help='number of batches processed locally before '
+                         'executing allreduce across workers; it multiplies '
+                         'total batch size.')
 
 # Optimizer Parameters
 parser.add_argument('--base-lr', type=float, default=0.1, metavar='LR',
@@ -129,7 +134,8 @@ if download: hvd.allreduce(torch.tensor(1), name="barrier")
 train_sampler = torch.utils.data.distributed.DistributedSampler(
         train_dataset, num_replicas=hvd.size(), rank=hvd.rank())
 train_loader = torch.utils.data.DataLoader(train_dataset,
-        batch_size=args.batch_size, sampler=train_sampler, **kwargs)
+        batch_size=args.batch_size * args.batches_per_allreduce, 
+        sampler=train_sampler, **kwargs)
 
 # Horovod: use DistributedSampler to partition the test data.
 test_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -181,7 +187,8 @@ compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.n
 optimizer = hvd.DistributedOptimizer(optimizer, 
                                      named_parameters=model.named_parameters(),
                                      compression=compression,
-                                     op=hvd.Average)
+                                     op=hvd.Average,
+                                     backward_passes_per_step=args.batches_per_allreduce)
 
 hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 hvd.broadcast_parameters(model.state_dict(), root_rank=0)
@@ -209,12 +216,18 @@ def train(epoch):
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
-            output = model(data)
 
-            loss = criterion(output, target)
-            train_loss.update(loss)
-            train_accuracy.update(accuracy(output, target))
-            loss.backward()
+            for i in range(0, len(data), args.batch_size): 
+                data_batch = data[i:i + args.batch_size]
+                target_batch = target[i:i + args.batch_size]
+                output = model(data_batch)
+
+                loss = criterion(output, target_batch)
+                with torch.no_grad():
+                    train_loss.update(loss)
+                    train_accuracy.update(accuracy(output, target_batch))
+                loss.div_(math.ceil(float(len(data)) / args.batch_size))
+                loss.backward()
 
             optimizer.synchronize()
             if use_kfac:
@@ -223,7 +236,7 @@ def train(epoch):
                 optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
-                    train_loss.avg.item(), 100*train_accuracy.avg.item()))
+            train_loss.avg.item(), 100*train_accuracy.avg.item()))
             t.update(1)
 
     if log_writer:
