@@ -5,7 +5,9 @@ import os
 import sys
 import datetime
 import math
+from distutils.version import LooseVersion
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -21,6 +23,8 @@ from tqdm import tqdm
 from utils import *
 
 import kfac
+
+STEP_FIRST = LooseVersion(torch.__version__) < LooseVersion('1.1.0')
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Example')
@@ -204,10 +208,11 @@ def train(epoch):
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
     
-    for scheduler in lr_scheduler:
-        scheduler.step()
-    if use_kfac:
-        kfac_param_scheduler.step(epoch)
+    if STEP_FIRST:
+        for scheduler in lr_scheduler:
+            scheduler.step()
+        if use_kfac:
+            kfac_param_scheduler.step(epoch)
     
     with tqdm(total=len(train_loader), 
               desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
@@ -238,6 +243,12 @@ def train(epoch):
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
             train_loss.avg.item(), 100*train_accuracy.avg.item()))
             t.update(1)
+
+    if not STEP_FIRST:
+        for scheduler in lr_scheduler:
+            scheduler.step()
+        if use_kfac:
+            kfac_param_scheduler.step(epoch)
 
     if log_writer:
         log_writer.add_scalar('train/loss', train_loss.avg, epoch)

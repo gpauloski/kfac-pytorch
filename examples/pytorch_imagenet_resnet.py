@@ -7,6 +7,7 @@ import os
 import math
 import sys
 import warnings
+from distutils.version import LooseVersion
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -22,6 +23,8 @@ import imagenet_resnet as models
 from utils import *
 
 import kfac
+
+STEP_FIRST = LooseVersion(torch.__version__) < LooseVersion('1.1.0')
 
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 
@@ -270,8 +273,9 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
 
-    for scheduler in lr_schedules:
-        scheduler.step()
+    if STEP_FIRST:
+        for scheduler in lr_schedules:
+            scheduler.step()
 
     with tqdm(total=len(train_loader), 
               desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
@@ -304,6 +308,10 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
                     train_loss.avg.item(), 100*train_accuracy.avg.item()))
             t.update(1)
+
+    if not STEP_FIRST:
+        for scheduler in lr_schedules:
+            scheduler.step()
 
     if args.log_writer is not None:
         args.log_writer.add_scalar('train/loss', train_loss.avg, epoch)
