@@ -5,9 +5,10 @@ from kfac.layers.embedding import EmbeddingLayer
 from kfac.layers.linear import LinearLayer
 from kfac.layers.rnn import RNNLayer
 
-__all__ = ['get_kfac_layer', 'KNOWN_MODULES']
+__all__ = ['get_kfac_layer', 'KNOWN_MODULES', 'module_requires_grad']
 
-KNOWN_MODULES = {'Linear', 'Conv2d', 'Embedding', 'RNNBase', 'RNN', 'LSTM'}
+KNOWN_MODULES = {'Linear', 'Conv2d', 'RNNBase', 'RNN', 'LSTM', 'Embedding'}
+#KNOWN_MODULES = {'Conv2d', 'Embedding'}
 
 def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
                    factor_decay=0.95, batch_averaged=True):
@@ -15,13 +16,20 @@ def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
         layer = LinearLayer
     elif isinstance(module, nn.Conv2d):
         layer = Conv2dLayer
-    #elif isinstance(module, nn.RNNBase):
-    #    layer = RNNLayer
-    #elif isinstance(module, nn.Embedding):
-    #    layer = EmbeddingLayer
+    elif isinstance(module, nn.RNNBase):
+        layer = RNNLayer
+    elif isinstance(module, nn.Embedding):
+        layer = EmbeddingLayer
     else:
         raise NotImplementedError('KFAC does not support layer {}'.format(
-                                  layer))
+                                  module.__class__.__name__))
 
     return layer(module, use_eigen_decomp, damping, factor_decay,
                  batch_averaged)
+
+def module_requires_grad(module):
+    """Returns False if any module param has .requires_grad=False"""
+    for param in module.parameters():
+        if not param.requires_grad:
+            return False
+    return True

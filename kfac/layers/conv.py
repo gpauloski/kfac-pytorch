@@ -17,7 +17,7 @@ class Conv2dLayer(KFACLayer):
         grad = self.module.weight.grad.data.view(
                 self.module.weight.grad.data.size(0), -1)  
         if self.has_bias:
-            grad = torch.cat([grad, module.bias.grad.data.view(-1, 1)], 1)
+            grad = torch.cat([grad, self.module.bias.grad.data.view(-1, 1)], 1)
         return [grad]
 
     def _compute_A_factors(self):
