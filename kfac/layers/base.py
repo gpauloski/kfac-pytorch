@@ -11,13 +11,17 @@ class KFACLayer(object):
                  use_eigen_decomp=True,
                  damping = 0.001,
                  factor_decay=0.95,
-                 batch_averaged=True):
+                 batch_averaged=True,
+                 A_ranks=None,
+                 G_ranks=None):
         self.module = module
         self.use_eigen_decomp=use_eigen_decomp
         self.damping = damping
         self.factor_decay = factor_decay
         self.batch_averaged = batch_averaged
         self.eps = 1e-10
+        self.A_ranks = A_ranks
+        self.G_ranks = G_ranks
 
         # Should be set by implementing class
         self.has_bias = None
@@ -47,35 +51,36 @@ class KFACLayer(object):
             for G_inv in self.G_invs:
                 G_inv.fill_(0)
 
-    def compute_A_invs(self, ranks):
+    def compute_A_invs(self):
         """Compute A inverses on specified ranks
 
-        Note: all ranks will enter this function but only the ranks specified
-        in `ranks` will continue to actually compute the inverses.
+        Note: all ranks will enter this function but only the ranks assigned
+        to this layer will continue to actually compute the inverses.
         All other ranks will simply zero out their inverse buffers for. This 
         is done so we can sum the inverses across all ranks to communicate the
         results of locally computed inverses.
 
         TODO(gpauloski): refactor this code and compute_G_invs to helper func
-
-        Args:
-          ranks: list of horovod ranks (i.e. workers) to use.
         """
-        if hvd.rank() in ranks:
+        if self.A_ranks is None or len(self.A_ranks) == 0:
+            raise ValueError('Workers have not been assigned to layer yet.')
+        if hvd.rank() in self.A_ranks:
             for factor, inv in zip(self.A_factors, self.A_invs):
-                self._distributed_factor_inv(factor, inv, ranks)
+                self._distributed_factor_inv(factor, inv, self.A_ranks)
         else:
             for inv in self.A_invs:
                 inv.fill_(0)
 
-    def compute_G_invs(self, ranks):
+    def compute_G_invs(self):
         """Compute G inverses on specified ranks
 
         See `compute_A_inv` for more info`
         """
-        if hvd.rank() in ranks:
+        if self.G_ranks is None or len(self.G_ranks) == 0:
+            raise ValueError('Workers have not been assigned to layer yet.')
+        if hvd.rank() in self.G_ranks:
             for factor, inv in zip(self.G_factors, self.G_invs):
-                self._distributed_factor_inv(factor, inv, ranks)
+                self._distributed_factor_inv(factor, inv, self.G_ranks)
         else:
             for inv in self.G_invs:
                 inv.fill_(0)
