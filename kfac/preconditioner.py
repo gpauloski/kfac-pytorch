@@ -4,7 +4,7 @@ import torch.optim as optim
 import horovod.torch as hvd
 
 from .layers import *
-from .utils import cycle
+from .utils import load_balance
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
@@ -125,7 +125,6 @@ class KFAC(optim.Optimizer):
             self.distribute_layer_factors = distribute_layer_factors
 
         self.have_cleared_Q = True if self.diag_warmup == 0 else False
-        self.rank_iter = cycle(list(range(hvd.size())))
 
     def _save_input(self, module, input):
         """Hook for saving layer input"""
@@ -202,13 +201,6 @@ class KFAC(optim.Optimizer):
         else:
             diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
 
-        if self.steps % self.fac_update_freq == 0:
-            for layer in self.layers.values():
-                layer.update_A_factors()
-                layer.update_G_factors()
-            if hvd.size() > 1:
-                self._allreduce_factors()
-
         # if we are switching from no diag approx to approx, we need to clear
         # off-block-diagonal elements
         if not self.have_cleared_Q and \
@@ -218,21 +210,23 @@ class KFAC(optim.Optimizer):
                 layer.clear_inverses()
             self.have_cleared_Q = True
 
+        if self.steps % self.fac_update_freq == 0:
+            for layer in self.layers.values():
+                layer.update_A_factors()
+                layer.update_G_factors()
+            if hvd.size() > 1:
+                self._allreduce_factors()
+
+        # We do this after layer.update_*_factors because the inverse buffers
+        # are not instantiate until this point and we use the size of the
+        # buffers to approximate the time each layer will take to compute.
+        if self.steps == 0:
+            self._assign_layers_to_workers()
+
         if self.steps % self.kfac_update_freq == 0:
-            # reset rank iter so device get the same layers
-            # to compute to take advantage of caching
-            self.rank_iter.reset() 
-
-            for module, layer in self.layers.items():
-                # Get ranks to compute this layer on
-                n = layer.get_diag_blocks(diag_blocks)
-                ranks_a = self.rank_iter.next(n)
-                ranks_g = self.rank_iter.next(n) if self.distribute_layer_factors \
-                                                 else ranks_a
-
-                layer.compute_A_invs(ranks_a)
-                layer.compute_G_invs(ranks_g)
-
+            for layer in self.layers.values():
+                layer.compute_A_invs()
+                layer.compute_G_invs()
             if hvd.size() > 1:
                 self._allreduce_inverses()
 
@@ -266,3 +260,33 @@ class KFAC(optim.Optimizer):
         for handle in handles:
             hvd.synchronize(handle)
 
+    def _assign_layers_to_workers(self):
+        """Assigns layers to workers to minimize max load on any worker"""
+        func = lambda n: n**2.4  # approx inverse complexity
+        a_sizes = [[x.shape[0] for x in l.A_invs] for l in self.layers.values()]
+        g_sizes = [[x.shape[0] for x in l.G_invs] for l in self.layers.values()]
+        a_times = [sum(map(func, sizes)) for sizes in a_sizes]
+        g_times = [sum(map(func, sizes)) for sizes in a_sizes]
+            
+        if self.distribute_layer_factors:
+            times = a_times + g_times
+            locs = load_balance(hvd.size(), times)
+            a_locs, g_locs = locs[0:len(a_times)], locs[len(a_times):]
+        else:
+            times = [a + g for a, g in zip(a_times, g_times)]
+            locs = load_balance(hvd.size(), times)
+            a_locs, g_locs = locs, locs
+
+        for i, layer in enumerate(self.layers.values()):
+            layer.A_ranks = [a_locs[i]]
+            layer.G_ranks = [g_locs[i]]
+
+        # TODO(gpauloski): remove before merging to master
+        # used for testing the load balancing reduces max worker assignments
+        #load = [0] * hvd.size()
+        #for a, g, layer in zip(a_locs, g_locs, self.layers.values()):
+        #    load[a] += layer.A_factors[0].nelement() 
+        #    load[g] += layer.G_factors[0].nelement() 
+        #if hvd.rank() == 0:
+        #    for i, load in enumerate(load):
+        #        print(i, load)
