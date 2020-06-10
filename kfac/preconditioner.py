@@ -143,6 +143,8 @@ class KFAC(optim.Optimizer):
         for module in model.modules():
             if module.__class__.__name__ not in KNOWN_MODULES:
                 continue
+            if not module_requires_grad(module):
+                continue
             kfac_layer = get_kfac_layer(module, self.use_eigen_decomp,
                     self.damping, self.factor_decay, self.batch_averaged)
             if hvd.rank() == 0:
@@ -157,16 +159,13 @@ class KFAC(optim.Optimizer):
         Returns:
           sum_{layers} (sum_{gradients} precon_grad * grad * lr^2) 
         """
-        vg_sum = 0
-        for module in self.layers:
-            layer = self.layers[module]
-            for i in range(layer.num_weights):
-                vg_sum += (layer.preconditioned_gradients[i][0] * 
-                           layer._get_weight(i).grad.data *
+        vg_sum = 0.
+        for module, layer in self.layers.items():
+            for i, v in enumerate(layer.preconditioned_gradients):
+                vg_sum += (v[0] * layer._get_weight(i).grad.data *
                            self.lr ** 2).sum().item()
                 if layer.has_bias:
-                    vg_sum += (layer.preconditioned_gradients[i][1] * 
-                               layer._get_bias(i).grad.data * 
+                    vg_sum += (v[1] * layer._get_bias(i).grad.data * 
                                self.lr ** 2).sum().item()
         return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
