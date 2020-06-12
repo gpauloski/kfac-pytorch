@@ -54,6 +54,8 @@ class KFAC(optim.Optimizer):
           and G on different workers else computes A and G for a single layer
           on the same worker. If `None`, determines best value based on layer
           count (default: None)
+      skip_layers (str or list, optional): name or list of names of modules to
+          ignore when registering layers (default: None)
     """
     def __init__(self,
                  model,
@@ -67,7 +69,8 @@ class KFAC(optim.Optimizer):
                  batch_averaged=True,
                  diag_blocks=1,
                  diag_warmup=0,
-                 distribute_layer_factors=None):
+                 distribute_layer_factors=None,
+                 skip_layers=None):
 
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
@@ -113,8 +116,17 @@ class KFAC(optim.Optimizer):
         self.diag_warmup = diag_warmup
         self.batch_averaged = batch_averaged
         
+        self.known_modules = {m.lower() for m in KNOWN_MODULES}
+        if isinstance(skip_layers, str):
+            self.known_modules.discard(skip_layers.lower())
+        elif isinstance(skip_layers, list):
+            for layer in skip_layers: 
+                self.known_modules.discard(layer.lower())
+
+        #print('KFAC: registering {} layers'.format(self.known_modules))
         self.layers = {}  # key: nn.Module, value: KFACLayer
         self._register_layers(model)
+        #print('KFAC: registered {} layers'.format(len(self.layers)))
 
         # Compute ideal value for `distribute_layer_factors` based on
         # registered module count
@@ -140,7 +152,7 @@ class KFAC(optim.Optimizer):
     def _register_layers(self, model):
         """Register hooks to all supported layers in the model"""
         for module in model.modules():
-            if module.__class__.__name__ not in KNOWN_MODULES:
+            if module.__class__.__name__.lower() not in self.known_modules:
                 continue
             if not module_requires_grad(module):
                 continue
@@ -273,7 +285,7 @@ class KFAC(optim.Optimizer):
             locs = load_balance(hvd.size(), times)
             a_locs, g_locs = locs[0:len(a_times)], locs[len(a_times):]
         else:
-            times = [a + g for a, g in zip(a_times, g_times)]
+            times = [sum(x) for x in zip(a_times, g_times)]
             locs = load_balance(hvd.size(), times)
             a_locs, g_locs = locs, locs
 
