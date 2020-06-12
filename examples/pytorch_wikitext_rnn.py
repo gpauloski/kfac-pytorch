@@ -89,6 +89,9 @@ def initialize():
                         help='Number of blocks to approx layer factor with (default: 1)')
     parser.add_argument('--diag-warmup', type=int, default=0,
                         help='Epoch to start diag block approximation at (default: 0)')
+    parser.add_argument('--skip-layers', nargs='+', type=int, default=['linear'],
+                        help='Layer types to ignore registering with KFAC'
+                             '(default: [\'linear\'])')
 
 
     args = parser.parse_args()
@@ -151,17 +154,17 @@ def get_datasets(args):
     kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
+            train_data, num_replicas=hvd.size(), rank=hvd.rank())
     train_loader = torch.utils.data.DataLoader(
             train_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=train_sampler, shuffle=False, **kwargs)
     val_sampler =torch.utils.data.distributed.DistributedSampler(
-            val_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
+            val_data, num_replicas=hvd.size(), rank=hvd.rank())
     val_loader = torch.utils.data.DataLoader(
             val_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=val_sampler, shuffle=False, **kwargs)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-            test_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
+            test_data, num_replicas=hvd.size(), rank=hvd.rank())
     test_loader = torch.utils.data.DataLoader(
             test_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=test_sampler, shuffle=False, **kwargs)
@@ -188,7 +191,8 @@ def get_model(args):
                 kfac_update_freq=args.kfac_update_freq,
                 use_eigen_decomp=not args.use_inv_kfac,
                 diag_blocks=args.diag_blocks,
-                diag_warmup=args.diag_warmup)
+                diag_warmup=args.diag_warmup,
+                skip_layers=args.skip_layers)
     else:
          preconditioner = None
 
@@ -278,7 +282,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             hidden = repackage_hidden(hidden)
             output, hidden = model(data, hidden)
             loss = criterion(output, target)
-            total_loss += loss
+            total_loss += loss.cpu()
 
             loss.backward()
             elapsed_steps += 1
