@@ -7,9 +7,7 @@ from kfac.layers.rnn import RNNLayer
 
 __all__ = ['get_kfac_layer', 'KNOWN_MODULES', 'module_requires_grad']
 
-#KNOWN_MODULES = {'linear', 'conv2d', 'rnnbase', 'rnn', 'lstm', 'embedding'}
 KNOWN_MODULES = {'linear', 'conv2d', 'embedding'}
-#KNOWN_MODULES = {'Conv2d', 'Embedding'}
 
 def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
                    factor_decay=0.95, batch_averaged=True):
@@ -17,7 +15,7 @@ def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
         layer = LinearLayer
     elif isinstance(module, nn.Conv2d):
         layer = Conv2dLayer
-    elif isinstance(module, nn.RNNBase):
+    elif isinstance(module, nn.RNNCellBase):
         layer = RNNLayer
     elif isinstance(module, nn.Embedding):
         layer = EmbeddingLayer

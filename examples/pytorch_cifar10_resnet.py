@@ -14,7 +14,7 @@ from torchvision import datasets, transforms, models
 import torch.utils.data.distributed
 
 from torchsummary import summary
-import cifar_resnet as resnet
+import cnn_utils.cifar_resnet as resnet
 import horovod.torch as hvd
 from tqdm import tqdm
 from utils import *

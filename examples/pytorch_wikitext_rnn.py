@@ -17,7 +17,7 @@ from distutils.version import LooseVersion
 from datetime import datetime, timedelta
 from tqdm import tqdm
 
-import wikitext_models as models
+import rnn_utils.wikitext_models as models
 from utils import *
 
 import horovod.torch as hvd
@@ -89,7 +89,7 @@ def initialize():
                         help='Number of blocks to approx layer factor with (default: 1)')
     parser.add_argument('--diag-warmup', type=int, default=0,
                         help='Epoch to start diag block approximation at (default: 0)')
-    parser.add_argument('--skip-layers', nargs='+', type=int, default=['linear'],
+    parser.add_argument('--skip-layers', nargs='+', type=str, default=['linear'],
                         help='Layer types to ignore registering with KFAC'
                              '(default: [\'linear\'])')
 
@@ -154,17 +154,17 @@ def get_datasets(args):
     kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_data, num_replicas=hvd.size(), rank=hvd.rank())
+            train_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
     train_loader = torch.utils.data.DataLoader(
             train_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=train_sampler, shuffle=False, **kwargs)
     val_sampler =torch.utils.data.distributed.DistributedSampler(
-            val_data, num_replicas=hvd.size(), rank=hvd.rank())
+            val_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
     val_loader = torch.utils.data.DataLoader(
             val_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=val_sampler, shuffle=False, **kwargs)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-            test_data, num_replicas=hvd.size(), rank=hvd.rank())
+            test_data, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=False)
     test_loader = torch.utils.data.DataLoader(
             test_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
             sampler=test_sampler, shuffle=False, **kwargs)
