@@ -274,7 +274,7 @@ class KFAC(optim.Optimizer):
 
     def _assign_layers_to_workers(self):
         """Assigns layers to workers to minimize max load on any worker"""
-        func = lambda n: n**2.4  # approx inverse complexity
+        func = lambda n: n**3  # approx inverse complexity
         a_sizes = [[x.shape[0] for x in l.A_invs] for l in self.layers.values()]
         g_sizes = [[x.shape[0] for x in l.G_invs] for l in self.layers.values()]
         a_times = [sum(map(func, sizes)) for sizes in a_sizes]
