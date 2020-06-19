@@ -16,10 +16,11 @@ class LinearLayer(KFACLayer):
         assert len(self.a_inputs) == 1
         a = self.a_inputs[0]
         batch_size = a.size(0)
-        # TODO(gpauloski) should we even bother averaging seq_len dim
-        # if we do not use linear for RNNs
+        # If previous layer is embedding/RNN, a will be shape
+        # [batch_size, time_steps, emb_size] so we just take the first
+        # time_step as a simplification.
         if len(a.shape) > 2:
-            a = torch.mean(a, list(range(len(a.shape)))[1:-1])
+            a = a[:, 0]
         if self.has_bias:
             a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
         return [a.t() @ (a / batch_size)]
@@ -30,7 +31,7 @@ class LinearLayer(KFACLayer):
         g = self.g_outputs[0]
         batch_size = g.size(0)
         if len(g.shape) > 2:
-            g = torch.mean(g, list(range(len(g.shape)))[1:-1])
+            g = g[:, 0]
         if self.batch_averaged:
             return [g.t() @ (g * batch_size)]
         else:

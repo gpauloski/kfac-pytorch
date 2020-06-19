@@ -4,60 +4,53 @@ from kfac.layers.base import KFACLayer
 
 class RNNLayer(KFACLayer):
     """
-    Limitations:
-      num_layers=1
-      batch_first=True
-      bidirectional=False
-      bias=True
+
+    Note: Only works with RNNCellBase modules (e.g. RNNCell, LSTMCell).
+          Does not work with torch.nn.RNN or torch.nn.LSTM.
     """
+    
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        print(dir(self.module))
-        for j, p in enumerate(self.module._flat_weights):
-            print(j, p.shape)
-        self.use_eigen_decomp = False
-        self.has_bias = True
+        self.has_bias = self.module.bias
+        self.num_weights = 2
 
-    def _init_buffers_A(self, A_0, A_1):
-        """Create buffers for factors A_0, A_1 and its inv"""
-        self.A_0_factor = A_0.new(A_0.shape).fill_(1)
-        self.A_1_factor = A_1.new(A_1.shape).fill_(1)
-        if self.use_eigen_decomp:
-            raise NotImplementedError('Eigen decomp not supported yet')
-        else:
-            A_0_shape = A_0.shape
-        self.A_0_inv = A_0.new_zeros(A_0_shape)
-        self.A_1_inv = A_1.new_zeros(A_1_shape)
-
-    def _init_buffers_G(self, G_0, G_1):
-        """Create buffers for factors A_0, G_0 and its inv"""
-        self.G_0_factor = G_0.new(G_0.shape).fill_(1)
-        self.G_1_factor = G_1.new(G_1.shape).fill_(1)
-        if self.use_eigen_decomp:
-            raise NotImplementedError('Eigen decomp not supported yet')
-        else:
-            G_0_shape = G_0.shape
-        self.G_0_inv = G_0.new_zeros(G_0_shape)
-        self.G_1_inv = G_1.new_zeros(G_1_shape)
-
-    def get_gradients(self):
-        """Get formated gradient of module
-        Returns:
-          Formatted gradient with shape [ouput_dim, input_dim] for module
-        """
-        grad_0 = self.module.weight_ih_l0
-        grad_1 = self.module.weight_hh_l0
-        bias_0 = self.module.bias_ih_l0
-        bias_1 = self.module.bias_hh_l0
-        
-        grad_0 = torch.cat([grad_0, bias_0.view(-1, 1)], 1)
-        grad_1 = torch.cat([grad_1, bias_1.view(-1, 1)], 1)
-        return (grad_0, grad_1)
+        self._instantiate_inputs()
+        self._instantiate_outputs()
 
     def get_diag_blocks(self, diag_blocks):
         return 1
 
-    def _compute_A(self):
+    def get_gradients(self):
+        grad_0 = self.module.weight_ih.grad.data
+        grad_1 = self.module.weight_hh.grad.data
+        bias_0 = self.module.bias_ih.grad.data
+        bias_1 = self.module.bias_hh.grad.data
+        
+        if self.has_bias:
+            grad_0 = torch.cat([grad_0, bias_0.view(-1, 1)], 1)
+            grad_1 = torch.cat([grad_1, bias_1.view(-1, 1)], 1)
+        return [grad_0, grad_1]
+
+    def save_inputs(self, input):
+        """Save inputs locally.
+
+        Override kfac.layers.base.KFACLayer b/c `save_inputs()` will be called
+        once for each timestep since RNNCells take as input only one timestep
+        (unlike torch.nn.RNN that takes all timesteps as the input) and we want
+        to accumulate them
+        """
+        x = input[0]
+        hidden = input[1][0] if isinstance(input[1], tuple) else input[1]
+        self.a_inputs[0].append(x.data)
+        self.a_inputs[1].append(hidden.data)
+
+    def save_grad_outputs(self, grad_output):
+        if grad_output[0] is not None:
+            self.g_outputs[0].append(grad_output[0].data)
+        if grad_output[1] is not None:
+            self.g_outputs[1].append(grad_output[1].data)
+
+    def _compute_A_factors(self):
         """Compute A for x and hidden state
 
         Note: We only calculate A for the first time step (i.e. first sequence)
@@ -66,9 +59,10 @@ class RNNLayer(KFACLayer):
           tuple(A_x, A_hidden) where A_x is shape (input_size, input_size) 
           and A_hidden is shape (num_dir * hid_size, num_dir * hid_size)/
         """
-        a_0 = self.a_0[:, 0]
-        a_1 = self.a_1[0]  # nlayers is first dim and we only support
-                                     # nlayers = 1 right now
+        a_0 = self.a_inputs[0][-1]
+        a_1 = self.a_inputs[1][-1]  # temp: just use last timestep
+
+        self._instantiate_inputs()  # reset input timestep accumulation
 
         # at this point a_0 = (batch, input_size) and
         #               a_1 = (batch, hid_size)
@@ -79,9 +73,9 @@ class RNNLayer(KFACLayer):
 
         a_0 = a_0.t() @ (a_0 / batch_size)
         a_1 = a_1.t() @ (a_1 / batch_size)
-        return (a_0, a_1)
+        return [a_0, a_1]
 
-    def _compute_G(self):
+    def _compute_G_factors(self):
         """Compute G for x and hidden state
 
         Note: We only calculate G for the first time step (i.e. first sequence)
@@ -91,12 +85,11 @@ class RNNLayer(KFACLayer):
           and G_hidden is shape (nlayers * hid_size)^2.
           TODO(gpauloski): is G_hidden shape right here?
         """
-        g_0 = self.g_0[:, 0]
-        g_1 = self.g_1  # TODO(gpauloski) this is None right now
+        g_0 = self.g_outputs[0][-1]
+        g_1 = self.g_outputs[1][-1]  # temp: just use last timestep
         batch_size = g_0.size(0)
 
-        if g_1 is None:
-            g_1 = g_0.new((batch_size, g_0.shape[1]))
+        self._instantiate_outputs()  # reset gradient timestep accumulation
 
         if self.batch_averaged:
             g_0 = g_0.t() @ (g_0 * batch_size)
@@ -104,20 +97,30 @@ class RNNLayer(KFACLayer):
         else:
             g_0 = g_0.t() @ (g_0 / batch_size)
             g_1 = g_1.t() @ (g_1 / batch_size)
-        return (g_0, g_1)
+        return [g_0, g_1]
 
-    def update_A(self):
-        """Compute factor A_0, A_1 and add to running average"""
-        A_0, G_1 = self._compute_A()
-        if self.A_0_factor is None or self.A_1_factor:
-            self._init_buffers_A(A_0, A_1)
-        update_running_avg(A_0, self.A_0_factor, self.factor_decay)
-        update_running_avg(A_1, self.A_1_factor, self.factor_decay)
+    def _get_bias(self, i):
+        if self.has_bias and i == 0:
+            return self.module.bias_ih
+        if self.has_bias and i == 1:
+            return self.module.bias_hh0
+        elif self.has_bias:
+            raise ValueError('Invalid bias index {}. RNNBaseCell layer only has 1 '
+                             'bias tensor'.format(i))
+        else:
+            return None
 
-    def update_G(self):
-        """Compute factor G_0, G_1 and add to running average"""
-        G_0, G_1 = self._compute_G()
-        if self.G_0_factor is None or self.G_1_factor:
-            self._init_buffers_G(G_0, G_1)
-        update_running_avg(G_0, self.G_0_factor, self.factor_decay)
-        update_running_avg(G_1, self.G_1_factor, self.factor_decay)
+    def _get_weight(self, i):
+        if i == 0:
+            return self.module.weight_ih
+        if i == 1:
+            return self.module.weight_hh
+        else:
+            raise ValueError('Invalid weight index {}. RNNBaseCell layer only has '
+                             '1 weight tensor'.format(i))
+
+    def _instantiate_inputs(self):
+        self.a_inputs = [[], []]
+
+    def _instantiate_outputs(self):
+        self.g_outputs = [[], []]

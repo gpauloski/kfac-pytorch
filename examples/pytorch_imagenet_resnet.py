@@ -18,7 +18,7 @@ from torchvision import datasets, transforms
 import horovod.torch as hvd
 from tqdm import tqdm
 from distutils.version import LooseVersion
-import imagenet_resnet as models
+import cnn_utils.imagenet_resnet as models
 from utils import *
 
 import kfac
