@@ -85,10 +85,8 @@ def initialize():
                         help='Number of blocks to approx layer factor with (default: 1)')
     parser.add_argument('--diag-warmup', type=int, default=0,
                         help='Epoch to start diag block approximation at (default: 0)')
-    parser.add_argument('--distribute-layer-factors', action='store_true', default=None,
-                        help='Compute A and G for a single layer on different workers. '
-                              'None to determine automatically based on worker and '
-                              'layer count.')
+    parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
+                        help='Compute A and G for a single layer on the same worker. ')
 
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
@@ -217,7 +215,7 @@ def get_model(args):
                 kfac_update_freq=args.kfac_update_freq,
                 diag_blocks=args.diag_blocks,
                 diag_warmup=args.diag_warmup,
-                distribute_layer_factors=args.distribute_layer_factors)
+                distribute_layer_factors=not args.coallocate_layer_factors)
         kfac_param_scheduler = kfac.KFACParamScheduler(
                 preconditioner,
                 damping_alpha=args.damping_alpha,
