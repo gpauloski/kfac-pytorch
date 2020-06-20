@@ -69,8 +69,8 @@ parser.add_argument('--diag-blocks', type=int, default=1,
                     help='Number of blocks to approx layer factor with (default: 1)')
 parser.add_argument('--diag-warmup', type=int, default=5,
                     help='Epoch to start diag block approximation at (default: 5)')
-parser.add_argument('--distribute-layer-factors', action='store_true', default=False,
-                    help='Compute A and G for a single layer on different workers')
+parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
+                    help='Compute A and G for a single layer on the same worker. ')
 
 # Other Parameters
 parser.add_argument('--log-dir', default='./logs',
@@ -171,7 +171,7 @@ if use_kfac:
                                use_eigen_decomp=not args.use_inv_kfac,
                                diag_blocks=args.diag_blocks,
                                diag_warmup=args.diag_warmup,
-                               distribute_layer_factors=args.distribute_layer_factors)
+                               distribute_layer_factors=not args.coallocate_layer_factors)
     kfac_param_scheduler = kfac.KFACParamScheduler(preconditioner,
             damping_alpha=args.damping_alpha,
             damping_schedule=args.damping_schedule,

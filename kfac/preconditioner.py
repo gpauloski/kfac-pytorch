@@ -52,8 +52,8 @@ class KFAC(optim.Optimizer):
           the block diagonal factor approximation (default: 0)
       distribute_layer_factors (bool, optional): if `True`, computes factors A
           and G on different workers else computes A and G for a single layer
-          on the same worker. If `None`, determines best value based on layer
-          count (default: None)
+          on the same worker. For small worker counts, computing per layer
+          factors on the same device can yeild improvements. (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
           ignore when registering layers (default: None)
     """
@@ -69,7 +69,7 @@ class KFAC(optim.Optimizer):
                  batch_averaged=True,
                  diag_blocks=1,
                  diag_warmup=0,
-                 distribute_layer_factors=None,
+                 distribute_layer_factors=True,
                  skip_layers=None):
 
         if not 0.0 <= lr:
@@ -125,14 +125,6 @@ class KFAC(optim.Optimizer):
 
         self.layers = {}  # key: nn.Module, value: KFACLayer
         self._register_modules(model)
-
-        # Compute ideal value for `distribute_layer_factors` based on
-        # registered module count
-        if distribute_layer_factors is None:
-            self.distribute_layer_factors = True \
-                    if hvd.size() > len(self.layers) else False
-        else:
-            self.distribute_layer_factors = distribute_layer_factors
 
         self.have_cleared_Q = True if self.diag_warmup == 0 else False
 
