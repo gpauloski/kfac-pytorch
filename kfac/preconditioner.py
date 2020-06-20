@@ -123,10 +123,8 @@ class KFAC(optim.Optimizer):
             for layer in skip_layers: 
                 self.known_modules.discard(layer.lower())
 
-        #print('KFAC: registering {} layers'.format(self.known_modules))
         self.layers = {}  # key: nn.Module, value: KFACLayer
-        self._register_layers(model)
-        #print('KFAC: registered {} layers'.format(len(self.layers)))
+        self._register_modules(model)
 
         # Compute ideal value for `distribute_layer_factors` based on
         # registered module count
@@ -149,20 +147,34 @@ class KFAC(optim.Optimizer):
         if self.steps % self.fac_update_freq == 0:
             self.layers[module].save_grad_outputs(grad_output)
 
-    def _register_layers(self, model):
-        """Register hooks to all supported layers in the model"""
-        for module in model.modules():
+    def _register_layer(self, module):
+        """Create and register a KFAC layer for the module."""
+        kfac_layer = get_kfac_layer(module, self.use_eigen_decomp, 
+                self.damping, self.factor_decay, self.batch_averaged)
+        if hvd.rank() == 0:
+            print('Registered layer {}'.format(module.__class__.__name__))
+        self.layers[module] = kfac_layer
+        module.register_forward_pre_hook(self._save_input)
+        module.register_backward_hook(self._save_grad_output)
+
+    def _register_modules(self, model):
+        """Iterate over modules and register KFAC layers."""
+        for module in model.children():
+            # Recursively look at child modules if the current modules is
+            # not supported
             if module.__class__.__name__.lower() not in self.known_modules:
-                continue
-            if not module_requires_grad(module):
-                continue
-            kfac_layer = get_kfac_layer(module, self.use_eigen_decomp,
-                    self.damping, self.factor_decay, self.batch_averaged)
-            if hvd.rank() == 0:
-                print('Registered layer {}'.format(module.__class__.__name__))
-            self.layers[module] = kfac_layer
-            module.register_forward_pre_hook(self._save_input)
-            module.register_backward_hook(self._save_grad_output)
+                self._register_modules(module)
+            # Current module is supported so register all of its sub-modules
+            # that KFAC supports. For most layers, module will have no sub-
+            # modules so just the module is registered, but for special layers
+            # (e.g. RNNCell), the module has sub-modules (nn.Linear) that we do
+            # want to register even if the user has specified 
+            # skip_layers=Linear.
+            else:
+                for m in module.modules():
+                    if (m.__class__.__name__.lower() in KFAC_LAYERS and
+                            module_requires_grad(m)):
+                        self._register_layer(m)
 
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients
@@ -213,7 +225,7 @@ class KFAC(optim.Optimizer):
         else:
             diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
 
-        # if we are switching from no diag approx to approx, we need to clear
+        # If we are switching from no diag approx to approx, we need to clear
         # off-block-diagonal elements
         if not self.have_cleared_Q and \
                 epoch == self.diag_warmup and \
@@ -273,7 +285,14 @@ class KFAC(optim.Optimizer):
             hvd.synchronize(handle)
 
     def _assign_layers_to_workers(self):
-        """Assigns layers to workers to minimize max load on any worker"""
+        """Assigns layers to workers to minimize max load on any worker.
+
+        Approximates load by estimating inverse computation time as O(n^3)
+        for each n x n factor.
+        """
+        if len(self.layers) == 0:
+            return
+
         func = lambda n: n**3  # approx inverse complexity
         a_sizes = [[x.shape[0] for x in l.A_invs] for l in self.layers.values()]
         g_sizes = [[x.shape[0] for x in l.G_invs] for l in self.layers.values()]
@@ -292,13 +311,3 @@ class KFAC(optim.Optimizer):
         for i, layer in enumerate(self.layers.values()):
             layer.A_ranks = [a_locs[i]]
             layer.G_ranks = [g_locs[i]]
-
-        # TODO(gpauloski): remove before merging to master
-        # used for testing the load balancing reduces max worker assignments
-        #load = [0] * hvd.size()
-        #for a, g, layer in zip(a_locs, g_locs, self.layers.values()):
-        #    load[a] += layer.A_factors[0].nelement() 
-        #    load[g] += layer.G_factors[0].nelement() 
-        #if hvd.rank() == 0:
-        #    for i, load in enumerate(load):
-        #        print(i, load)
