@@ -1,6 +1,5 @@
 import math
 import torch
-import horovod.torch as hvd
 
 from kfac.utils import get_block_boundary
 
@@ -51,7 +50,7 @@ class KFACLayer(object):
             for G_inv in self.G_invs:
                 G_inv.fill_(0)
 
-    def compute_A_invs(self):
+    def compute_A_invs(self, rank):
         """Compute A inverses on specified ranks
 
         Note: all ranks will enter this function but only the ranks assigned
@@ -60,30 +59,27 @@ class KFACLayer(object):
         is done so we can sum the inverses across all ranks to communicate the
         results of locally computed inverses.
 
+        Args:
+          rank (int): rank of worker entering function
+
         TODO(gpauloski): refactor this code and compute_G_invs to helper func
         """
         if self.A_ranks is None or len(self.A_ranks) == 0:
             raise ValueError('Workers have not been assigned to layer yet.')
-        if hvd.rank() in self.A_ranks:
+        if rank in self.A_ranks:
             for factor, inv in zip(self.A_factors, self.A_invs):
-                self._distributed_factor_inv(factor, inv, self.A_ranks)
-        else:
-            for inv in self.A_invs:
-                inv.fill_(0)
+                self._distributed_factor_inv(factor, inv, rank, self.A_ranks)
 
-    def compute_G_invs(self):
+    def compute_G_invs(self, rank):
         """Compute G inverses on specified ranks
 
         See `compute_A_inv` for more info`
         """
         if self.G_ranks is None or len(self.G_ranks) == 0:
             raise ValueError('Workers have not been assigned to layer yet.')
-        if hvd.rank() in self.G_ranks:
+        if rank in self.G_ranks:
             for factor, inv in zip(self.G_factors, self.G_invs):
-                self._distributed_factor_inv(factor, inv, self.G_ranks)
-        else:
-            for inv in self.G_invs:
-                inv.fill_(0)
+                self._distributed_factor_inv(factor, inv, rank, self.G_ranks)
 
     def get_diag_blocks(self, diag_blocks):
         """Helper method for determining number of diag_blocks to use
@@ -107,16 +103,6 @@ class KFACLayer(object):
                 g = torch.cat([g, self._get_bias(i).grad.data.view(-1, 1)], 1)
             grads.append(g)
         return grads
-
-    def get_factor_handles(self, op=hvd.Average):
-        """Get list of handles to call to average factors"""
-        return ([hvd.allreduce_async_(a, op=op) for a in self.A_factors] +
-                [hvd.allreduce_async_(g, op=op) for g in self.G_factors])
-
-    def get_inverse_handles(self, op=hvd.Sum):
-        """Get list of handles to call to sum inverses"""
-        return ([hvd.allreduce_async_(a, op=op) for a in self.A_invs] +
-                [hvd.allreduce_async_(g, op=op) for g in self.G_invs])
 
     def compute_preconditioned_gradients(self):
         """Compute precondition gradients of each weight in module
@@ -197,7 +183,7 @@ class KFACLayer(object):
         """
         raise NotImplementedError
 
-    def _distributed_factor_inv(self, factor, inv, ranks):
+    def _distributed_factor_inv(self, factor, inv, rank, ranks):
         """Computes the inverse of a factor across ranks
 
         Assigns each rank in `ranks` to enter this function to compute a
@@ -207,9 +193,10 @@ class KFACLayer(object):
         Args:
           factor (tensor): tensor to invert
           inv (tensor): tensor to save inplace inverse to
+          rank (int): worker rank to do computation on
           ranks (list): list of ranks that will enter this function
         """
-        i = ranks.index(hvd.rank())
+        i = ranks.index(rank)
         n = len(ranks)
         if n > min(factor.shape):
             n = min(factor.shape)
