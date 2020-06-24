@@ -1,19 +1,18 @@
 import math
 import torch
 import torch.optim as optim
-import horovod.torch as hvd
 
 from .layers import *
-from .utils import load_balance
+from .utils import load_balance, get_comm_backend
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
 
     Computes the natural gradient of a model in place with a layer-wise
     FIM approximation. Layer computations are distributed across workers
-    using Horovod.
+    using Horovod or torch.Distributed.
 
-    Usage:
+    Horovod usage example:
       optimizer = optim.SGD(model.parameters(), ...)
       optimizer = hvd.DistributedOptimizer(optimizer, ...)
       preconditioner = KFAC(model, ...)
@@ -115,7 +114,10 @@ class KFAC(optim.Optimizer):
         self.diag_blocks = diag_blocks
         self.diag_warmup = diag_warmup
         self.batch_averaged = batch_averaged
-        
+        self.distribute_layer_factors = distribute_layer_factors
+
+        self.backend = get_comm_backend()
+
         self.known_modules = {m.lower() for m in KNOWN_MODULES}
         if isinstance(skip_layers, str):
             self.known_modules.discard(skip_layers.lower())
@@ -143,7 +145,7 @@ class KFAC(optim.Optimizer):
         """Create and register a KFAC layer for the module."""
         kfac_layer = get_kfac_layer(module, self.use_eigen_decomp, 
                 self.damping, self.factor_decay, self.batch_averaged)
-        if hvd.rank() == 0:
+        if self.backend.rank() == 0:
             print('Registered layer {}'.format(module.__class__.__name__))
         self.layers[module] = kfac_layer
         module.register_forward_pre_hook(self._save_input)
@@ -230,7 +232,7 @@ class KFAC(optim.Optimizer):
             for layer in self.layers.values():
                 layer.update_A_factors()
                 layer.update_G_factors()
-            if hvd.size() > 1:
+            if self.backend.size() > 1:
                 self._allreduce_factors()
 
         # We do this after layer.update_*_factors because the inverse buffers
@@ -240,10 +242,11 @@ class KFAC(optim.Optimizer):
             self._assign_layers_to_workers()
 
         if self.steps % self.kfac_update_freq == 0:
+            rank = self.backend.rank()
             for layer in self.layers.values():
-                layer.compute_A_invs()
-                layer.compute_G_invs()
-            if hvd.size() > 1:
+                layer.compute_A_invs(rank)
+                layer.compute_G_invs(rank)
+            if self.backend.size() > 1:
                 self._allreduce_inverses()
 
         for layer in self.layers.values():
@@ -258,23 +261,27 @@ class KFAC(optim.Optimizer):
 
     def _allreduce_factors(self):
         """Allreduce the factors for all layers"""
-        handles = []
+        tensors = []
 
         for layer in self.layers.values():
-            handles.extend(layer.get_factor_handles())
+            tensors.extend(layer.A_factors)
+            tensors.extend(layer.G_factors)
 
-        for handle in handles:
-            hvd.synchronize(handle)
+        self.backend.allreduce(tensors, op=self.backend.Average)
 
     def _allreduce_inverses(self):
         """Allreduce the eigendecomp/invs for all layers"""
-        handles = []
+        tensors = []
+        ranks = []
 
         for layer in self.layers.values():
-            handles.extend(layer.get_inverse_handles())
-   
-        for handle in handles:
-            hvd.synchronize(handle)
+            tensors.extend(layer.A_invs)
+            tensors.extend(layer.G_invs)
+            ranks.extend(layer.A_ranks * layer.num_weights)
+            ranks.extend(layer.G_ranks * layer.num_weights)
+
+        assert len(tensors) == len(ranks) 
+        self.backend.broadcast(tensors, ranks)
 
     def _assign_layers_to_workers(self):
         """Assigns layers to workers to minimize max load on any worker.
@@ -293,11 +300,11 @@ class KFAC(optim.Optimizer):
             
         if self.distribute_layer_factors:
             times = a_times + g_times
-            locs = load_balance(hvd.size(), times)
+            locs = load_balance(self.backend.size(), times)
             a_locs, g_locs = locs[0:len(a_times)], locs[len(a_times):]
         else:
             times = [sum(x) for x in zip(a_times, g_times)]
-            locs = load_balance(hvd.size(), times)
+            locs = load_balance(self.backend.size(), times)
             a_locs, g_locs = locs, locs
 
         for i, layer in enumerate(self.layers.values()):
