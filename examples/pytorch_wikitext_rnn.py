@@ -91,9 +91,9 @@ def initialize():
                         help='Epoch to start diag block approximation at (default: 0)')
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
-    parser.add_argument('--skip-layers', nargs='+', type=str, default=['linear'],
+    parser.add_argument('--skip-layers', nargs='+', type=str, default=['linear','embedding'],
                         help='Layer types to ignore registering with KFAC'
-                             '(default: [\'linear\'])')
+                             '(default: ["linear", "embedding"])')
 
 
     args = parser.parse_args()
