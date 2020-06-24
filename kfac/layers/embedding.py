@@ -1,7 +1,5 @@
 import torch
 
-import horovod.torch as hvd
-
 from kfac.layers.base import KFACLayer
 
 class EmbeddingLayer(KFACLayer):
@@ -11,14 +9,16 @@ class EmbeddingLayer(KFACLayer):
         self.use_eigen_decomp = False
         self.num_weights = 1
  
-    def compute_A_invs(self):
+    def compute_A_invs(self, rank):
         """Compute inv of A for module on specified workers
+
         Note: Embedding layer currently ignores all but first rank
+
         Args:
-          ranks: list of horovod ranks (i.e. workers) to use.
+          rank (int) rank of worker entering function.
         """
         # TODO assert only one rank computes a b/c its diagonal
-        if hvd.rank() == self.A_ranks[0]:
+        if rank == self.A_ranks[0]:
             for factor, inv in zip(self.A_factors, self.A_invs):
                 inv.copy_(self._get_vector_inv(factor))
         else:
@@ -30,6 +30,7 @@ class EmbeddingLayer(KFACLayer):
 
     def _compute_A_factors(self):
         """Compute A for Embedding layer
+
         Input to Embedding layer is (batch_size, input_size) representing
         indicies into the embedding matrix of size [vocab_size, embed_size].
         The factor is represented by:
