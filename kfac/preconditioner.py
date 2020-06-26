@@ -232,14 +232,15 @@ class KFAC(optim.Optimizer):
             for layer in self.layers.values():
                 layer.update_A_factors()
                 layer.update_G_factors()
+
+            # We do this after layer.update_*_factors because the inverse buffers
+            # are not instantiate until this point and we use the size of the
+            # buffers to approximate the time each layer will take to compute.
+            if self.steps == 0:
+                self._assign_layers_to_workers()
+
             if self.backend.size() > 1:
                 self._allreduce_factors()
-
-        # We do this after layer.update_*_factors because the inverse buffers
-        # are not instantiate until this point and we use the size of the
-        # buffers to approximate the time each layer will take to compute.
-        if self.steps == 0:
-            self._assign_layers_to_workers()
 
         if self.steps % self.kfac_update_freq == 0:
             rank = self.backend.rank()
@@ -262,12 +263,17 @@ class KFAC(optim.Optimizer):
     def _allreduce_factors(self):
         """Allreduce the factors for all layers"""
         tensors = []
+        ranks = []
 
         for layer in self.layers.values():
             tensors.extend(layer.A_factors)
             tensors.extend(layer.G_factors)
+            ranks.extend(layer.A_ranks * layer.num_weights)
+            ranks.extend(layer.G_ranks * layer.num_weights) 
 
-        self.backend.allreduce(tensors, op=self.backend.Average)
+        #self.backend.allreduce(tensors, op=self.backend.Average)
+        assert len(tensors) == len(ranks)
+        self.backend.reduce(tensors, ranks, op=self.backend.Average)
 
     def _allreduce_inverses(self):
         """Allreduce the eigendecomp/invs for all layers"""

@@ -34,7 +34,22 @@ import torch.nn.init as init
 
 from torch.autograd import Variable
 
-__all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']
+__all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56',
+           'resnet110', 'resnet1202', 'get_model']
+
+def get_model(model):
+    if model.lower() == "resnet20":
+        model = resnet20()
+    elif model.lower() == "resnet32":
+         model = resnet32()
+    elif model.lower() == "resnet44":
+         model = resnet44()
+    elif model.lower() == "resnet56":
+         model = resnet56()
+    elif model.lower() == "resnet110":
+         model = resnet110()
+    return model
+
 
 def _weights_init(m):
     classname = m.__class__.__name__
