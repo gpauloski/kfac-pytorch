@@ -8,13 +8,12 @@ def accuracy(output, target):
     return pred.eq(target.view_as(pred)).cpu().float().mean()
 
 def save_checkpoint(model, optimizer, checkpoint_format, epoch):
-    if hvd.rank() == 0:
-        filepath = checkpoint_format.format(epoch=epoch + 1)
-        state = {
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-        }
-        torch.save(state, filepath)
+    filepath = checkpoint_format.format(epoch=epoch + 1)
+    state = {
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+    }
+    torch.save(state, filepath)
 
 class LabelSmoothLoss(torch.nn.Module):
     

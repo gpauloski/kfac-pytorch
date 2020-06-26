@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/240976400.svg)](https://zenodo.org/badge/latestdoi/240976400)
 
-Distributed K-FAC Preconditioner in PyTorch using [Horovod](https://github.com/horovod/horovod) for communication.
+PyTorch Distributed K-FAC Preconditioner
 
 The KFAC code was originally forked from Chaoqi Wang's [KFAC-PyTorch](https://github.com/alecwangcq/KFAC-Pytorch).
 The ResNet models for Cifar10 are from Yerlan Idelbayev's [pytorch_resnet_cifar10](https://github.com/akamaster/pytorch_resnet_cifar10).
@@ -12,7 +12,7 @@ The CIFAR-10 and ImageNet-1k training scripts are modeled afer Horovod's example
 
 ### Requirements
 
-PyTorch and Horovod are required to use K-FAC.
+KFAC supports [Horovod](https://github.com/horovod/horovod) and `torch.distributed` distributed training backends.
 
 This code is validated to run with PyTorch v1.1, Horovod 0.19.0, CUDA 10.0/1, CUDNN 7.6.4, and NCCL 2.4.7.
 
@@ -49,24 +49,33 @@ for i, (data, target) in enumerate(train_loader):
 
 Note that the K-FAC Preconditioner expects gradients to be averaged across workers before calling `preconditioner.step()` so we call `optimizer.synchronize()` before hand (Normally `optimizer.synchronize()` is not called until `optimizer.step()`). 
 
+For `torch.distributed` or non-distributed scripts, just call `KFAC.step()` before `optimizer.step()`. KFAC will automatically determine if training is being done in a distributed way and what backend is being used.
+
 ## Example Scripts
 
-Example scripts for K-FAC + SGD training on CIFAR-10 and ImageNet-1k are provided.
+Example scripts for K-FAC + SGD training on CIFAR-10 and ImageNet-1k are provided. For a full list of training parameters, use `--help`, e.g. `python examples/horovod_cifar10_resnet.py --help`.
 
-### CIFAR-10
-```
-$ mpiexec -hostfile /path/to/hostfile -N 4 python examples/pytorch_cifar10_resnet.py \
-      --lr 0.1 --epochs 100 --kfac-update-freq 10 --model resnet32 --lr-decay 35 75 90
-```
+### Horovod
 
-### ImageNet-1k
 ```
-$ mpiexec -hostfile /path/to/hostfile -N 4 python examples/pytorch_imagenet_resnet.py \
-      --lr 0.0125 --epochs 55 --kfac-update-freq 10 --model resnet32 --lr-decay 25 35 40 45 50
+$ mpiexec -hostfile /path/to/hostfile -N $NGPU_PER_NODE python examples/torch{cifar10,imagenet}_resnet.py
 ```
 
-See `python examples/pytorch_{dataset}_resnet.py --help` for a full list of hyper-parameters.
-Note: if `--kfac-update-freq 0`, the K-FAC Preconditioning is skipped entirely, i.e. training is just with normal SGD.
+### torch.distributed
+
+#### Single Node, Multi-GPU
+```
+$ python -m torch.distributed.launch --nproc_per_node=$NGPU_PER_NODE examples/torch_{cifar10,imagenet}_resnet.py
+```
+
+#### Multi Node, Multi-GPU
+On each node, run:
+```
+$ python -m torch.distributed.launch \
+          --nproc_per_node=$NGPU_PER_NODE --nnodes=$NODE_COUNT \
+          --node_rank=$NODE_RANK --master_addr=$MASTER_IP \
+      examples/torch_{cifar10,imagenet}_resnet.py
+```
 
 ## Citation
 
