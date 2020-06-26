@@ -1,3 +1,4 @@
+import math
 import sys
 import torch
 from tqdm import tqdm
@@ -21,28 +22,36 @@ def train(epoch,
     train_accuracy = Metric('train_accuracy', args.backend)
 
     with tqdm(total=len(train_loader),
+              bar_format='{l_bar}{bar:10}{r_bar}',
               desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
               disable=not args.verbose) as t:
         for batch_idx, (data, target) in enumerate(train_loader):
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
-            output = model(data)
-            loss = loss_func(output, target)
-            loss.backward()
 
-            train_loss.update(loss.detach())
-            train_accuracy.update(accuracy(output, target))
+            for i in range(0, len(data), args.batch_size):
+                data_batch = data[i:i + args.batch_size]
+                target_batch = target[i:i + args.batch_size]
+                output = model(data_batch)
+                loss = loss_func(output, target_batch)
+                loss_ = loss.detach().clone()
+                loss.div_(math.ceil(float(len(data)) / args.batch_size))
+                loss.backward()
+            
+                with torch.no_grad():
+                    train_loss.update(loss_)
+                    train_accuracy.update(accuracy(output, target_batch))
 
-            if args.horovod:
-                optimizer.synchronize()
-                if preconditioner is not None:
+                if args.horovod:
+                    optimizer.synchronize()
+                    if preconditioner is not None:
+                        preconditioner.step(epoch=epoch)
+                    with optimizer.skip_synchronize():
+                        optimizer.step()
+                else:
                     preconditioner.step(epoch=epoch)
-                with optimizer.skip_synchronize():
                     optimizer.step()
-            else:
-                preconditioner.step(epoch=epoch)
-                optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
                     train_loss.avg.item(), 100*train_accuracy.avg.item()))
@@ -64,7 +73,7 @@ def test(epoch,
     val_accuracy = Metric('val_accuracy', args.backend)
 
     with tqdm(total=len(val_loader),
-              bar_format='{l_bar}{bar}|{postfix}',
+              bar_format='{l_bar}{bar:10}|{postfix}',
               desc='             '.format(epoch + 1, args.epochs),
               disable=not args.verbose) as t:
         with torch.no_grad():

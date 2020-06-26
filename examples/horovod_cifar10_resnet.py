@@ -35,6 +35,10 @@ def parse_args():
                         help='input batch size for training (default: 128)')
     parser.add_argument('--val-batch-size', type=int, default=128,
                         help='input batch size for validation (default: 128)')
+    parser.add_argument('--batches-per-allreduce', type=int, default=1,
+                        help='number of batches processed locally before '
+                             'executing allreduce across workers; it multiplies '
+                             'total batch size.')
     parser.add_argument('--epochs', type=int, default=100, metavar='N',
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--base-lr', type=float, default=0.1, metavar='LR',
@@ -69,6 +73,8 @@ def parse_args():
                         help='KFAC damping decay schedule (default None)')
     parser.add_argument('--kl-clip', type=float, default=0.001,
                         help='KL clip (default: 0.001)')
+    parser.add_argument('--skip-layers', nargs='+', type=str, default=[],
+                        help='Layer types to ignore registering with KFAC (default: [])')
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
 
@@ -84,7 +90,8 @@ if __name__ == '__main__':
     hvd.init()
     args.verbose = True if hvd.rank() == 0 else False
     args.backend = kfac.utils.get_comm_backend()
-    args.base_lr = args.base_lr * args.backend.size()
+    args.base_lr = args.base_lr * args.backend.size() * args.batches_per_allreduce
+    args.local_rank = hvd.local_rank()
     args.horovod = True
 
     train_sampler, train_loader, _, val_loader = datasets.get_cifar(args)
@@ -106,18 +113,8 @@ if __name__ == '__main__':
     os.makedirs(args.log_dir, exist_ok=True)
     args.log_writer = SummaryWriter(args.log_dir) if args.verbose else None
 
-    opt, precon, lr_schedules, lrs, = optimizers.get_optimizer(model, args)
+    optimizer, precon, lr_schedules, lrs, = optimizers.get_optimizer(model, args)
     loss_func = torch.nn.CrossEntropyLoss()
-
-    optimizer = hvd.DistributedOptimizer(
-        opt, 
-        named_parameters=model.named_parameters(),
-        compression=hvd.Compression.none,
-        op=hvd.Average
-    )
-
-    hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-    hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
     start = time.time()
 
