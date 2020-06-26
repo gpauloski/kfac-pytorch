@@ -30,19 +30,16 @@ class LabelSmoothLoss(torch.nn.Module):
         loss = (-weight * log_prob).sum(dim=-1).mean()
         return loss
 
-def metric_average(val_tensor):
-    avg_tensor = hvd.allreduce(val_tensor)
-    return avg_tensor.item()
-
-# Horovod: average metrics from distributed training.
 class Metric(object):
-    def __init__(self, name):
+    def __init__(self, name, backend):
         self.name = name
+        self.backend = backend
         self.sum = torch.tensor(0.)
         self.n = torch.tensor(0.)
 
     def update(self, val, n=1):
-        self.sum += float(hvd.allreduce(val.detach().cpu(), name=self.name))
+        val = self.backend.reduce_scalar(val)
+        self.sum += float(val.cpu()) / self.backend.size()
         self.n += n
 
     @property
