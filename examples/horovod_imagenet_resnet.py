@@ -119,9 +119,6 @@ if __name__ == '__main__':
         model.cuda()
     torch.backends.cudnn.benchmark = True
 
-    if args.verbose:
-        summary(model, (3, 32, 32))
-
     args.log_dir = os.path.join(args.log_dir, 
              "imagenet_{}_kfac{}_gpu_{}_{}".format(
              args.model, args.kfac_update_freq, hvd.size(),

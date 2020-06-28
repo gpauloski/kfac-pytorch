@@ -90,12 +90,16 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.cuda:
-        torch.cuda.set_device(args.local_rank)
     torch.distributed.init_process_group(backend='nccl', init_method='env://')
 
-    os.environ['LOCAL_RANK'] = str(args.local_rank)
-    
+    if args.cuda:
+        torch.cuda.set_device(args.local_rank)
+        torch.cuda.manual_seed(args.seed)
+
+    print('rank = {}, world_size = {}, device_ids = {}'.format(
+            torch.distributed.get_rank(), torch.distributed.get_world_size(),
+            args.local_rank))
+
     args.backend = kfac.utils.get_comm_backend()
     args.base_lr = args.base_lr * args.backend.size() * args.batches_per_allreduce
     args.verbose = True if args.backend.rank() == 0 else False
@@ -105,12 +109,11 @@ def main():
     model = models.get_model(args.model)
 
     if args.cuda:
-        torch.cuda.manual_seed(args.seed)
         model.cuda()
     torch.backends.cudnn.benchmark = True
     
     model = torch.nn.parallel.DistributedDataParallel(model, 
-            device_ids=[args.local_rank], output_device=args.local_rank)
+            device_ids=[args.local_rank])
 
     if args.verbose:
         summary(model, (3, 32, 32))
