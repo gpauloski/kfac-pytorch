@@ -97,16 +97,20 @@ def parse_args():
 
     return args
 
-
 if __name__ == '__main__': 
     torch.multiprocessing.set_start_method('spawn')
     args = parse_args()
 
+    torch.distributed.init_process_group(backend='nccl', init_method='env://')
+    torch.distributed.barrier()
+    
     if args.cuda:
         torch.cuda.set_device(args.local_rank)
-    torch.distributed.init_process_group(backend='nccl', init_method='env://')
+        torch.cuda.manual_seed(args.seed)
 
-    os.environ['LOCAL_RANK'] = str(args.local_rank)
+    print('rank = {}, world_size = {}, device_ids = {}'.format(
+            torch.distributed.get_rank(), torch.distributed.get_world_size(),
+            args.local_rank))
 
     args.backend = kfac.utils.get_comm_backend()
     args.base_lr = args.base_lr * args.backend.size() * args.batches_per_allreduce
@@ -122,16 +126,11 @@ if __name__ == '__main__':
         model = models.resnet152()
 
     if args.cuda:
-        torch.cuda.manual_seed(args.seed)
         model.cuda()
     torch.backends.cudnn.benchmark = True
 
     model = torch.nn.parallel.DistributedDataParallel(model,
-            device_ids=[args.local_rank], output_device=args.local_rank,
-            find_unused_parameters=True)
-
-    if args.verbose:
-        summary(model, (3, 32, 32))
+            device_ids=[args.local_rank])
 
     args.log_dir = os.path.join(args.log_dir, 
              "imagenet_{}_kfac{}_gpu_{}_{}".format(

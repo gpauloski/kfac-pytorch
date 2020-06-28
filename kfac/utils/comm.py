@@ -94,8 +94,8 @@ class CommBackend(object):
         pass
 
     def reduce_scalar(self, tensor):
-        """Reduce (sum) single tensor. Returns tensor"""
-        return tensor
+        """Reduce (sum) single tensor in place."""
+        pass
 
     def barrier(self):
         return
@@ -134,7 +134,7 @@ class HorovodBackend(CommBackend):
         self.allreduce(tensors, op=op)
 
     def reduce_scalar(self, tensor):
-        return hvd.allreduce(tensor, op=hvd.Sum)
+        hvd.allreduce_(tensor, op=hvd.Sum)
 
     def barrier(self):
         hvd.allreduce(torch.tensor(1), name='barrier')
@@ -160,7 +160,7 @@ class TorchBackend(CommBackend):
         try:
             return os.environ['LOCAL_RANK']
         except:
-            raise RuntimeError('"LOCAL_RANK" must be set in the environment'
+            raise RuntimeError('LOCAL_RANK must be set in the environment'
                                'when using torch.distributed')
 
     def rank(self):
@@ -197,19 +197,10 @@ class TorchBackend(CommBackend):
                 tensor /= self.size()
 
     def reduce_scalar(self, tensor):
-        tensor = tensor if tensor.is_cuda else tensor.cuda()
         dist.all_reduce(tensor)
-        return tensor
 
     def barrier(self):
         dist.barrier()
-    
-    def _cuda(self, tensors):
-        """Move all tensors to cuda device
-
-        torch.distributed with NCCL backend only support GPU operations
-        """
-        return [tensor if tensor.is_cuda else tensor.cuda() for tensor in tensors]
 
     def _sync(self, handles):
         for handle in handles:

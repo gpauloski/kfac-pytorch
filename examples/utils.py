@@ -3,9 +3,8 @@ import torch.nn.functional as F
 import horovod.torch as hvd
 
 def accuracy(output, target):
-    # get the index of the max log-probability
     pred = output.max(1, keepdim=True)[1]
-    return pred.eq(target.view_as(pred)).cpu().float().mean()
+    return pred.eq(target.view_as(pred)).float().mean()
 
 def save_checkpoint(model, optimizer, checkpoint_format, epoch):
     filepath = checkpoint_format.format(epoch=epoch + 1)
@@ -33,21 +32,19 @@ class Metric(object):
     def __init__(self, name, backend):
         self.name = name
         self.backend = backend
-        self.sum = torch.tensor(0.)
-        self.n = torch.tensor(0.)
+        self.total = torch.tensor(0.0)
+        self.n = torch.tensor(0.0)
 
     def update(self, val, n=1):
-        val = self.backend.reduce_scalar(val)
-        self.sum += float(val.cpu()) / self.backend.size()
+        self.backend.reduce_scalar(val)
+        self.total += float(val.cpu()) / self.backend.size()
         self.n += n
 
     @property
     def avg(self):
-        return self.sum / self.n
+        return self.total / self.n
 
 def create_lr_schedule(workers, warmup_epochs, decay_schedule, alpha=0.1):
-    # TODO(gpauloski): when optim.step() called before lr.step(), the first
-    # epoch using the default lr instead of the warmup lr
     def lr_schedule(epoch):
         lr_adj = 1.
         if epoch < warmup_epochs:

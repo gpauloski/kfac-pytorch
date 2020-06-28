@@ -22,10 +22,12 @@ while getopts ":hcn:N:m:b:i:s:l:" opt; do
   esac
 done
 
+echo $OMPI_COMM_WORLD_RANK
+
 if [ $NNODES -eq 1 ]; then
   python -m torch.distributed.launch \
       --nproc_per_node=$NGPUS \
-    examples/horovod_imagenet_resnet.py \
+    examples/torch_imagenet_resnet.py \
       --kfac-update-freq 100 \
       --kfac-cov-update-freq 10 \
       --damping 0.001 \
@@ -36,9 +38,9 @@ else
   python -m torch.distributed.launch \
       --nproc_per_node=$NGPUS \
       --nnodes=$NNODES \
-      --node_rank=$OMPI_MCA_orte_ess_node_rank \
+      --node_rank=$OMPI_COMM_WORLD_RANK \
       --master_addr="$MASTER" \
-    examples/horovod_imagenet_resnet.py \
+    examples/torch_imagenet_resnet.py \
       --kfac-update-freq 100 \
       --kfac-cov-update-freq 10 \
       --damping 0.001 \
