@@ -18,7 +18,7 @@ def train(epoch,
 
     model.train()
     train_sampler.set_epoch(epoch)
-    train_loss = Metric('train_loss', args.backend)
+    train_loss = Metric('train_loss', args.backend) 
     train_accuracy = Metric('train_accuracy', args.backend)
 
     with tqdm(total=len(train_loader),
@@ -35,26 +35,34 @@ def train(epoch,
                 target_batch = target[i:i + args.batch_size]
                 output = model(data_batch)
                 loss = loss_func(output, target_batch)
-                loss_ = loss.detach().clone()
-                loss.div_(math.ceil(float(len(data)) / args.batch_size))
-                loss.backward()
-            
-                with torch.no_grad():
+                loss_ = loss.detach().clone() 
+                loss = loss / args.batches_per_allreduce
+                if args.horovod:
+                    loss.backward()
+                else:
+                    if i < args.batches_per_allreduce:
+                        with model.no_sync():
+                            loss.backward()
+                    else:
+                        loss.backward()
+
+                with torch.no_grad():            
                     train_loss.update(loss_)
                     train_accuracy.update(accuracy(output, target_batch))
 
-                if args.horovod:
-                    optimizer.synchronize()
-                    if preconditioner is not None:
-                        preconditioner.step(epoch=epoch)
-                    with optimizer.skip_synchronize():
-                        optimizer.step()
-                else:
+            if args.horovod:
+                optimizer.synchronize()
+                if preconditioner is not None:
                     preconditioner.step(epoch=epoch)
+                with optimizer.skip_synchronize():
                     optimizer.step()
+            else:
+                if preconditioner is not None:
+                    preconditioner.step(epoch=epoch)
+                optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
-                    train_loss.avg.item(), 100*train_accuracy.avg.item()))
+                    train_loss.avg, 100*train_accuracy.avg))
             t.update(1)
 
     if args.log_writer is not None:
@@ -87,7 +95,7 @@ def test(epoch,
                 t.update(1)
                 if i + 1 == len(val_loader):
                     t.set_postfix_str("\b\b val_loss: {:.4f}, val_acc: {:.2f}%".format(
-                            val_loss.avg.item(), 100*val_accuracy.avg.item()),
+                            val_loss.avg, 100*val_accuracy.avg),
                             refresh=False)
 
     if args.log_writer is not None:

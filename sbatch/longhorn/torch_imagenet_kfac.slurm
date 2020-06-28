@@ -19,18 +19,22 @@ mkdir -p sbatch_logs
 
 source $SCRATCH/anaconda3/bin/activate pytorch
 
-scontrol show hostnames $SLURM_NODELIST > /tmp/hostfile
+HOSTFILE=/tmp/hostfile
 
-cat /tmp/hostfile
+scontrol show hostnames $SLURM_NODELIST > $HOSTFILE
+cat $HOSTFILE
 
-mpiexec -hostfile /tmp/hostfile -N 1 ./sbatch/cp_imagenet_to_temp.sh
+mpiexec -hostfile $HOSTFILE -N 1 ./sbatch/cp_imagenet_to_temp.sh
 
 GPU_PER_NODE=4
-NODES=16
-MASTER_NODE=$(head -n 1 /tmp/hostfile)
+NODES=$(wc -l < $HOSTFILE)
+MASTER_NODE=$(head -n 1 $HOSTFILE)
 
 # We use mpiexec to launch one python -m torch.distributed.launch per node
-mpiexec -hostfile /tmp/hostfile -N 1 \
-  ./launch_node_torch_imagenet.sh -n $GPU_PER_NODE -N $NODES -m $MASTER_NODE
+mpiexec -hostfile $HOSTFILE -N 1 \
+  ./sbatch/longhorn/launch_node_torch_imagenet.sh \
+    -n $GPU_PER_NODE -N $NODES -m $MASTER_NODE
+
+# MASTER=$(head -n 1 /tmp/hostfile4) mpiexec -hostfile /tmp/hostfile4 -N 1 ./sbatch/longhorn/launch_node_torch_imagenet.sh -n 4 -N 4 -m $MASTER
 
 # -----------------------------------------------------------------------------
