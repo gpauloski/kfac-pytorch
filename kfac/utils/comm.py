@@ -193,8 +193,9 @@ class TorchBackend(CommBackend):
             handles.append(dist.reduce(tensor, dst=rank, async_op=True))
         self._sync(handles)
         if op == Ops.Average:
-            for tensor in tensors:
-                tensor /= self.size()
+            for tensor, rank in zip(tensors, ranks):
+                if self.rank() == rank:
+                    tensor /= self.size()
 
     def reduce_scalar(self, tensor):
         dist.all_reduce(tensor)
