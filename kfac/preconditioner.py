@@ -244,7 +244,7 @@ class KFAC(optim.Optimizer):
 
         if self.steps % self.kfac_update_freq == 0:
             rank = self.backend.rank()
-            for layer in self.layers.values():
+            for i, layer in enumerate(self.layers.values()):
                 layer.compute_A_invs(rank)
                 layer.compute_G_invs(rank)
             if self.backend.size() > 1:
@@ -263,17 +263,12 @@ class KFAC(optim.Optimizer):
     def _allreduce_factors(self):
         """Allreduce the factors for all layers"""
         tensors = []
-        ranks = []
 
         for layer in self.layers.values():
             tensors.extend(layer.A_factors)
             tensors.extend(layer.G_factors)
-            ranks.extend(layer.A_ranks * layer.num_weights)
-            ranks.extend(layer.G_ranks * layer.num_weights) 
 
-        #self.backend.allreduce(tensors, op=self.backend.Average)
-        assert len(tensors) == len(ranks)
-        self.backend.reduce(tensors, ranks, op=self.backend.Average)
+        self.backend.allreduce(tensors, op=self.backend.Average)
 
     def _allreduce_inverses(self):
         """Allreduce the eigendecomp/invs for all layers"""
