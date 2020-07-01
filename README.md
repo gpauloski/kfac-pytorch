@@ -14,7 +14,7 @@ The CIFAR-10 and ImageNet-1k training scripts are modeled afer Horovod's example
 
 KFAC supports [Horovod](https://github.com/horovod/horovod) and `torch.distributed` distributed training backends.
 
-This code is validated to run with PyTorch v1.1, Horovod 0.19.0, CUDA 10.0/1, CUDNN 7.6.4, and NCCL 2.4.7.
+This code is validated to run with PyTorch >=1.1.0, Horovod >=0.19.0, and CUDA 10.{0,1,2}.
 
 ### Installation
 
@@ -58,7 +58,7 @@ Example scripts for K-FAC + SGD training on CIFAR-10 and ImageNet-1k are provide
 ### Horovod
 
 ```
-$ mpiexec -hostfile /path/to/hostfile -N $NGPU_PER_NODE python examples/torch{cifar10,imagenet}_resnet.py
+$ mpiexec -hostfile /path/to/hostfile -N $NGPU_PER_NODE python examples/horovod_{cifar10,imagenet}_resnet.py
 ```
 
 ### torch.distributed
@@ -68,12 +68,12 @@ $ mpiexec -hostfile /path/to/hostfile -N $NGPU_PER_NODE python examples/torch{ci
 $ python -m torch.distributed.launch --nproc_per_node=$NGPU_PER_NODE examples/torch_{cifar10,imagenet}_resnet.py
 ```
 
-#### Multi Node, Multi-GPU
+#### Multi-Node, Multi-GPU
 On each node, run:
 ```
 $ python -m torch.distributed.launch \
           --nproc_per_node=$NGPU_PER_NODE --nnodes=$NODE_COUNT \
-          --node_rank=$NODE_RANK --master_addr=$MASTER_IP \
+          --node_rank=$NODE_RANK --master_addr=$MASTER_HOSTNAME \
       examples/torch_{cifar10,imagenet}_resnet.py
 ```
 
