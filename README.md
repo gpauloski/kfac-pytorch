@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/240976400.svg)](https://zenodo.org/badge/latestdoi/240976400)
 
-PyTorch Distributed K-FAC Preconditioner
+Code for the paper "[Convolutional Neural Network Training with Distributed K-FAC](https://arxiv.org/abs/2007.00784)."
 
 The KFAC code was originally forked from Chaoqi Wang's [KFAC-PyTorch](https://github.com/alecwangcq/KFAC-Pytorch).
 The ResNet models for Cifar10 are from Yerlan Idelbayev's [pytorch_resnet_cifar10](https://github.com/akamaster/pytorch_resnet_cifar10).
@@ -79,4 +79,14 @@ $ python -m torch.distributed.launch \
 
 ## Citation
 
-Coming soon.
+```
+@article{pauloski2020convolutional,
+    title={Convolutional Neural Network Training with Distributed K-FAC},
+    author={J. Gregory Pauloski and Zhao Zhang and Lei Huang and Weijia Xu and Ian T. Foster},
+    year={2020},
+    pages={to appear in the proceedings of SC20},
+    eprint={2007.00784},
+    archivePrefix={arXiv},
+    primaryClass={cs.LG}
+}
+```
