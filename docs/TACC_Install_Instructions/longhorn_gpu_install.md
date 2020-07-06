@@ -10,13 +10,13 @@ $ conda activate yourenvname
 
 Install PyTorch and Horovod
 ```
-$ conda install pytorch=1.1 tqdm
+$ conda install pytorch=1.1 tqdm torchvision  # if using custom pytorch wheel, use pip install torchvision
 $ module load gcc/7.3.0
 $ module load cuda/10.1
 $ export CPATH=/usr/local/cuda-10.1/include:$CPATH
 $ HOROVOD_CUDA_HOME=/opt/apps/cuda/10.1/ HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_NCCL_HOME=/opt/apps/cuda10_0/nccl/2.4.8/   HOROVOD_WITHOUT_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=1 HOROVOD_WITHOUT_MXNET=1 pip install horovod==0.19.2 --no-cache-dir
 $ module unload gcc/7.3.0
-$ module load spectrum_mpi
+$ module load xl spectrum_mpi
 ```
 
 Install KFAC 
