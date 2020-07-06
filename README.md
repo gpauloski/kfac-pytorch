@@ -14,7 +14,7 @@ The CIFAR-10 and ImageNet-1k training scripts are modeled afer Horovod's example
 
 KFAC supports [Horovod](https://github.com/horovod/horovod) and `torch.distributed` distributed training backends.
 
-This code is validated to run with PyTorch >=1.1.0, Horovod >=0.19.0, and CUDA 10.{0,1,2}.
+This code is validated to run with PyTorch >=1.2.0, Horovod >=0.19.0, and CUDA >=10.0.
 
 ### Installation
 
