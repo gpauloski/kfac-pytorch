@@ -20,7 +20,8 @@ KFAC_LAYERS = {'linear', 'conv2d', 'embedding'}
 # register RNNCells; however, RNNCells is made up of Linear layers that we
 # do not want to skip, hence this separation of `KFAC_LAYERS` and 
 # `KNOWN_MODULES`.
-KNOWN_MODULES = {'linear', 'conv2d', 'embedding', 'LSTMCell', 'RNNCell'}
+KNOWN_MODULES = {'linear', 'conv2d', 'embedding', 'LSTMCell', 'RNNCell',
+                 'LSTMImpl', 'RNNImpl'}
 
 def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
                    factor_decay=0.95, batch_averaged=True):
@@ -28,8 +29,8 @@ def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
         layer = LinearLayer
     elif isinstance(module, nn.Conv2d):
         layer = Conv2dLayer
-    #elif isinstance(module, km.RNNCell) or isinstance(module, km.LSTMCell):
-    #    layer = RNNLayer
+    elif isinstance(module, km.RNNCell) or isinstance(module, km.LSTMCell):
+        layer = RNNLayer
     elif isinstance(module, nn.Embedding):
         layer = EmbeddingLayer
     elif isinstance(module, nn.RNNCellBase):
