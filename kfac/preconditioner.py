@@ -178,12 +178,12 @@ class KFAC(optim.Optimizer):
         """
         vg_sum = 0.
         for module, layer in self.layers.items():
-            for i, v in enumerate(layer.preconditioned_gradients):
-                vg_sum += (v[0] * layer._get_weight(i).grad.data *
+            v = layer.preconditioned_gradient
+            vg_sum += (v[0] * layer._get_weight_grad().data *
+                       self.lr ** 2).sum().item()
+            if layer.has_bias:
+                vg_sum += (v[1] * layer._get_bias_grad().data * 
                            self.lr ** 2).sum().item()
-                if layer.has_bias:
-                    vg_sum += (v[1] * layer._get_bias(i).grad.data * 
-                               self.lr ** 2).sum().item()
         return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
     def step(self, closure=None, epoch=None):
@@ -230,8 +230,8 @@ class KFAC(optim.Optimizer):
 
         if self.steps % self.fac_update_freq == 0:
             for layer in self.layers.values():
-                layer.update_A_factors()
-                layer.update_G_factors()
+                layer.update_A_factor()
+                layer.update_G_factor()
 
             # We do this after layer.update_*_factors because the inverse buffers
             # are not instantiate until this point and we use the size of the
@@ -245,18 +245,18 @@ class KFAC(optim.Optimizer):
         if self.steps % self.kfac_update_freq == 0:
             rank = self.backend.rank()
             for i, layer in enumerate(self.layers.values()):
-                layer.compute_A_invs(rank)
-                layer.compute_G_invs(rank)
+                layer.compute_A_inv(rank)
+                layer.compute_G_inv(rank)
             if self.backend.size() > 1:
                 self._allreduce_inverses()
 
         for layer in self.layers.values():
-            layer.compute_preconditioned_gradients()
+            layer.compute_preconditioned_gradient()
 
         nu = self._compute_grad_scale()
 
         for layer in self.layers.values():
-            layer.update_gradients(nu)
+            layer.update_gradient(nu)
 
         self.steps += 1
 
@@ -265,8 +265,8 @@ class KFAC(optim.Optimizer):
         tensors = []
 
         for layer in self.layers.values():
-            tensors.extend(layer.A_factors)
-            tensors.extend(layer.G_factors)
+            tensors.append(layer.A_factor)
+            tensors.append(layer.G_factor)
 
         self.backend.allreduce(tensors, op=self.backend.Average)
 
@@ -276,10 +276,10 @@ class KFAC(optim.Optimizer):
         ranks = []
 
         for layer in self.layers.values():
-            tensors.extend(layer.A_invs)
-            tensors.extend(layer.G_invs)
-            ranks.extend(layer.A_ranks * layer.num_weights)
-            ranks.extend(layer.G_ranks * layer.num_weights)
+            tensors.append(layer.A_inv)
+            tensors.append(layer.G_inv)
+            ranks.extend(layer.A_ranks)
+            ranks.extend(layer.G_ranks)
 
         assert len(tensors) == len(ranks) 
         self.backend.broadcast(tensors, ranks)
@@ -294,10 +294,10 @@ class KFAC(optim.Optimizer):
             return
 
         func = lambda n: n**3  # approx inverse complexity
-        a_sizes = [[x.shape[0] for x in l.A_invs] for l in self.layers.values()]
-        g_sizes = [[x.shape[0] for x in l.G_invs] for l in self.layers.values()]
-        a_times = [sum(map(func, sizes)) for sizes in a_sizes]
-        g_times = [sum(map(func, sizes)) for sizes in a_sizes]
+        a_sizes = [l.A_inv.shape[0] for l in self.layers.values()]
+        g_sizes = [l.G_inv.shape[0] for l in self.layers.values()]
+        a_times = list(map(func, a_sizes))
+        g_times = list(map(func, g_sizes))
             
         if self.distribute_layer_factors:
             times = a_times + g_times

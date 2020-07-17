@@ -7,20 +7,19 @@ from kfac.utils import try_contiguous
 class Conv2dLayer(KFACLayer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.num_weights = 1
         self.has_bias = self.module.bias is not None
 
     def get_diag_blocks(self, diag_blocks):
         return diag_blocks
 
-    def get_gradients(self):
+    def get_gradient(self):
         grad = self.module.weight.grad.data.view(
                 self.module.weight.grad.data.size(0), -1)  
         if self.has_bias:
             grad = torch.cat([grad, self.module.bias.grad.data.view(-1, 1)], 1)
-        return [grad]
+        return grad
 
-    def _compute_A_factors(self):
+    def _compute_A_factor(self):
         a = self.a_inputs[0]
         batch_size = a.size(0)
         a = self._extract_patches(a)
@@ -29,9 +28,9 @@ class Conv2dLayer(KFACLayer):
         if self.has_bias:
             a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
         a = a / spatial_size
-        return [a.t() @ (a / batch_size)]
+        return a.t() @ (a / batch_size)
 
-    def _compute_G_factors(self):
+    def _compute_G_factor(self):
         # g: batch_size * n_filters * out_h * out_w
         # n_filters is actually the output dimension (analogous to Linear layer)
         g = self.g_outputs[0]
@@ -43,7 +42,7 @@ class Conv2dLayer(KFACLayer):
         if self.batch_averaged:
             g = g * batch_size
         g = g * spatial_size
-        return [g.t() @ (g / g.size(0))]
+        return g.t() @ (g / g.size(0))
     
     # TODO: refactor extract_params to not reuire x arg
     def _extract_patches(self, x):
@@ -76,11 +75,4 @@ class Conv2dLayer(KFACLayer):
                              'bias tensor'.format(i))
         else:
             return None
-
-    def _get_weight(self, i):
-        if i == 0:
-            return self.module.weight
-        else:
-            raise ValueError('Invalid weight index {}. Conv2d layer only has '
-                             '1 weight tensor'.format(i))
 

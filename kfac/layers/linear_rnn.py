@@ -7,7 +7,6 @@ class LinearRNNLayer(KFACLayer):
         super().__init__(*args, **kwargs)
         self.has_bias = self.module.bias is not None
         self.is_symmetric = False
-        self.num_weights = 1
         self.a_inputs = []
         self.g_outputs = []
 
@@ -24,10 +23,10 @@ class LinearRNNLayer(KFACLayer):
         # See save_inputs() above
         self.g_outputs.append(grad_output[0].data)
 
-    def _compute_A_factors(self):
+    def _compute_A_factor(self):
         # a: batch_size * in_dim
         a_o = []
-        for t in range(len(self.a_inputs))
+        for t in range(len(self.a_inputs)):
             a_t = self.a_inputs[t]
             batch_size = a_t.size(0)
 
@@ -40,9 +39,9 @@ class LinearRNNLayer(KFACLayer):
         a_o = torch.mean(a_o, dim=0)
 
         self.a_inputs = []  # Clear input accumulation
-        return [a_o]
+        return a_o
 
-    def _compute_G_factors(self):       
+    def _compute_G_factor(self): 
         # g: batch_size * out_dim
         g_o = []
         for t in range(len(self.g_outputs)):
@@ -60,21 +59,5 @@ class LinearRNNLayer(KFACLayer):
 
         self.g_outputs = []  # Clear grad_output accumulation now that we have
                              # computed G for these grad_outputs
-        return [g_o]
+        return g_o
 
-    def _get_bias(self, i):
-        if  self.has_bias and i == 0:
-            return self.module.bias
-        elif self.has_bias and i != 0:
-            raise ValueError('Invalid bias index {}. Linear layer only has 1 '
-                             'bias tensor'.format(i))
-        else:
-            return None
-
-    def _get_weight(self, i):
-        if i == 0:
-            return self.module.weight
-        else:
-            raise ValueError('Invalid weight index {}. Linear layer only has '
-                             '1 weight tensor'.format(i))
- 
