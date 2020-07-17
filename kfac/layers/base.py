@@ -24,17 +24,16 @@ class KFACLayer(object):
 
         # Should be set by implementing class
         self.has_bias = None
-        self.num_weights = None
 
         # Note: each of the following is a list of tensors b/c
         # torch modules can have multiple inputs/outputs and weights
         self.a_inputs  = None
         self.g_outputs = None
-        self.A_factors = None
-        self.G_factors = None
-        self.A_invs    = None
-        self.G_invs    = None
-        self.preconditioned_gradients = None
+        self.A_factor  = None
+        self.G_factor  = None
+        self.A_inv     = None
+        self.G_inv     = None
+        self.preconditioned_gradient = None
 
     def clear_inverses(self):
         """Clear inverse buffers
@@ -43,15 +42,13 @@ class KFACLayer(object):
         because eigendecompositions saved in place and the off-diagonals must
         be cleared.
         """
-        if self.A_invs is not None:
-            for A_inv in self.A_invs:
-                A_inv.fill_(0)
-        if self.G_invs is not None:
-            for G_inv in self.G_invs:
-                G_inv.fill_(0)
+        if self.A_inv is not None:
+            A_inv.fill_(0)
+        if self.G_inv is not None:
+            G_inv.fill_(0)
 
-    def compute_A_invs(self, rank):
-        """Compute A inverses on specified ranks
+    def compute_A_inv(self, rank):
+        """Compute A inverse on specified ranks
 
         Note: all ranks will enter this function but only the ranks assigned
         to this layer will continue to actually compute the inverses.
@@ -67,19 +64,17 @@ class KFACLayer(object):
         if self.A_ranks is None or len(self.A_ranks) == 0:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank in self.A_ranks:
-            for factor, inv in zip(self.A_factors, self.A_invs):
-                self._distributed_factor_inv(factor, inv, rank, self.A_ranks)
+            self._distributed_factor_inv(self.A_factor, self.A_inv, rank, self.A_ranks)
 
-    def compute_G_invs(self, rank):
-        """Compute G inverses on specified ranks
+    def compute_G_inv(self, rank):
+        """Compute G inverse on specified ranks
 
         See `compute_A_inv` for more info`
         """
         if self.G_ranks is None or len(self.G_ranks) == 0:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank in self.G_ranks:
-            for factor, inv in zip(self.G_factors, self.G_invs):
-                self._distributed_factor_inv(factor, inv, rank, self.G_ranks)
+            self._distributed_factor_inv(self.G_factor, self.G_inv, rank, self.G_ranks)
 
     def get_diag_blocks(self, diag_blocks):
         """Helper method for determining number of diag_blocks to use
@@ -89,44 +84,38 @@ class KFACLayer(object):
         """
         return 1
 
-    def get_gradients(self):
-        """Get formated gradients of each weight in module
+    def get_gradient(self):
+        """Get formated gradients (weight and bias) of module
 
         Returns:
-          List of formatted gradients for each weight where each gradient has
-          shape [ouput_dim, input_dim].
+          gradient of shape [ouput_dim, input_dim]. If bias != None, concats bias
         """
-        grads = []
-        for i in range(self.num_weights):
-            g = self._get_weight(i).grad.data
-            if self.has_bias:
-                g = torch.cat([g, self._get_bias(i).grad.data.view(-1, 1)], 1)
-            grads.append(g)
-        return grads
+        g = self._get_weight_grad()
+        if self.has_bias:
+            g = torch.cat([g, self._get_bias_grad().data.view(-1, 1)], 1)
+        return g
 
-    def compute_preconditioned_gradients(self):
-        """Compute precondition gradients of each weight in module
+    def compute_preconditioned_gradient(self):
+        """Compute precondition gradient of each weight in module
 
-        Produces a list of preconditioned gradients for each weight where each
-        has shape [output_dim, input_dim]. Preconditioned gradients can be
-        applied to the actual gradients with `update_gradients()`.
+        Produces a list of preconditioned weight gradient and bias gradient
+        (if there is a bias) where each has shape [output_dim, input_dim].
+        Preconditioned gradients can be applied to the actual gradients with 
+        `update_gradient()`.
         """
         # Compute preconditioned gradient using specified inverse method
         if self.use_eigen_decomp:
-            grads = self._precondition_gradients_eigen()
+            grad = self._precondition_gradient_eigen()
         else:
-            grads = self._precondition_gradients_inv()
-
+            grad = self._precondition_gradient_inv()
         # Reshape appropriately
-        for i, grad in enumerate(grads):
-            if self.has_bias:
-                grad = [grad[:, :-1], grad[:, -1:]]
-                grad[0] = grad[0].view(self._get_weight(i).grad.data.size())
-                grad[1] = grad[1].view(self._get_bias(i).grad.data.size())
-            else:
-                grad = [grad.view(self._get_weight(i).grad.data.size())]
-            grads[i] = grad
-        self.preconditioned_gradients = grads
+        if self.has_bias:
+            grad = [grad[:, :-1], grad[:, -1:]]
+            grad[0] = grad[0].view(self._get_weight_grad().data.size())
+            grad[1] = grad[1].view(self._get_bias_grad().data.size())
+        else:
+            grad = [grad.view(self._get_weight_grad().data.size())]
+        self.preconditioned_gradient = grad
 
     def save_inputs(self, input):
         """Save inputs locally"""
@@ -136,51 +125,40 @@ class KFACLayer(object):
         """Save grad w.r.t outputs locally"""
         self.g_outputs = [g.data for g in grad_output if g is not None]
 
-    def update_A_factors(self):
-        """Compute factors A and add to running averages"""
-        A_new = self._compute_A_factors()
-        if self.A_factors is None:
+    def update_A_factor(self):
+        """Compute factor A and add to running averages"""
+        A_new = self._compute_A_factor()
+        if self.A_factor is None:
             self._init_A_buffers(A_new)
-        for A, A_factor in zip(A_new, self.A_factors):
-            self._update_running_avg(A, A_factor)
+        self._update_running_avg(A_new, self.A_factor)
 
-    def update_G_factors(self):
-        """Compute factors G and add to running averages"""
-        G_new = self._compute_G_factors()
-        if self.G_factors is None:
+    def update_G_factor(self):
+        """Compute factor G and add to running averages"""
+        G_new = self._compute_G_factor()
+        if self.G_factor is None:
             self._init_G_buffers(G_new)
-        for G, G_factor in zip(G_new, self.G_factors):
-            self._update_running_avg(G, G_factor)
+        self._update_running_avg(G_new, self.G_factor)
 
-    def update_gradients(self, scale=None):
+    def update_gradient(self, scale=None):
         """Updates gradients of module with computed precondition gradients"""
-        if self.preconditioned_gradients is None:
-            raise RuntimeError('self.compute_preconditioned_gradients() should'
-                    ' be called before update_gradients()')
-        for i in range(self.num_weights):
-            v = self.preconditioned_gradients[i]
-            self._get_weight(i).grad.data.copy_(v[0])
-            if scale is not None:
-                self._get_weight(i).grad.mul_(scale)
-            if self.has_bias:
-                self._get_bias(i).grad.data.copy_(v[1])
-                if scale is not None:
-                    self._get_bias(i).grad.mul_(scale)
-
-    def _compute_A_factors(self):
-        """Compute A factors
-
-        Returns:
-          list of factors A for each weight in module
-        """
+        if self.preconditioned_gradient is None:
+            raise RuntimeError('self.compute_preconditioned_gradient() should'
+                    ' be called before update_gradient()')
+        before = torch.mean(self._get_weight_grad())
+        if scale is not None:
+            v = [scale * x for x in self.preconditioned_gradient]
+        else:
+            v = self.preconditioned_gradient
+        self._get_weight_grad().data.copy_(v[0])
+        if self.has_bias:
+            self._get_bias_grad().data.copy_(v[1])
+    
+    def _compute_A_factor(self):
+        """Compute A factor. Returns A."""
         raise NotImplementedError
 
-    def _compute_G_factors(self):
-        """Compute G factors
-
-        Returns:
-          list of factors G for each weight in module
-        """
+    def _compute_G_factor(self):
+        """Compute G factor. Returns G."""
         raise NotImplementedError
 
     def _distributed_factor_inv(self, factor, inv, rank, ranks):
@@ -244,72 +222,51 @@ class KFACLayer(object):
         cholesky = torch.cholesky(block + torch.diag(diag))
         return torch.cholesky_inverse(cholesky)
 
-    def _get_bias(self, i):
-        """Get i'th bias tensor in module
+    def _get_bias_grad(self):
+        """Get bias.grad tensor of module"""
+        return self.module.bias.grad
 
-        For most layers, there is only one bias tensor but certain layers
-        like RNNs can have multiple.
-        """
-        raise NotImplementedError
+    def _get_weight_grad(self):
+        """Get weight.grad tensor of module"""
+        return self.module.weight.grad
 
-    def _get_weight(self, i):
-        """Get i'th weight tensor in module
-
-        For most layers, there is only one weight but certain layers
-        like RNNs can have multiple.
-        """
-        raise NotImplementedError
-
-    def _init_A_buffers(self, factors):
-        """Create buffers for each factor A and its inverse"""
-        assert self.A_factors is None, ('A buffers have already been '
+    def _init_A_buffers(self, factor):
+        """Create buffers for factor A and its inverse"""
+        assert self.A_factor is None, ('A buffers have already been '
                 'initialized. Was _init_A_buffers() called more than once?')
-        self.A_factors = [torch.diag(factor.new(factor.shape[0]).fill_(1))
-                          for factor in factors]
+        self.A_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
         if self.use_eigen_decomp:
             # add one axtra column for eigenvalues
-            shapes = [(factor.shape[0], factor.shape[0] + 1) 
-                      for factor in factors]
+            shape = (factor.shape[0], factor.shape[0] + 1) 
         else:
-            shapes = [factor.shape for factor in factors]
-        self.A_invs = [factor.new_zeros(shape) 
-                       for factor, shape in zip(factors, shapes)]
+            shape = factor.shape
+        self.A_inv = factor.new_zeros(shape) 
 
-    def _init_G_buffers(self, factors):
-        """Create buffers for each factor G and its inverse"""
-        assert self.G_factors is None, ('G buffers have already been '
+    def _init_G_buffers(self, factor):
+        """Create buffers for factor G and its inverse"""
+        assert self.G_factor is None, ('G buffers have already been '
                 'initialized. Was _init_G_buffers() called more than once?')
-        self.G_factors = [torch.diag(factor.new(factor.shape[0]).fill_(1))
-                          for factor in factors]
+        self.G_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
         if self.use_eigen_decomp:
             # add one axtra column for eigenvalues
-            shapes = [(factor.shape[0], factor.shape[0] + 1) 
-                      for factor in factors]
+            shape = (factor.shape[0], factor.shape[0] + 1)
         else:
-            shapes = [factor.shape for factor in factors]
-        self.G_invs = [factor.new_zeros(shape) 
-                       for factor, shape in zip(factors, shapes)]
+            shape = factor.shape
+        self.G_inv = factor.new_zeros(shape) 
     
-    def _precondition_gradients_eigen(self):
-        """Compute preconditioned gradients for eigendecomp method"""
-        grads = self.get_gradients()
-        precon_grads = []
-        for i, grad in enumerate(grads):
-            A_inv, G_inv = self.A_invs[i], self.G_invs[i]
-            QA, QG = A_inv[:,:-1], G_inv[:,:-1]
-            dA, dG = A_inv[:,-1], G_inv[:,-1]
-            v1 = QG.t() @ grad @ QA
-            v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + self.damping)
-            precon_grads.append(QG @ v2 @ QA.t())
-        return precon_grads
+    def _precondition_gradient_eigen(self):
+        """Compute preconditioned gradient for eigendecomp method"""
+        grad = self.get_gradient()
+        QA, QG = self.A_inv[:,:-1], self.G_inv[:,:-1]
+        dA, dG = self.A_inv[:,-1], self.G_inv[:,-1]
+        v1 = QG.t() @ grad @ QA
+        v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + self.damping)
+        return QG @ v2 @ QA.t()
 
-    def _precondition_gradients_inv(self):
-        """Compute preconditioned gradients for inverse method"""
-        grads = self.get_gradients() 
-        precon_grads = []
-        for i, grad in enumerate(grads):
-            precon_grads.append(self.G_invs[i] @ grad @ self.A_invs[i])
-        return precon_grads
+    def _precondition_gradient_inv(self):
+        """Compute preconditioned gradient for inverse method"""
+        grad = self.get_gradient() 
+        return self.G_inv @ grad @ self.A_inv
 
     def _update_running_avg(self, new, current):
         """Computes in-place running average
