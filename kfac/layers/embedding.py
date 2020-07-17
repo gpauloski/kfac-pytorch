@@ -8,7 +8,7 @@ class EmbeddingLayer(KFACLayer):
         self.has_bias = False
         self.use_eigen_decomp = False
  
-    def compute_A_invs(self, rank):
+    def compute_A_inv(self, rank):
         """Compute inv of A for module on specified workers
 
         Note: Embedding layer currently ignores all but first rank
@@ -98,5 +98,5 @@ class EmbeddingLayer(KFACLayer):
         where @ is torch.matmul() and * is torch.mv()/
         """
         grad = self.get_gradient()
-        return torch.matmul(self.G_inv, grad.t()) * self.A_inv
+        return torch.diag(self.A_inv) @ grad @ self.G_inv
 
