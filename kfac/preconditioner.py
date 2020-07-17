@@ -186,6 +186,7 @@ class KFAC(optim.Optimizer):
                            self.lr ** 2).sum().item()
         return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
+    @torch.no_grad()
     def step(self, closure=None, epoch=None):
         """Perform one K-FAC step
 
