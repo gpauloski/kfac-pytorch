@@ -98,5 +98,5 @@ class EmbeddingLayer(KFACLayer):
         where @ is torch.matmul() and * is torch.mv()/
         """
         grad = self.get_gradient()
-        return torch.diag(self.A_inv) @ grad @ self.G_inv
+        return (self.A_inv[:, None] * grad) @ self.G_inv
 
