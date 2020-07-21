@@ -2,8 +2,8 @@ import math
 import torch
 import torch.optim as optim
 
-from .layers import *
-from .utils import load_balance, get_comm_backend
+from . import layers as kfac_layers
+from . import utils
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
@@ -33,8 +33,8 @@ class KFAC(optim.Optimizer):
       factor_decay (float, optional): running average coefficient for Kronecker
           factors (default: 0.95)
       damping (float, optional): Tikhonov damping parameter (default: 0.001)
-      kl_clip (float, optional): clipping parameter for gradient scaling
-          (default: 0.001)
+      kl_clip (float, optional): clipping parameter for gradient scaling. If
+          None, no scaling/clipping will be applied. (default: 0.001)
       fac_update_freq (int, optional): iterations between calculating and
           updating the running average of the Kronecker factors (default: 10)
       kfac_update_freq (int, optional): iterations between applying gradient
@@ -77,7 +77,7 @@ class KFAC(optim.Optimizer):
             raise ValueError("Invalid factor decay rate: {}".format(factor_decay))
         if not 0.0 < damping:
             raise ValueError("Invalid damping: {}".format(damping))
-        if not 0.0 < kl_clip:
+        if kl_clip is not None and not 0.0 < kl_clip:
             raise ValueError("Invalid clipping value: {}".format(kl_clip))
         if not 0 < fac_update_freq:
             raise ValueError("Invalid factor update frequency: {}".format(fac_update_freq))
@@ -116,9 +116,9 @@ class KFAC(optim.Optimizer):
         self.batch_averaged = batch_averaged
         self.distribute_layer_factors = distribute_layer_factors
 
-        self.backend = get_comm_backend()
+        self.backend = utils.get_comm_backend()
 
-        self.known_modules = {m.lower() for m in KNOWN_MODULES}
+        self.known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
         if isinstance(skip_layers, str):
             self.known_modules.discard(skip_layers.lower())
         elif isinstance(skip_layers, list):
@@ -141,34 +141,37 @@ class KFAC(optim.Optimizer):
         if self.steps % self.fac_update_freq == 0:
             self.layers[module].save_grad_outputs(grad_output)
 
-    def _register_layer(self, module):
-        """Create and register a KFAC layer for the module."""
-        kfac_layer = get_kfac_layer(module, self.use_eigen_decomp, 
-                self.damping, self.factor_decay, self.batch_averaged)
-        if self.backend.rank() == 0:
-            print('Registered layer {}'.format(module.__class__.__name__))
-        self.layers[module] = kfac_layer
-        module.register_forward_pre_hook(self._save_input)
-        module.register_backward_hook(self._save_grad_output)
+    def _register_module(self, module):
+        """Create and register a KFAC layer for a module.
+
+        Note: For a single module, there may be multiple KFAC layers
+          registered. E.g. kfac.modules.LSTMCell is made up of two 
+          torch.nn.Linear so both Linear modules will have a registered KFAC
+          Layer.
+        """
+        layer_list = kfac_layers.get_kfac_layers(
+            module,
+            use_eigen_decomp = self.use_eigen_decomp, 
+            damping = self.damping,
+            factor_decay = self.factor_decay,
+            batch_averaged = self.batch_averaged
+        )
+        for module, kfac_layer in layer_list:
+            if self.backend.rank() == 0:
+                print('Registered layer {} ({})'.format(kfac_layer.__class__.__name__,
+                        module.__class__.__name__))
+            self.layers[module] = kfac_layer
+            module.register_forward_pre_hook(self._save_input)
+            module.register_backward_hook(self._save_grad_output)
 
     def _register_modules(self, model):
-        """Iterate over modules and register KFAC layers."""
+        """Iterate over and register modules that KFAC supports."""
         for module in model.children():
-            # Recursively look at child modules if the current modules is
-            # not supported
             if module.__class__.__name__.lower() not in self.known_modules:
                 self._register_modules(module)
-            # Current module is supported so register all of its sub-modules
-            # that KFAC supports. For most layers, module will have no sub-
-            # modules so just the module is registered, but for special layers
-            # (e.g. RNNCell), the module has sub-modules (nn.Linear) that we do
-            # want to register even if the user has specified 
-            # skip_layers=Linear.
             else:
-                for m in module.modules():
-                    if (m.__class__.__name__.lower() in KFAC_LAYERS and
-                            module_requires_grad(m)):
-                        self._register_layer(m)
+                if kfac_layers.module_requires_grad(module):
+                    self._register_module(module)
 
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients
@@ -254,7 +257,7 @@ class KFAC(optim.Optimizer):
         for layer in self.layers.values():
             layer.compute_preconditioned_gradient()
 
-        nu = self._compute_grad_scale()
+        nu = None if self.kl_clip is None else self._compute_grad_scale()
 
         for layer in self.layers.values():
             layer.update_gradient(nu)
@@ -302,11 +305,11 @@ class KFAC(optim.Optimizer):
             
         if self.distribute_layer_factors:
             times = a_times + g_times
-            locs = load_balance(self.backend.size(), times)
+            locs = utils.load_balance(self.backend.size(), times)
             a_locs, g_locs = locs[0:len(a_times)], locs[len(a_times):]
         else:
             times = [sum(x) for x in zip(a_times, g_times)]
-            locs = load_balance(self.backend.size(), times)
+            locs = utils.load_balance(self.backend.size(), times)
             a_locs, g_locs = locs, locs
 
         for i, layer in enumerate(self.layers.values()):
