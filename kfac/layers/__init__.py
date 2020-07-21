@@ -6,41 +6,35 @@ from kfac.layers.embedding import EmbeddingLayer
 from kfac.layers.linear import LinearLayer
 from kfac.layers.linear_rnn import LinearRNNLayer
 
-__all__ = ['get_kfac_layer', 'KFAC_LAYERS', 'KNOWN_MODULES',
-           'module_requires_grad']
+__all__ = ['KNOWN_MODULES', 'get_kfac_layers', 'module_requires_grad']
 
-# PyTorch modules that have KFACLayer implementations.
-KFAC_LAYERS = {'linear', 'conv2d', 'embedding'}
+KNOWN_MODULES = {'linear', 'conv2d', 'embedding', 'lstmcell'}
 
-# PyTorch/KFAC parent modules that can be registered using KFACLayers.
-# This is different from `KFAC_LAYERS` because some modules (e.g. 
-# kfac.modules.LSTMCell) are made up of PyTorch modules in `KFAC_Layer`
-# that we want to register even if the user has decided to manually skip
-# that type of module. E.g. a user may want to skip Linear layers but
-# register RNNCells; however, RNNCells is made up of Linear layers that we
-# do not want to skip, hence this separation of `KFAC_LAYERS` and 
-# `KNOWN_MODULES`.
-KNOWN_MODULES = {'linear', 'conv2d', 'embedding', 'LSTMCell'}
+def get_kfac_layers(module, **kwargs):
+    """Instantiates KFACLayer(s) for module
 
-def get_kfac_layer(module, use_eigen_decomp=True, damping=0.001,
-                   factor_decay=0.95, batch_averaged=True):
+    Args:
+      module: module to register
+      **kwargs: parameters to pass to KFACLayer
+
+    Returns:
+      list of tuples where each tuple is (module, KFACLayer)
+    """
     if isinstance(module, nn.Linear):
-        layer = LinearLayer
+        return [(module, LinearLayer(module, **kwargs))]
     elif isinstance(module, nn.Conv2d):
-        layer = Conv2dLayer
-    elif isinstance(module, km.LSTMCell):
-        layer = LinearRNNLayer
+        return [(module, Conv2dLayer(module, **kwargs))]
     elif isinstance(module, nn.Embedding):
-        layer = EmbeddingLayer
+        return [(module, EmbeddingLayer(module, **kwargs))]
+    elif isinstance(module, km.LSTMCell):
+        return [(module.linear_ih, LinearRNNLayer(module.linear_ih, **kwargs)),
+                (module.linear_hh, LinearRNNLayer(module.linear_hh, **kwargs))]
     elif isinstance(module, nn.RNNCellBase):
         raise TypeError('KFAC does not support torch.nn.{RNN,LSTM}Cell. Use '
                         'kfac.modules.{RNN,LSTM}Cell instead for KFAC support.')
     else:
         raise NotImplementedError('KFAC does not support layer {}'.format(
                                   module.__class__.__name__))
-
-    return layer(module, use_eigen_decomp, damping, factor_decay,
-                 batch_averaged)
 
 def module_requires_grad(module):
     """Returns False if any module param has .requires_grad=False"""
