@@ -53,7 +53,9 @@ For `torch.distributed` or non-distributed scripts, just call `KFAC.step()` befo
 
 ## Example Scripts
 
-Example scripts for K-FAC + SGD training on CIFAR-10 and ImageNet-1k are provided. For a full list of training parameters, use `--help`, e.g. `python examples/horovod_cifar10_resnet.py --help`.
+Example scripts for K-FAC + SGD training on CIFAR-10 and ImageNet-1k are provided.
+For a full list of training parameters, use `--help`, e.g. `python examples/horovod_cifar10_resnet.py --help`.
+Package requirements for the examples are given in [examples/README.md](examples/README.md).
 
 ### Horovod
 
