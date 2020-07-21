@@ -14,11 +14,14 @@ import rnn_utils.lstm as models
 import cnn_utils.optimizers as optimizers
 
 from torch.optim.lr_scheduler import LambdaLR
-from torchtext.experimental import datasets
-from torchtext.data.utils import get_tokenizer
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
+from torchnlp.datasets import wikitext_2_dataset, penn_treebank_dataset
+from torchnlp.encoders import LabelEncoder
+from torchnlp.samplers import BPTTBatchSampler
 from tqdm import tqdm
 from utils import Metric, create_lr_schedule
+from rnn_utils.utils import DistributedSampler
 
 def parse_args():
     # General Settings
@@ -55,16 +58,16 @@ def parse_args():
                         help='batch size')
     parser.add_argument('--epochs', type=int, default=40,
                         help='upper epoch limit')
-    parser.add_argument('--base-lr', type=float, default=1.0,
+    parser.add_argument('--base-lr', type=float, default=10.0,
                         help='initial learning rate, scaled by num workers')
-    parser.add_argument('--lr-decay', nargs='+', type=int, default=[20, 30, 35],
+    parser.add_argument('--lr-decay', nargs='+', type=int, default=[30, 35],
                         help='epoch intervals to decay lr')
     parser.add_argument('--warmup-epochs', type=float, default=5,
                         help='number of warmup epochs')
     parser.add_argument('--momentum', type=float, default=0.0,
                         help='SGD momentum (default 0.0)')
-    parser.add_argument('--weight-decay', type=float, default=0.0,
-                        help='weight decay (default 0.0)')
+    parser.add_argument('--weight-decay', type=float, default=1e-6,
+                        help='weight decay (default 1e-6)')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
 
@@ -89,9 +92,9 @@ def parse_args():
                         help='KFAC damping decay schedule (default None)')
     parser.add_argument('--kl-clip', type=float, default=0.001,
                         help='KL clip (default: 0.001)')
-    parser.add_argument('--skip-layers', nargs='+', type=str, default=['linear'],
+    parser.add_argument('--skip-layers', nargs='+', type=str, default=['linear', 'embedding'],
                         help='Layer types to ignore registering with KFAC'
-                             '(default: ["linear"])')
+                             '(default: [linear, embedding])')
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
 
@@ -109,69 +112,71 @@ def get_dataset(args):
     args.data_dir = os.path.join(args.data_dir, args.dataset)
     os.makedirs(args.data_dir, exist_ok=True)
 
-    tokenizer = get_tokenizer("basic_english")
-    if args.dataset == 'wikitext2':
-        dataset = datasets.WikiText2
-    elif args.dataset == 'wikitext103':
-        dataset = datasets.WikiText103
-    elif args.dataset == 'penntreebank':
-        dataset = datasets.PennTreebank
 
     if not args.verbose: 
         args.backend.barrier()
-    train_data, val_data, test_data = dataset(tokenizer=tokenizer, root=args.data_dir)
+    if args.dataset == 'wikitext2':
+        datasets = wikitext_2_dataset(directory=args.data_dir, train=True, dev=True, test=True)
+    elif args.dataset == 'penntreebank':
+        datasets = penn_treebank_dataset(directory=args.data_dir, train=True, dev=True, test=True)
     if args.verbose:
         args.backend.barrier()
-    ntokens = len(train_data.get_vocab())
-    batch_size = args.batch_size * (args.bptt + 1)
 
-    def collate(data):
-        data = torch.stack(data)
-        source = data.view(args.batch_size, -1).t().contiguous()
-        data = source[:-1]
-        target = source[1:].contiguous().view(-1)
-        return data, target
+    encoder = LabelEncoder(datasets[0])
+    datasets = [encoder.batch_encode(d) for d in datasets]
+    if args.verbose:
+        print('Loaded {}: train_token_count={}, vocab_size={}'.format(
+                args.dataset, len(datasets[0]), encoder.vocab_size))
+
+    def collate(batch):
+        batch = torch.stack(batch, dim=1)
+        return  batch[0:-1], batch[1:].view(-1).contiguous()
 
     torch.set_num_threads(4)
     kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
-    size, rank = args.backend.size(), args.backend.rank()
 
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_data, num_replicas=size, rank=rank, shuffle=False)
-    train_loader = torch.utils.data.DataLoader(
-            train_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
-            sampler=train_sampler, shuffle=False, **kwargs)
-    val_sampler =torch.utils.data.distributed.DistributedSampler(
-            val_data, num_replicas=size, rank=rank, shuffle=False)
-    val_loader = torch.utils.data.DataLoader(
-            val_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
-            sampler=val_sampler, shuffle=False, **kwargs)
-    test_sampler = torch.utils.data.distributed.DistributedSampler(
-            test_data, num_replicas=size, rank=rank, shuffle=False)
-    test_loader = torch.utils.data.DataLoader(
-            test_data, batch_size=batch_size, collate_fn=collate, drop_last=True,
-            sampler=test_sampler, shuffle=False, **kwargs)
+    bptt_samplers = tuple([
+        BPTTBatchSampler(d, args.bptt + 1, args.batch_size, drop_last=True, type_='source')
+        for d in datasets
+    ])
+    dist_samplers = tuple([
+        DistributedSampler(d, num_replicas=args.backend.size(), rank=args.backend.rank(), shuffle=True)
+        for d in (bptt_samplers)
+    ])
+    data_loaders = tuple([
+        DataLoader(data, batch_sampler=sampler, collate_fn=collate, **kwargs)
+        for data, sampler in zip(datasets, dist_samplers)
+    ])
 
-    return (train_sampler, train_loader, val_sampler, val_loader,
-            test_sampler, test_loader, ntokens)
+    return data_loaders, dist_samplers, encoder.vocab_size
 
 
-def train(epoch, model, optimizer, preconditioner, lrs, loss_func,
-          train_sampler, train_loader, args):
+def repackage_hidden(h):
+    """Wraps hidden states in new Tensors, to detach them from their history."""
+    if h is None:
+        return h
+    elif isinstance(h, torch.Tensor):
+        return h.detach()
+    else:
+        return tuple(repackage_hidden(v) for v in h)
+
+
+def train(epoch, model, optimizer, preconditioner, lrs, loss_func, data_loader, args):
     model.train()
-    train_sampler.set_epoch(epoch)
     
     train_loss = Metric('train_loss', args.backend)
+    hidden = None
 
-    with tqdm(total=len(train_loader), 
+    with tqdm(total=len(data_loader),
               bar_format='{l_bar}{bar:10}{r_bar}',
               desc='Epoch {:2d}/{:2d}'.format(epoch + 1, args.epochs),
               disable=not args.verbose) as t:
-        for batch_idx, (data, target) in enumerate(train_loader):
+        for batch_idx, (data, target) in enumerate(data_loader):
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
-            model.zero_grad()
-            output, hidden = model(data)
+            optimizer.zero_grad()
+            hidden = repackage_hidden(hidden)
+            output, hidden = model(data, hidden)
             loss = loss_func(output, target)
             loss.backward()
 
@@ -225,7 +230,6 @@ def evaluate(epoch, model, loss_func, data_loader, args):
 if __name__ == '__main__':
     args = parse_args()
 
-    #torch.multiprocessing.set_start_method('spawn')
     torch.distributed.init_process_group(backend='nccl', init_method='env://')
 
     if args.cuda:
@@ -244,8 +248,7 @@ if __name__ == '__main__':
     args.verbose = True if args.backend.rank() == 0 else False
     args.horovod = False
 
-    ds = get_dataset(args)
-    train_sampler, train_loader, _, val_loader, _, test_loader, args.ntokens = ds
+    data_loaders, data_samplers, args.ntokens = get_dataset(args)
 
     model = models.LSTMModel(args.ntokens, args.emsize, args.nhid, args.nlayers, 
             dropout=args.dropout, tie_weights=not args.no_tied)
@@ -270,21 +273,19 @@ if __name__ == '__main__':
 
     start = time.time()
 
-    try: 
-        for epoch in range(args.epochs):
-            train(epoch, model, optimizer, precon, lrs, loss_func, 
-                    train_sampler, train_loader, args)
-            for scheduler in lr_schedules:
-                scheduler.step()
-            evaluate(epoch, model, loss_func, val_loader, args)
-    except KeyboardInterrupt:
-        pass
+    for epoch in range(args.epochs):
+        data_samplers[0].set_epoch(0)
+        train(epoch, model, optimizer, precon, lrs, loss_func, 
+                data_loaders[0], args)
+        for scheduler in lr_schedules:
+            scheduler.step()
+        evaluate(epoch, model, loss_func, data_loaders[1], args)
 
     if args.verbose:
         print("\nTraining time:", str(datetime.timedelta(seconds=time.time() - start)))
 
     # Run on test data.
-    test_loss = evaluate(None, model, loss_func, test_loader, args)
+    test_loss = evaluate(None, model, loss_func, data_loaders[2], args)
     if args.verbose:
         print('=' * 89)
         print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
