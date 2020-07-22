@@ -7,9 +7,6 @@ class LinearLayer(KFACLayer):
         super().__init__(*args, **kwargs)
         self.has_bias = self.module.bias is not None
 
-    def get_diag_blocks(self, diag_blocks):
-        return diag_blocks
-
     def _compute_A_factor(self):
         # a: batch_size * in_dim
         assert len(self.a_inputs) == 1

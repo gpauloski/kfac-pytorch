@@ -6,12 +6,8 @@ class LinearRNNLayer(KFACLayer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.has_bias = self.module.bias is not None
-        self.is_symmetric = False
         self.a_inputs = []
         self.g_outputs = []
-
-    def get_diag_blocks(self, diag_blocks):
-        return diag_blocks
 
     def save_inputs(self, input):
         # Linear layer may be called multiple times in one training step
