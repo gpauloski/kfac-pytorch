@@ -53,12 +53,12 @@ def train(epoch,
             if args.horovod:
                 optimizer.synchronize()
                 if preconditioner is not None:
-                    preconditioner.step(epoch=epoch)
+                    preconditioner.step()
                 with optimizer.skip_synchronize():
                     optimizer.step()
             else:
                 if preconditioner is not None:
-                    preconditioner.step(epoch=epoch)
+                    preconditioner.step()
                 optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(

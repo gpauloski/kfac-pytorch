@@ -43,12 +43,6 @@ class KFAC(optim.Optimizer):
           the KFAC update, otherwise use normal inv method (default: True)
       batch_averaged (bool, optional): boolean representing if the gradient
           is alrady averaged across the batches (default: True)
-      diag_blocks (int, optional): Experimental: number of diagonal blocks to
-          approximate the Kronecker factor eigendecomposition with. 
-          `diag_blocks=1` computes the eigendecomposition of the entire factor
-          (default: 1)
-      diag_warmup (int, optional): number of epochs to wait before starting
-          the block diagonal factor approximation (default: 0)
       distribute_layer_factors (bool, optional): if `True`, computes factors A
           and G on different workers else computes A and G for a single layer
           on the same worker. For small worker counts, computing per layer
@@ -66,8 +60,6 @@ class KFAC(optim.Optimizer):
                  kfac_update_freq=100,
                  use_eigen_decomp=True,
                  batch_averaged=True,
-                 diag_blocks=1,
-                 diag_warmup=0,
                  distribute_layer_factors=True,
                  skip_layers=None):
 
@@ -85,12 +77,6 @@ class KFAC(optim.Optimizer):
             raise ValueError("Invalid K-FAC update frequency: {}".format(kfac_update_freq))
         if not 0 == kfac_update_freq % fac_update_freq:
             print("WARNING: it is suggested that kfac_update_freq be a multiple of fac_update_freq")
-        if not 0 < diag_blocks:
-            raise ValueError("Invalid diagonal block approx count: {}".format(diag_blocks))
-        if not 0 <= diag_blocks:
-            raise ValueError("Invalid diagonal block approx count: {}".format(diag_blocks))
-        if not 1 == diag_blocks:
-            print("WARNING: diag_blocks > 1 is experimental and may give poor results.")
 
         # For compatibility with `KFACParamScheduler`
         defaults = dict(lr=lr,
@@ -111,8 +97,6 @@ class KFAC(optim.Optimizer):
         self.fac_update_freq = fac_update_freq
         self.kfac_update_freq = kfac_update_freq
         self.use_eigen_decomp = use_eigen_decomp
-        self.diag_blocks = diag_blocks
-        self.diag_warmup = diag_warmup
         self.batch_averaged = batch_averaged
         self.distribute_layer_factors = distribute_layer_factors
 
@@ -127,8 +111,6 @@ class KFAC(optim.Optimizer):
 
         self.layers = {}  # key: nn.Module, value: KFACLayer
         self._register_modules(model)
-
-        self.have_cleared_Q = True if self.diag_warmup == 0 else False
 
     def _save_input(self, module, input):
         """Hook for saving layer input"""
@@ -190,7 +172,7 @@ class KFAC(optim.Optimizer):
         return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
     @torch.no_grad()
-    def step(self, closure=None, epoch=None):
+    def step(self, closure=None):
         """Perform one K-FAC step
 
         Note:
@@ -200,9 +182,6 @@ class KFAC(optim.Optimizer):
         Args:
           closure: for compatibility with the base optimizer class.
               `closure` is ignored by KFAC
-          epoch (int, optional): epoch to use for determining when to end
-              the `diag_warmup` period. `epoch` is not necessary if not using
-              `diag_warmup`
         """
 
         # Update params, used for compatibilty with `KFACParamScheduler`
@@ -214,23 +193,6 @@ class KFAC(optim.Optimizer):
 
         updates = {}
         handles = []
-
-        if epoch is None:
-            if self.diag_warmup > 0:
-                print("WARNING: diag_warmup > 0 but epoch was not passed to "
-                      "KFAC.step(). Defaulting to no diag_warmup")
-            diag_blocks = self.diag_blocks
-        else:
-            diag_blocks = self.diag_blocks if epoch >= self.diag_warmup else 1
-
-        # If we are switching from no diag approx to approx, we need to clear
-        # off-block-diagonal elements
-        if not self.have_cleared_Q and \
-                epoch == self.diag_warmup and \
-                self.steps % self.kfac_update_freq == 0:
-            for layer in self.layers.values():
-                layer.clear_inverses()
-            self.have_cleared_Q = True
 
         if self.steps % self.fac_update_freq == 0:
             for layer in self.layers.values():
@@ -252,7 +214,7 @@ class KFAC(optim.Optimizer):
                 layer.compute_A_inv(rank)
                 layer.compute_G_inv(rank)
             if self.backend.size() > 1:
-                self._allreduce_inverses()
+                self._broadcast_inverses()
 
         for layer in self.layers.values():
             layer.compute_preconditioned_gradient()
@@ -269,21 +231,19 @@ class KFAC(optim.Optimizer):
         tensors = []
 
         for layer in self.layers.values():
-            tensors.append(layer.A_factor)
-            tensors.append(layer.G_factor)
+            tensors.extend(layer.get_factors())
 
         self.backend.allreduce(tensors, op=self.backend.Average)
 
-    def _allreduce_inverses(self):
-        """Allreduce the eigendecomp/invs for all layers"""
+    def _broadcast_inverses(self):
+        """Broadcast the eigendecomp/invs for all layers"""
         tensors = []
         ranks = []
 
         for layer in self.layers.values():
-            tensors.append(layer.A_inv)
-            tensors.append(layer.G_inv)
-            ranks.extend(layer.A_ranks)
-            ranks.extend(layer.G_ranks)
+            tensor_list, rank_list = layer.get_inverses(return_ranks=True)
+            tensors.extend(tensor_list)
+            ranks.extend(rank_list)
 
         assert len(tensors) == len(ranks) 
         self.backend.broadcast(tensors, ranks)
@@ -313,5 +273,5 @@ class KFAC(optim.Optimizer):
             a_locs, g_locs = locs, locs
 
         for i, layer in enumerate(self.layers.values()):
-            layer.A_ranks = [a_locs[i]]
-            layer.G_ranks = [g_locs[i]]
+            layer.A_rank = a_locs[i]
+            layer.G_rank = g_locs[i]

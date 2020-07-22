@@ -185,7 +185,7 @@ def train(epoch, model, optimizer, preconditioner, lrs, loss_func, data_loader, 
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             if preconditioner is not None:
-                preconditioner.step(epoch)
+                preconditioner.step()
             optimizer.step() 
 
             t.set_postfix_str("loss: {:4.2f}, ppl: {:6.2f}".format(

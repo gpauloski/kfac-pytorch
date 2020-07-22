@@ -1,8 +1,6 @@
 import math
 import torch
 
-from kfac.utils import get_block_boundary
-
 
 class KFACLayer(object):
     def __init__(self,
@@ -11,16 +9,16 @@ class KFACLayer(object):
                  damping = 0.001,
                  factor_decay=0.95,
                  batch_averaged=True,
-                 A_ranks=None,
-                 G_ranks=None):
+                 A_rank=None,
+                 G_rank=None):
         self.module = module
         self.use_eigen_decomp=use_eigen_decomp
         self.damping = damping
         self.factor_decay = factor_decay
         self.batch_averaged = batch_averaged
         self.eps = 1e-10
-        self.A_ranks = A_ranks
-        self.G_ranks = G_ranks
+        self.A_rank = A_rank
+        self.G_rank = G_rank
 
         # Should be set by implementing class
         self.has_bias = None
@@ -34,18 +32,6 @@ class KFACLayer(object):
         self.A_inv     = None
         self.G_inv     = None
         self.preconditioned_gradient = None
-
-    def clear_inverses(self):
-        """Clear inverse buffers
-
-        Useful for when switching between `diag_blocks=1` and `diag-blocks>1`
-        because eigendecompositions saved in place and the off-diagonals must
-        be cleared.
-        """
-        if self.A_inv is not None:
-            A_inv.fill_(0)
-        if self.G_inv is not None:
-            G_inv.fill_(0)
 
     def compute_A_inv(self, rank):
         """Compute A inverse on specified ranks
@@ -61,28 +47,26 @@ class KFACLayer(object):
 
         TODO(gpauloski): refactor this code and compute_G_invs to helper func
         """
-        if self.A_ranks is None or len(self.A_ranks) == 0:
+        if self.A_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
-        if rank in self.A_ranks:
-            self._distributed_factor_inv(self.A_factor, self.A_inv, rank, self.A_ranks)
+        if rank == self.A_rank:
+            if self.use_eigen_decomp:
+                self.A_inv.data.copy_(self._get_block_eigen(self.A_factor))
+            else:
+                self.A_inv.data.copy_(self._get_block_inv(self.A_factor))
 
     def compute_G_inv(self, rank):
         """Compute G inverse on specified ranks
 
         See `compute_A_inv` for more info`
         """
-        if self.G_ranks is None or len(self.G_ranks) == 0:
+        if self.G_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
-        if rank in self.G_ranks:
-            self._distributed_factor_inv(self.G_factor, self.G_inv, rank, self.G_ranks)
-
-    def get_diag_blocks(self, diag_blocks):
-        """Helper method for determining number of diag_blocks to use
-
-        Overrides `diag_blocks` if the `module` does not support
-        `diag_blocks>1`.
-        """
-        return 1
+        if rank == self.G_rank:
+            if self.use_eigen_decomp:
+                self.G_inv.data.copy_(self._get_block_eigen(self.G_factor))
+            else:
+                self.G_inv.data.copy_(self._get_block_inv(self.G_factor))
 
     def get_gradient(self):
         """Get formated gradients (weight and bias) of module
@@ -94,6 +78,21 @@ class KFACLayer(object):
         if self.has_bias:
             g = torch.cat([g, self._get_bias_grad().data.view(-1, 1)], 1)
         return g
+
+    def get_factors(self):
+        """Returns list of all factors in layer"""
+        return [self.A_factor, self.G_factor]
+
+    def get_inverses(self, return_ranks=False):
+        """Returns list of all inv factors in layer
+
+        Args:
+          return_ranks (bool): If True, return list indicating rank that 
+              inverse tensor is on
+        """
+        if return_ranks:
+            return [self.A_inv, self.G_inv], [self.A_rank, self.G_rank] 
+        return [self.A_inv, self.G_inv]
 
     def compute_preconditioned_gradient(self):
         """Compute precondition gradient of each weight in module
@@ -144,7 +143,6 @@ class KFACLayer(object):
         if self.preconditioned_gradient is None:
             raise RuntimeError('self.compute_preconditioned_gradient() should'
                     ' be called before update_gradient()')
-        before = torch.mean(self._get_weight_grad())
         if scale is not None:
             v = [scale * x for x in self.preconditioned_gradient]
         else:
@@ -160,36 +158,6 @@ class KFACLayer(object):
     def _compute_G_factor(self):
         """Compute G factor. Returns G."""
         raise NotImplementedError
-
-    def _distributed_factor_inv(self, factor, inv, rank, ranks):
-        """Computes the inverse of a factor across ranks
-
-        Assigns each rank in `ranks` to enter this function to compute a
-        diagonal block of `factor`. If `len(ranks)==1`, then that rank 
-        computes the inv/eigendecomp of the entire `factor`.
-
-        Args:
-          factor (tensor): tensor to invert
-          inv (tensor): tensor to save inplace inverse to
-          rank (int): worker rank to do computation on
-          ranks (list): list of ranks that will enter this function
-        """
-        i = ranks.index(rank)
-        n = len(ranks)
-        if n > min(factor.shape):
-            n = min(factor.shape)
-
-        if i < n:
-            start, end = get_block_boundary(i, n, factor.shape)
-            block = factor[start[0]:end[0], start[1]:end[1]]
-            if self.use_eigen_decomp:
-                block_inv = self._get_block_eigen(block)
-                inv.data[start[0]:end[0], -1].copy_(block_inv[:,-1])
-                inv.data[start[0]:end[0], start[1]:end[1]].copy_(
-                        block_inv[:,:-1])
-            else:
-                block_inv = self._get_block_inv(block)
-                inv.data[start[0]:end[0], start[1]:end[1]].copy_(block_inv)
 
     def _get_block_eigen(self, block):
         """Compute eigendecomposition of a block.
