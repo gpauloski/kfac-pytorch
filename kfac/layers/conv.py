@@ -8,10 +8,7 @@ class Conv2dLayer(KFACLayer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.has_bias = self.module.bias is not None
-
-    def get_diag_blocks(self, diag_blocks):
-        return diag_blocks
-
+    
     def get_gradient(self):
         grad = self.module.weight.grad.data.view(
                 self.module.weight.grad.data.size(0), -1)  
