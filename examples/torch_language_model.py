@@ -13,7 +13,7 @@ import torch.optim as optim
 import rnn_utils.lstm as models
 import cnn_utils.optimizers as optimizers
 
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torchnlp.datasets import wikitext_2_dataset, penn_treebank_dataset
@@ -40,17 +40,20 @@ def parse_args():
                         help='do not use CUDA')
 
     # Model Settings
-    parser.add_argument('--emsize', type=int, default=200,
+    # Hyperparams based on :
+    #  - https://arxiv.org/pdf/1409.2329.pdf
+    #  - https://openreview.net/pdf?id=HyMTkQZAb
+    parser.add_argument('--emsize', type=int, default=650,
                         help='size of word embeddings')
-    parser.add_argument('--nhid', type=int, default=200,
+    parser.add_argument('--nhid', type=int, default=650,
                         help='number of hidden units per layer')
     parser.add_argument('--nlayers', type=int, default=2,
                         help='number of layers')
     parser.add_argument('--bptt', type=int, default=35,
                         help='sequence length')
-    parser.add_argument('--dropout', type=float, default=0.2,
+    parser.add_argument('--dropout', type=float, default=0.5,
                         help='dropout applied to layers (0 = no dropout)')
-    parser.add_argument('--no-tied', action='store_true',
+    parser.add_argument('--not-tied', action='store_true',
                         help='do not tie the word embedding and softmax weights')
 
     # Training Settings
@@ -61,13 +64,17 @@ def parse_args():
     parser.add_argument('--base-lr', type=float, default=10.0,
                         help='initial learning rate, scaled by num workers')
     parser.add_argument('--lr-decay', nargs='+', type=int, default=[30, 35],
-                        help='epoch intervals to decay lr')
-    parser.add_argument('--warmup-epochs', type=float, default=5,
+                        help='[DISABLED] epoch intervals to decay lr')
+    parser.add_argument('--lr-decay-epoch', type=int, default=1000,
+                        help='epoch to start decaying learning rate')
+    parser.add_argument('--lr-decay-rate', type=float, default=1 / 1.2,
+                        help='multiplicative factor of learning rate decay')
+    parser.add_argument('--warmup-epochs', type=float, default=0,
                         help='number of warmup epochs')
     parser.add_argument('--momentum', type=float, default=0.0,
                         help='SGD momentum (default 0.0)')
-    parser.add_argument('--weight-decay', type=float, default=1e-6,
-                        help='weight decay (default 1e-6)')
+    parser.add_argument('--weight-decay', type=float, default=0.0,
+                        help='weight decay (default 0.0)')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
 
@@ -151,17 +158,7 @@ def get_dataset(args):
     return data_loaders, dist_samplers, encoder.vocab_size
 
 
-def repackage_hidden(h):
-    """Wraps hidden states in new Tensors, to detach them from their history."""
-    if h is None:
-        return h
-    elif isinstance(h, torch.Tensor):
-        return h.detach()
-    else:
-        return tuple(repackage_hidden(v) for v in h)
-
-
-def train(epoch, model, optimizer, preconditioner, lrs, loss_func, data_loader, args):
+def train(epoch, model, optimizer, preconditioner, loss_func, data_loader, args):
     model.train()
     
     train_loss = Metric('train_loss', args.backend)
@@ -175,7 +172,8 @@ def train(epoch, model, optimizer, preconditioner, lrs, loss_func, data_loader, 
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
-            hidden = repackage_hidden(hidden)
+            if hidden is not None:
+                hidden = model.module.detach(hidden)
             output, hidden = model(data, hidden)
             loss = loss_func(output, target)
             loss.backward()
@@ -188,14 +186,15 @@ def train(epoch, model, optimizer, preconditioner, lrs, loss_func, data_loader, 
                 preconditioner.step()
             optimizer.step() 
 
-            t.set_postfix_str("loss: {:4.2f}, ppl: {:6.2f}".format(
+            t.set_postfix_str("lr: {:5.4f} loss: {:4.2f}, ppl: {:6.2f}".format(
+                     optimizer.param_groups[0]['lr'],
                      train_loss.avg, math.exp(train_loss.avg)))
             t.update(1)
 
     if args.log_writer is not None:
         args.log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         args.log_writer.add_scalar('train/ppl', math.exp(train_loss.avg), epoch)
-        args.log_writer.add_scalar('train/lr', args.base_lr * lrs(epoch), epoch)
+        args.log_writer.add_scalar('train/lr', optimizer.param_groups[0]['lr'], epoch)
 
 
 def evaluate(epoch, model, loss_func, data_loader, args):
@@ -251,7 +250,7 @@ if __name__ == '__main__':
     data_loaders, data_samplers, args.ntokens = get_dataset(args)
 
     model = models.LSTMModel(args.ntokens, args.emsize, args.nhid, args.nlayers, 
-            dropout=args.dropout, tie_weights=not args.no_tied)
+            dropout=args.dropout, tie_weights=not args.not_tied)
     model =  model.cuda() if args.cuda else model
     model = torch.nn.parallel.DistributedDataParallel(model, 
             device_ids=[args.local_rank])
@@ -268,17 +267,23 @@ if __name__ == '__main__':
         print(args)
         print(model)
   
-    optimizer, precon, lr_schedules, lrs, = optimizers.get_optimizer(model, args) 
+    optimizer, precon, kfac_schedules, _ = optimizers.get_optimizer(model, args) 
     loss_func = torch.nn.NLLLoss()
+
+    lr_schedules = [StepLR(optimizer, step_size=1, gamma=args.lr_decay_rate)]
+    if precon is not None:
+        lr_schedules.append(StepLR(precon, step_size=1, gamma=args.lr_decay_rate))
 
     start = time.time()
 
     for epoch in range(args.epochs):
         data_samplers[0].set_epoch(0)
-        train(epoch, model, optimizer, precon, lrs, loss_func, 
-                data_loaders[0], args)
-        for scheduler in lr_schedules:
+        train(epoch, model, optimizer, precon, loss_func, data_loaders[0], args)
+        for scheduler in kfac_schedules:
             scheduler.step()
+        if epoch + 1 >= args.lr_decay_epoch:
+            for scheduler in lr_schedules:
+                scheduler.step()
         evaluate(epoch, model, loss_func, data_loaders[1], args)
 
     if args.verbose:

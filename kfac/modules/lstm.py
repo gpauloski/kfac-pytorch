@@ -11,48 +11,75 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import PackedSequence, pad_packed_sequence, pack_padded_sequence
 
 class LSTMCell(nn.Module):
+    """Custom LSTM cell.
+
+    Uses torch.nn.Linear layers for easy compatibility with KFAC. Based on
+    torch.nn.modules.LSTMCell.
+
+    Note:
+      Many LSTMCell implementations use two 4*input_size x hidden_size weights,
+      but for KFAC, we choose to use four input_size x hidden_size weights becuase
+      the factors are smaller and therefore more efficiently invertible.
+    """
     def __init__(self, input_size, hidden_size, bias=True, init_weight=None):
         super(LSTMCell, self).__init__()
 
+        self.linear_i_i = nn.Linear(input_size, hidden_size, bias=bias)
+        self.linear_i_h = nn.Linear(hidden_size, hidden_size, bias=bias)
+        self.linear_f_i = nn.Linear(input_size, hidden_size, bias=bias)
+        self.linear_f_h = nn.Linear(hidden_size, hidden_size, bias=bias)
+        self.linear_g_i = nn.Linear(input_size, hidden_size, bias=bias)
+        self.linear_g_h = nn.Linear(hidden_size, hidden_size, bias=bias)
+        self.linear_o_i = nn.Linear(input_size, hidden_size, bias=bias)
+        self.linear_o_h = nn.Linear(hidden_size, hidden_size, bias=bias)
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.bias = bias
-        self.linear_ih = nn.Linear(input_size, 4 * hidden_size, bias=bias)
-        self.linear_hh = nn.Linear(hidden_size, 4 * hidden_size, bias=bias)
-
+        
         if init_weight is not None:
             self.init_weights(init_weight)
 
-    def forward(self, input, hidden):
+    def forward(self, input, hidden=None):
         """Compute forward pass.
-
         Args:
           input: shape (batch, input_size)
-          hidden: tuple(hx, cx) where hx and cx have shape (batch, hidden_size)
-
+          hidden: tuple (h, c) where h and c have shape (batch, hidden_size)
         Returns:
-          (hy, cy) where hy and cy have shape (batch, hidden_size)
+          (h', c') where h' and c' have shape (batch, hidden_size)
         """
-        hx, cx = hidden
-        gates = self.linear_ih(input) + self.linear_hh(hx)
-        ingate, forgetgate, cellgate, outgate = gates.chunk(4, 1)
-
-        ingate = torch.sigmoid(ingate)
-        forgetgate = torch.sigmoid(forgetgate)
-        cellgate = torch.tanh(cellgate)
-        outgate = torch.sigmoid(outgate)
-
-        cy = (forgetgate * cx) + (ingate * cellgate)
-        hy = outgate * torch.tanh(cy)
-
-        return hy, cy
+        if hidden is None:
+            hidden = (torch.zeros(input.size(0), self.hidden_size, dtype=input.dtype, 
+                                  device=input.device),
+                      torch.zeros(input.size(0), self.hidden_size, dtype=input.dtype, 
+                                  device=input.device))
+        h, c = hidden
+        i = torch.sigmoid(self.linear_i_i(input) + self.linear_i_h(h))
+        f = torch.sigmoid(self.linear_f_i(input) + self.linear_f_h(h))
+        g = torch.tanh(self.linear_g_i(input) + self.linear_g_h(h))
+        o = torch.sigmoid(self.linear_o_i(input) + self.linear_o_h(h))
+        c_prime = (f * c) + (i * g)
+        h_prime = o * torch.tanh(c_prime)
+        return h_prime, c_prime
 
     def init_weights(self, init_weight):
-        nn.init.uniform_(self.linear_ih.weight.data, -init_weight, init_weight)
-        nn.init.uniform_(self.linear_hh.weight.data, -init_weight, init_weight)
+        nn.init.uniform_(self.linear_i_i.weight.data, -init_weight, init_weight)
+        nn.init.uniform_(self.linear_i_h.weight.data, -init_weight, init_weight)
+        nn.init.uniform_(self.linear_f_i.weight.data, -init_weight, init_weight)
+        nn.init.uniform_(self.linear_f_h.weight.data, -init_weight, init_weight)
+        nn.init.uniform_(self.linear_g_i.weight.data, -init_weight, init_weight)
+        nn.init.uniform_(self.linear_g_h.weight.data, -init_weight, init_weight)
+        nn.init.uniform_(self.linear_o_i.weight.data, -init_weight, init_weight)
+        nn.init.uniform_(self.linear_o_h.weight.data, -init_weight, init_weight)
         if self.bias:
-            nn.init.uniform_(self.linear_ih.bias.data, -init_weight, init_weight)
-            nn.init.zeros_(self.linear_hh.bias.data)
+            nn.init.uniform_(self.linear_i_i.bias.data, -init_weight, init_weight)
+            nn.init.zeros_(self.linear_i_h.bias.data)
+            nn.init.uniform_(self.linear_f_i.bias.data, -init_weight, init_weight)
+            nn.init.zeros_(self.linear_f_h.bias.data)
+            nn.init.uniform_(self.linear_g_i.bias.data, -init_weight, init_weight)
+            nn.init.zeros_(self.linear_g_h.bias.data)
+            nn.init.uniform_(self.linear_o_i.bias.data, -init_weight, init_weight)
+            nn.init.zeros_(self.linear_o_h.bias.data)
+
 
 class LSTMLayer(nn.Module):
     def __init__(self, input_size, hidden_size, bias=True, batch_first=False,
@@ -80,6 +107,7 @@ class LSTMLayer(nn.Module):
         output = torch.stack(output, self.seq_dim)
 
         return output, hidden
+
 
 class LSTM(nn.Module):
     """Applies a multi-layer long short-term memory (LSTM) RNN to an input sequence.
