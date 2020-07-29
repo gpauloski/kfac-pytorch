@@ -90,3 +90,11 @@ class LinearMultiLayer(KFACLayer):
                 g_t = g_t.t() @ (g_t / batch_size)
 
             if g_o is None:
+                g_o = g_t
+            else:
+                g_o += g_t
+
+        self.g_outputs = []  # Clear grad_output accumulation now that we have
+                             # computed G for these grad_outputs
+
+        return g_o
