@@ -33,6 +33,9 @@ class KFACLayer(object):
         self.G_inv     = None
         self.preconditioned_gradient = None
 
+    def __repr__(self):
+        return 'KFAC {}({})'.format(self.__class__.__name__, repr(self.module))
+
     def compute_A_inv(self, rank):
         """Compute A inverse on specified ranks
 

@@ -49,6 +49,7 @@ class KFAC(optim.Optimizer):
           factors on the same device can yeild improvements. (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
           ignore when registering layers (default: None)
+      verbose (bool, optional): print information about registered layers
     """
     def __init__(self,
                  model,
@@ -61,7 +62,8 @@ class KFAC(optim.Optimizer):
                  use_eigen_decomp=True,
                  batch_averaged=True,
                  distribute_layer_factors=True,
-                 skip_layers=None):
+                 skip_layers=None,
+                 verbose=True):
 
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
@@ -99,6 +101,7 @@ class KFAC(optim.Optimizer):
         self.use_eigen_decomp = use_eigen_decomp
         self.batch_averaged = batch_averaged
         self.distribute_layer_factors = distribute_layer_factors
+        self.verbose = verbose
 
         self.backend = utils.get_comm_backend()
 
@@ -139,9 +142,8 @@ class KFAC(optim.Optimizer):
             batch_averaged = self.batch_averaged
         )
         for module, kfac_layer in layer_list:
-            if self.backend.rank() == 0:
-                print('Registered layer {} ({})'.format(kfac_layer.__class__.__name__,
-                        module.__class__.__name__))
+            if self.backend.rank() == 0 and self.verbose:
+                print('Registered: {}'.format(kfac_layer))
             self.layers[module] = kfac_layer
             module.register_forward_pre_hook(self._save_input)
             module.register_backward_hook(self._save_grad_output)

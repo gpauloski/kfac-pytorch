@@ -80,6 +80,10 @@ class LSTMCell(nn.Module):
             nn.init.uniform_(self.linear_o_i.bias.data, -init_weight, init_weight)
             nn.init.zeros_(self.linear_o_h.bias.data)
 
+    def __repr__(self):
+        return 'LSTMCell(input_size={}, hidden_size={}, bias={})'.format(
+                self.input_size, self.hidden_size, self.bias)
+
 
 class LSTMLayer(nn.Module):
     def __init__(self, input_size, hidden_size, bias=True, batch_first=False,
@@ -108,6 +112,9 @@ class LSTMLayer(nn.Module):
 
         return output, hidden
 
+    def __repr__(self):
+        return 'LSTMLayer(input_size={}, hidden_size={}, bias={}, batch_first={}, reverse={})'.format(
+                self.input_size, self.hidden_size, self.bias, self.batch_first, self.reverse)
 
 class LSTM(nn.Module):
     """Applies a multi-layer long short-term memory (LSTM) RNN to an input sequence.
@@ -146,7 +153,17 @@ class LSTM(nn.Module):
             layers.append(nn.ModuleList(layer))
 
         self.layers = nn.ModuleList(layers)
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else None
+        self.drop = nn.Dropout(dropout) if dropout > 0 and nlayers > 1 else None
+
+    def __repr__(self):
+        s = 'LSTM(\n' + 4 * ' ' + '(layers):'
+        for i, layer in enumerate(self.layers):
+            s += '\n' + 8 * ' ' + '({}): '.format(i) + repr(layer[0])
+            if self.bidirectional:
+                s += '\n' + 13 * ' ' + repr(layer[1])
+        if self.drop is not None:
+            s += '\n' + 4 * ' ' + '(dropout):' + repr(self.drop)
+        return s + '\n)'
 
     def forward(self, input, hx=None):
         orig_input = input
@@ -201,8 +218,8 @@ class LSTM(nn.Module):
 
             input = torch.cat(all_output, -1)
 
-            if self.dropout is not None and i < self.num_layers - 1:
-                input = self.dropout(input)
+            if self.drop is not None and i < self.num_layers - 1:
+                input = self.drop(input)
 
         next_h, next_c = zip(*next_hidden)
         next_hidden = (torch.stack(next_h), torch.stack(next_c))
