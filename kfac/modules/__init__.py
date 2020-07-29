@@ -1,3 +1,4 @@
-#from .rnn_cell import RNNCell, LSTMCell, LSTMImpl
-#from .rnn import RNN, LSTM
-from .lstm import LSTM, LSTMCell
+from .lstm import LSTM, LSTMCellBase, LSTMCellKFAC, LSTMCell, LSTMLayer
+
+__all__ = ['LSTM', 'LSTMCellBase', 'LSTMCellKFAC', 'LSTMCell', 'LSTMLayer']
+

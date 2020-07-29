@@ -10,36 +10,20 @@ import torch.nn.functional as F
 
 from torch.nn.utils.rnn import PackedSequence, pad_packed_sequence, pack_padded_sequence
 
-class LSTMCell(nn.Module):
-    """Custom LSTM cell.
+
+class LSTMCellBase(nn.Module):
+    """LSTM Cell base abstract class.
 
     Uses torch.nn.Linear layers for easy compatibility with KFAC. Based on
     torch.nn.modules.LSTMCell.
-
-    Note:
-      Many LSTMCell implementations use two 4*input_size x hidden_size weights,
-      but for KFAC, we choose to use four input_size x hidden_size weights becuase
-      the factors are smaller and therefore more efficiently invertible.
     """
-    def __init__(self, input_size, hidden_size, bias=True, init_weight=None):
-        super(LSTMCell, self).__init__()
-
-        self.linear_i_i = nn.Linear(input_size, hidden_size, bias=bias)
-        self.linear_i_h = nn.Linear(hidden_size, hidden_size, bias=bias)
-        self.linear_f_i = nn.Linear(input_size, hidden_size, bias=bias)
-        self.linear_f_h = nn.Linear(hidden_size, hidden_size, bias=bias)
-        self.linear_g_i = nn.Linear(input_size, hidden_size, bias=bias)
-        self.linear_g_h = nn.Linear(hidden_size, hidden_size, bias=bias)
-        self.linear_o_i = nn.Linear(input_size, hidden_size, bias=bias)
-        self.linear_o_h = nn.Linear(hidden_size, hidden_size, bias=bias)
+    def __init__(self, input_size, hidden_size, bias=True):
+        super(LSTMCellBase, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.bias = bias
-        
-        if init_weight is not None:
-            self.init_weights(init_weight)
 
-    def forward(self, input, hidden=None):
+    def forward(self, input, hidden):
         """Compute forward pass.
         Args:
           input: shape (batch, input_size)
@@ -47,11 +31,33 @@ class LSTMCell(nn.Module):
         Returns:
           (h', c') where h' and c' have shape (batch, hidden_size)
         """
-        if hidden is None:
-            hidden = (torch.zeros(input.size(0), self.hidden_size, dtype=input.dtype, 
-                                  device=input.device),
-                      torch.zeros(input.size(0), self.hidden_size, dtype=input.dtype, 
-                                  device=input.device))
+        raise NotImplementedError
+
+    def __repr__(self):
+        return 'LSTMCell(input_size={}, hidden_size={}, bias={})'.format(
+                self.input_size, self.hidden_size, self.bias)
+
+
+class LSTMCellKFAC(LSTMCellBase):
+    """LSTMCell where each gate is a distinct Linear module.
+
+    Many LSTMCell implementations use two 4*input_size x hidden_size weights, but for
+    KFAC this results in larger factors to inverse so it is faster to use four
+    input_size x hidden_size. Note that this implementation is overall slower than
+    the default that using one larger weight matrix as in LSTMCell.
+    """
+    def __init__(self, *args, **kwargs):
+        super(LSTMCellKFAC, self).__init__(*args, **kwargs)
+        self.linear_i_i = nn.Linear(self.input_size, self.hidden_size, bias=self.bias)
+        self.linear_i_h = nn.Linear(self.hidden_size, self.hidden_size, bias=self.bias)
+        self.linear_f_i = nn.Linear(self.input_size, self.hidden_size, bias=self.bias)
+        self.linear_f_h = nn.Linear(self.hidden_size, self.hidden_size, bias=self.bias)
+        self.linear_g_i = nn.Linear(self.input_size, self.hidden_size, bias=self.bias)
+        self.linear_g_h = nn.Linear(self.hidden_size, self.hidden_size, bias=self.bias)
+        self.linear_o_i = nn.Linear(self.input_size, self.hidden_size, bias=self.bias)
+        self.linear_o_h = nn.Linear(self.hidden_size, self.hidden_size, bias=self.bias)
+
+    def forward(self, input, hidden=None):
         h, c = hidden
         i = torch.sigmoid(self.linear_i_i(input) + self.linear_i_h(h))
         f = torch.sigmoid(self.linear_f_i(input) + self.linear_f_h(h))
@@ -61,41 +67,36 @@ class LSTMCell(nn.Module):
         h_prime = o * torch.tanh(c_prime)
         return h_prime, c_prime
 
-    def init_weights(self, init_weight):
-        nn.init.uniform_(self.linear_i_i.weight.data, -init_weight, init_weight)
-        nn.init.uniform_(self.linear_i_h.weight.data, -init_weight, init_weight)
-        nn.init.uniform_(self.linear_f_i.weight.data, -init_weight, init_weight)
-        nn.init.uniform_(self.linear_f_h.weight.data, -init_weight, init_weight)
-        nn.init.uniform_(self.linear_g_i.weight.data, -init_weight, init_weight)
-        nn.init.uniform_(self.linear_g_h.weight.data, -init_weight, init_weight)
-        nn.init.uniform_(self.linear_o_i.weight.data, -init_weight, init_weight)
-        nn.init.uniform_(self.linear_o_h.weight.data, -init_weight, init_weight)
-        if self.bias:
-            nn.init.uniform_(self.linear_i_i.bias.data, -init_weight, init_weight)
-            nn.init.zeros_(self.linear_i_h.bias.data)
-            nn.init.uniform_(self.linear_f_i.bias.data, -init_weight, init_weight)
-            nn.init.zeros_(self.linear_f_h.bias.data)
-            nn.init.uniform_(self.linear_g_i.bias.data, -init_weight, init_weight)
-            nn.init.zeros_(self.linear_g_h.bias.data)
-            nn.init.uniform_(self.linear_o_i.bias.data, -init_weight, init_weight)
-            nn.init.zeros_(self.linear_o_h.bias.data)
 
-    def __repr__(self):
-        return 'LSTMCell(input_size={}, hidden_size={}, bias={})'.format(
-                self.input_size, self.hidden_size, self.bias)
+class LSTMCell(LSTMCellBase):
+    """LSTMCell implentation using Linear modules."""
+    def __init__(self, *args, **kwargs):
+        super(LSTMCell, self).__init__(*args, **kwargs)
+        self.linear_ih = nn.Linear(self.input_size, 4 * self.hidden_size, bias=self.bias)
+        self.linear_hh = nn.Linear(self.hidden_size, 4 * self.hidden_size, bias=self.bias)
+
+    def forward(self, input, hidden):
+        hx, cx = hidden
+        gates = self.linear_ih(input) + self.linear_hh(hx)
+        ingate, forgetgate, cellgate, outgate = gates.chunk(4, 1)
+        ingate = torch.sigmoid(ingate)
+        forgetgate = torch.sigmoid(forgetgate)
+        cellgate = torch.tanh(cellgate)
+        outgate = torch.sigmoid(outgate)
+        cy = (forgetgate * cx) + (ingate * cellgate)
+        hy = outgate * torch.tanh(cy)
+        return hy, cy
 
 
 class LSTMLayer(nn.Module):
-    def __init__(self, input_size, hidden_size, bias=True, batch_first=False,
-            reverse=False, init_weight=None):
+    def __init__(self, input_size, hidden_size, bias=True, batch_first=False, reverse=False):
         super(LSTMLayer, self).__init__()
-
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.bias = bias
         self.batch_first = batch_first
         self.reverse = reverse
-        self.cell = LSTMCell(input_size, hidden_size, bias=bias, init_weight=init_weight)
+        self.cell = LSTMCell(input_size, hidden_size, bias=bias)
         self.seq_dim = 1 if batch_first else 0
 
     def forward(self, input, hidden):
@@ -129,8 +130,7 @@ class LSTM(nn.Module):
                  bias=True,
                  batch_first=False,
                  dropout=0.0,
-                 bidirectional=False,
-                 init_weight=0.1):
+                 bidirectional=False):
         super(LSTM, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -140,20 +140,18 @@ class LSTM(nn.Module):
         self.dropout = dropout
         self.bidirectional = bidirectional
         self.num_directions = 2 if bidirectional else 1
-        self.init_weight = init_weight
 
         layers = []
         # TODO(gpauloski): flatten to single module list and update forward()
         for i in range(num_layers):
-            layer = [LSTMLayer(input_size, hidden_size, bias=bias, batch_first=batch_first,
-                    init_weight=init_weight)]
+            layer = [LSTMLayer(input_size, hidden_size, bias=bias, batch_first=batch_first)]
             if self.bidirectional:
                 layer.append(LSTMLayer(input_size, hidden_size, bias=bias,
-                        batch_first=batch_first, init_weight=init_weight, reverse=True))
+                        batch_first=batch_first, reverse=True))
             layers.append(nn.ModuleList(layer))
 
         self.layers = nn.ModuleList(layers)
-        self.drop = nn.Dropout(dropout) if dropout > 0 and nlayers > 1 else None
+        self.drop = nn.Dropout(dropout) if dropout > 0 and num_layers > 1 else None
 
     def __repr__(self):
         s = 'LSTM(\n' + 4 * ' ' + '(layers):'

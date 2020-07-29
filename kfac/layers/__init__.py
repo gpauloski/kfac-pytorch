@@ -26,7 +26,7 @@ def get_kfac_layers(module, **kwargs):
         return [(module, Conv2dLayer(module, **kwargs))]
     elif isinstance(module, nn.Embedding):
         return [(module, EmbeddingLayer(module, **kwargs))]
-    elif isinstance(module, km.LSTMCell):
+    elif isinstance(module, km.LSTMCellBase):
         return [(m, LinearMultiLayer(m, **kwargs)) for m in module.children()]
     elif isinstance(module, nn.RNNCellBase):
         raise TypeError('KFAC does not support torch.nn.{RNN,LSTM}Cell. Use '
