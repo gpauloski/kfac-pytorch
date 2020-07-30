@@ -8,6 +8,8 @@ class Conv2dLayer(KFACLayer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.has_bias = self.module.bias is not None
+        if not self.batch_first:
+            raise ValueError('Conv2D layer must use batch_first=True')
  
     def get_gradient(self):
         grad = self.module.weight.grad.data.view(
@@ -17,7 +19,7 @@ class Conv2dLayer(KFACLayer):
         return grad
 
     def _compute_A_factor(self):
-        a = self.a_inputs[0]
+        a = self._reshape_data(self.a_inputs)
         batch_size = a.size(0)
         a = self._extract_patches(a)
         spatial_size = a.size(1) * a.size(2)
@@ -30,7 +32,7 @@ class Conv2dLayer(KFACLayer):
     def _compute_G_factor(self):
         # g: batch_size * n_filters * out_h * out_w
         # n_filters is actually the output dimension (analogous to Linear layer)
-        g = self.g_outputs[0]
+        g = self._reshape_data(self.g_outputs)
         spatial_size = g.size(2) * g.size(3)
         batch_size = g.shape[0]
         g = g.transpose(1, 2).transpose(2, 3)
@@ -63,13 +65,4 @@ class Conv2dLayer(KFACLayer):
             x.size(0), x.size(1), x.size(2),
             x.size(3) * x.size(4) * x.size(5))
         return x
-
-    def _get_bias(self, i):
-        if self.has_bias and i == 0:
-            return self.module.bias
-        elif self.has_bias and i != 0:
-            raise ValueError('Invalid bias index {}. Conv2d layer only has 1 '
-                             'bias tensor'.format(i))
-        else:
-            return None
 

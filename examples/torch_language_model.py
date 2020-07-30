@@ -267,12 +267,15 @@ if __name__ == '__main__':
         print(args)
         print(model)
   
-    optimizer, precon, kfac_schedules, _ = optimizers.get_optimizer(model, args) 
+    optimizer, precon, kfac_schedules, _ = optimizers.get_optimizer(
+            model, args, batch_first=False) 
     loss_func = torch.nn.NLLLoss()
 
     lr_schedules = [StepLR(optimizer, step_size=1, gamma=args.lr_decay_rate)]
     if precon is not None:
         lr_schedules.append(StepLR(precon, step_size=1, gamma=args.lr_decay_rate))
+        #precon.register_shared_module(model.module.encoder, model.module.decoder,
+        #        reverse_hooks=True)
 
     start = time.time()
 

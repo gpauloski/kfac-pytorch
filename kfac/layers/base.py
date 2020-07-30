@@ -9,6 +9,7 @@ class KFACLayer(object):
                  damping = 0.001,
                  factor_decay=0.95,
                  batch_averaged=True,
+                 batch_first=True,
                  A_rank=None,
                  G_rank=None):
         self.module = module
@@ -16,6 +17,7 @@ class KFACLayer(object):
         self.damping = damping
         self.factor_decay = factor_decay
         self.batch_averaged = batch_averaged
+        self.batch_first = batch_first
         self.eps = 1e-10
         self.A_rank = A_rank
         self.G_rank = G_rank
@@ -25,8 +27,8 @@ class KFACLayer(object):
 
         # Note: each of the following is a list of tensors b/c
         # torch modules can have multiple inputs/outputs and weights
-        self.a_inputs  = None
-        self.g_outputs = None
+        self.a_inputs  = []
+        self.g_outputs = []
         self.A_factor  = None
         self.G_factor  = None
         self.A_inv     = None
@@ -121,11 +123,11 @@ class KFACLayer(object):
 
     def save_inputs(self, input):
         """Save inputs locally"""
-        self.a_inputs = [a.data for a in input if a is not None]
+        self.a_inputs.append(input[0].data)
 
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
-        self.g_outputs = [g.data for g in grad_output if g is not None]
+        self.g_outputs.append(grad_output[0].data)
 
     def update_A_factor(self):
         """Compute factor A and add to running averages"""
@@ -205,7 +207,7 @@ class KFACLayer(object):
         """Create buffers for factor A and its inverse"""
         assert self.A_factor is None, ('A buffers have already been '
                 'initialized. Was _init_A_buffers() called more than once?')
-        self.A_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
+        self.A_factor = factor #torch.diag(factor.new(factor.shape[0]).fill_(1))
         if self.use_eigen_decomp:
             # add one axtra column for eigenvalues
             shape = (factor.shape[0], factor.shape[0] + 1) 
@@ -217,7 +219,7 @@ class KFACLayer(object):
         """Create buffers for factor G and its inverse"""
         assert self.G_factor is None, ('G buffers have already been '
                 'initialized. Was _init_G_buffers() called more than once?')
-        self.G_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
+        self.G_factor = factor
         if self.use_eigen_decomp:
             # add one axtra column for eigenvalues
             shape = (factor.shape[0], factor.shape[0] + 1)
@@ -238,6 +240,29 @@ class KFACLayer(object):
         """Compute preconditioned gradient for inverse method"""
         grad = self.get_gradient() 
         return self.G_inv @ grad @ self.A_inv
+
+    def _reshape_data(self, data_list, collapse_dims=False):
+        """Concat input/output data and clear buffers
+
+        Note: will clear the values in data_list in place. This is because this
+          function is intended to be used for preprocessing for the 
+          compute_?_factor() functions.
+
+        Args:
+          data_list (list): list of tensors of equal, arbitrary shape where the
+              batch_dim is either 0 or 1 depending on self.batch_first.
+          collapse_dim (bool, optional): if True, collapse all but the last dim
+              together forming a 2D output tensor.
+
+        Returns:
+          Single tensor with all tensors from data_list concatenated across
+          batch_dim. Guarenteed to be 2D if collapse_dims=True.
+        """
+        d = torch.cat(data_list, dim=int(not self.batch_first))
+        if collapse_dims and len(d.shape) > 2:
+            d = d.view(-1, d.shape[-1])
+        del data_list[:]  # clear data_list in place
+        return d
 
     def _update_running_avg(self, new, current):
         """Computes in-place running average
