@@ -11,6 +11,14 @@ def try_contiguous(x):
     return x
 
 
+def partial_in(string, iterable):
+    """Returns True if the string is contained in any element of the iterable"""
+    for value in iterable:
+        if value.contains(string):
+            return True
+    return False
+
+
 class cycle:
     def __init__(self, iterable):
         """Iterator that produces tuples indefinitely.

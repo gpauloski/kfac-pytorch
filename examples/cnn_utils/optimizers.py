@@ -5,7 +5,7 @@ import torch.optim as optim
 sys.path.append('..')
 from utils import create_lr_schedule
 
-def get_optimizer(model, args):
+def get_optimizer(model, args, batch_first=True):
     use_kfac = True if args.kfac_update_freq > 0 else False
 
     optimizer = optim.SGD(
@@ -22,6 +22,7 @@ def get_optimizer(model, args):
             factor_decay=args.stat_decay,
             damping=args.damping, 
             kl_clip=args.kl_clip,
+            batch_first=batch_first,
             fac_update_freq=args.kfac_cov_update_freq,
             kfac_update_freq=args.kfac_update_freq,
             use_eigen_decomp=not args.use_inv_kfac,
