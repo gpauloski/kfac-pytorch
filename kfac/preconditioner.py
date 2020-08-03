@@ -41,8 +41,6 @@ class KFAC(optim.Optimizer):
           preconditioning (default: 100)
       use_eigen_decomp (bool, optional): use the eigendecomposition method for
           the KFAC update, otherwise use normal inv method (default: True)
-      batch_averaged (bool, optional): boolean representing if the gradient
-          is alrady averaged across the batches (default: True)
       batch_first (bool, optional): True if the batch dimension is dim 0
           (default: True)
       distribute_layer_factors (bool, optional): if `True`, computes factors A
@@ -62,7 +60,6 @@ class KFAC(optim.Optimizer):
                  fac_update_freq=10,
                  kfac_update_freq=100,
                  use_eigen_decomp=True,
-                 batch_averaged=True,
                  batch_first=True,
                  distribute_layer_factors=True,
                  skip_layers=None,
@@ -102,7 +99,6 @@ class KFAC(optim.Optimizer):
         self.fac_update_freq = fac_update_freq
         self.kfac_update_freq = kfac_update_freq
         self.use_eigen_decomp = use_eigen_decomp
-        self.batch_averaged = batch_averaged
         self.batch_first = batch_first
         self.distribute_layer_factors = distribute_layer_factors
         self.verbose = verbose
@@ -133,7 +129,6 @@ class KFAC(optim.Optimizer):
             use_eigen_decomp = self.use_eigen_decomp, 
             damping = self.damping,
             factor_decay = self.factor_decay,
-            batch_averaged = self.batch_averaged,
             batch_first = self.batch_first
         )
         for module, kfac_layer in layer_list:
@@ -181,7 +176,6 @@ class KFAC(optim.Optimizer):
             use_eigen_decomp = self.use_eigen_decomp, 
             damping = self.damping,
             factor_decay = self.factor_decay,
-            batch_averaged = self.batch_averaged,
             batch_first = self.batch_first
         )
         
