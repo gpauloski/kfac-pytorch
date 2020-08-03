@@ -1,6 +1,8 @@
 import torch
 
-from kfac.layers.base import KFACLayer
+from . import utils
+from .base import KFACLayer
+
 
 class EmbeddingLayer(KFACLayer):
     """
@@ -13,7 +15,7 @@ class EmbeddingLayer(KFACLayer):
       correctly incorporated.
     """
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super(EmbeddingLayer, self).__init__(*args, **kwargs)
         self.has_bias = False
         self.use_eigen_decomp = False
  
@@ -21,11 +23,9 @@ class EmbeddingLayer(KFACLayer):
         if self.A_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank == self.A_rank:
-            self.A_inv.copy_(self._get_vector_inv(self.A_factor))
-        else:
-            self.A_inv.fill_(0)
+            self.A_inv.copy_(utils.get_elementwise_inverse(self.A_factor))
 
-    def _compute_A_factor(self):
+    def _get_A_factor(self, a_inputs):
         """Compute A for Embedding layer
 
         Input to Embedding layer is (seq_len, batch_size) or (batch_size, seq_len)
@@ -44,46 +44,31 @@ class EmbeddingLayer(KFACLayer):
         Reference: 
           https://github.com/tensorflow/kfac/blob/master/kfac/python/ops/fisher_factors.py#L1107
         """
-        self.a_inputs = self.a_inputs[:1]
-        batch_dim = int(not(self.batch_first))
+        #a_inputs = a_inputs[:1]
+        batch_dim = int(not self.batch_first)
         # one hot encode all non-one-hot encoded inputs
         for i, a in enumerate(self.a_inputs):
             if a.size(-1) != self.module.num_embeddings:
                 one_hot = torch.nn.functional.one_hot(a.long(), 
                         num_classes=self.module.num_embeddings)
-                self.a_inputs[i] = one_hot.float()
-        a = self._reshape_data(self.a_inputs, collapse_dims=True)
+                a_inputs[i] = one_hot.float()
+        a = utils.reshape_data(a_inputs, batch_first=self.batch_first, 
+                collapse_dims=True)
         a = a ** 2
         return  torch.mean(a, dim=0)
 
-    def _compute_G_factor(self):
+    def _get_G_factor(self, g_outputs):
         #for i, g in enumerate(self.g_outputs):
         #    print(i, g.shape, torch.min(g), torch.max(g))
-        self.g_outputs = self.g_outputs[:1]
-        g = self._reshape_data(self.g_outputs, collapse_dims=True)
+        #self.g_outputs = self.g_outputs[:1]
+        g = utils.reshape_data(g_outputs, batch_first=self.batch_first, 
+                collapse_dims=True)
         # The output of the embedding layer is (*, H) and since the input is at
         # least shape (input_size, batch_size) (or batch_first), then the
         # output has at least 3 dimensions so after reshaping, the batch_dim
         # will be 0 regardless of self.batch_first.
         #print('g1', torch.min(g), torch.max(g), g.shape)
-        batch_size = g.size(0)
-        if self.batch_averaged:
-            g = g.t() @ (g * batch_size)
-        else:
-            g = g.t() @ (g / batch_size)
-        #print('g2', torch.min(g), torch.max(g), g.shape)
-        return g
- 
-    def _get_block_eigen(self, block):
-        """Compute eigendecomposition of tensor. Append eigenvalues"""
-        raise NotImplementedError('Use inv method for embedding layers')
-
-    def _get_vector_inv(self, v):
-        """Compute inverse of each non-zero element of v"""
-        assert len(v.shape) == 1
-        idx = v.nonzero()
-        v[idx[:, 0]] = 1 / v[idx[:, 0]]
-        return v
+        return utils.get_cov(g)
 
     def _init_A_buffers(self, factor):
         """Create buffers for factor A and its inv
