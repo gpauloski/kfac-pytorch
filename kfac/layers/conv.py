@@ -1,12 +1,15 @@
 import math
 import torch
 
-from kfac.layers.base import KFACLayer
-from kfac.utils import try_contiguous
+
+from . import utils
+from .base import KFACLayer
+from ..utils import try_contiguous
+
 
 class Conv2dLayer(KFACLayer):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super(Conv2dLayer, self).__init__(*args, **kwargs)
         self.has_bias = self.module.bias is not None
         if not self.batch_first:
             raise ValueError('Conv2D layer must use batch_first=True')
@@ -18,30 +21,27 @@ class Conv2dLayer(KFACLayer):
             grad = torch.cat([grad, self.module.bias.grad.data.view(-1, 1)], 1)
         return grad
 
-    def _compute_A_factor(self):
-        a = self._reshape_data(self.a_inputs)
-        batch_size = a.size(0)
+    def _get_A_factor(self, a_inputs):
+        a = utils.reshape_data(a_inputs, batch_first=self.batch_first)
         a = self._extract_patches(a)
         spatial_size = a.size(1) * a.size(2)
         a = a.view(-1, a.size(-1))
         if self.has_bias:
-            a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
+            a = utils.append_bias_ones(a)
         a = a / spatial_size
-        return a.t() @ (a / batch_size)
+        return utils.get_cov(a)
 
-    def _compute_G_factor(self):
+    def _get_G_factor(self, g_outputs):
         # g: batch_size * n_filters * out_h * out_w
         # n_filters is actually the output dimension (analogous to Linear layer)
-        g = self._reshape_data(self.g_outputs)
+        g = utils.reshape_data(g_outputs, batch_first=self.batch_first)
         spatial_size = g.size(2) * g.size(3)
         batch_size = g.shape[0]
         g = g.transpose(1, 2).transpose(2, 3)
         g = try_contiguous(g)
         g = g.view(-1, g.size(-1))
-        if self.batch_averaged:
-            g = g * batch_size
         g = g * spatial_size
-        return g.t() @ (g / g.size(0))
+        return utils.get_cov(g)
     
     # TODO: refactor extract_params to not reuire x arg
     def _extract_patches(self, x):

@@ -1,6 +1,8 @@
 import math
 import torch
 
+from . import utils
+
 
 class KFACLayer(object):
     def __init__(self,
@@ -22,13 +24,12 @@ class KFACLayer(object):
         self.A_rank = A_rank
         self.G_rank = G_rank
 
-        # Should be set by implementing class
-        self.has_bias = None
+        # Should be overridden by implementing class
+        self.has_bias = False
+        self.factors_are_symmetric = True
 
-        # Note: each of the following is a list of tensors b/c
-        # torch modules can have multiple inputs/outputs and weights
-        self.a_inputs  = []
-        self.g_outputs = []
+        self.a_inputs  = []  # inputs accumulated from module hooks
+        self.g_outputs = []  # outputs accumulated from module hooks
         self.A_factor  = None
         self.G_factor  = None
         self.A_inv     = None
@@ -49,16 +50,11 @@ class KFACLayer(object):
 
         Args:
           rank (int): rank of worker entering function
-
-        TODO(gpauloski): refactor this code and compute_G_invs to helper func
         """
         if self.A_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank == self.A_rank:
-            if self.use_eigen_decomp:
-                self.A_inv.data.copy_(self._get_block_eigen(self.A_factor))
-            else:
-                self.A_inv.data.copy_(self._get_block_inv(self.A_factor))
+            self._compute_factor_inverse(self.A_factor, self.A_inv)
 
     def compute_G_inv(self, rank):
         """Compute G inverse on specified ranks
@@ -68,10 +64,7 @@ class KFACLayer(object):
         if self.G_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank == self.G_rank:
-            if self.use_eigen_decomp:
-                self.G_inv.data.copy_(self._get_block_eigen(self.G_factor))
-            else:
-                self.G_inv.data.copy_(self._get_block_inv(self.G_factor))
+            self._compute_factor_inverse(self.G_factor, self.G_inv)
 
     def get_gradient(self):
         """Get formated gradients (weight and bias) of module
@@ -109,9 +102,9 @@ class KFACLayer(object):
         """
         # Compute preconditioned gradient using specified inverse method
         if self.use_eigen_decomp:
-            grad = self._precondition_gradient_eigen()
+            grad = self._get_precondition_gradient_eigen()
         else:
-            grad = self._precondition_gradient_inv()
+            grad = self._get_precondition_gradient_inv()
         # Reshape appropriately
         if self.has_bias:
             grad = [grad[:, :-1], grad[:, -1:]]
@@ -131,17 +124,19 @@ class KFACLayer(object):
 
     def update_A_factor(self):
         """Compute factor A and add to running averages"""
-        A_new = self._compute_A_factor()
+        A_new = self._get_A_factor(self.a_inputs)
+        del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self._init_A_buffers(A_new)
-        self._update_running_avg(A_new, self.A_factor)
+        utils.update_running_avg(A_new, self.A_factor, alpha=self.factor_decay)
 
     def update_G_factor(self):
         """Compute factor G and add to running averages"""
-        G_new = self._compute_G_factor()
+        G_new = self._get_G_factor(self.g_outputs)
+        del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self._init_G_buffers(G_new)
-        self._update_running_avg(G_new, self.G_factor)
+        utils.update_running_avg(G_new, self.G_factor, alpha=self.factor_decay)
 
     def update_gradient(self, scale=None):
         """Updates gradients of module with computed precondition gradients"""
@@ -155,45 +150,25 @@ class KFACLayer(object):
         self._get_weight_grad().data.copy_(v[0])
         if self.has_bias:
             self._get_bias_grad().data.copy_(v[1])
-    
-    def _compute_A_factor(self):
+
+    def _compute_factor_inverse(self, factor, inverse):
+        """Computes inverse/eigendecomp of factor and saves result to inverse"""
+        if self.use_eigen_decomp:
+            inverse.data.copy_(
+                utils.get_eigendecomp(factor, symmetric=self.factors_are_symmetric)
+            )
+        else:
+            inverse.data.copy_(
+                utils.get_inverse(factor, symmetric=self.factors_are_symmetric)
+            )
+ 
+    def _get_A_factor(self, a_inputs):
         """Compute A factor. Returns A."""
         raise NotImplementedError
 
-    def _compute_G_factor(self):
+    def _get_G_factor(self, g_inputs):
         """Compute G factor. Returns G."""
         raise NotImplementedError
-
-    def _get_block_eigen(self, block):
-        """Compute eigendecomposition of a block.
-
-        Args:
-          block (tensor): block of shape (x, x) to eigendecompose
-
-        Returns:
-          Tensor of shape (x, x+1) where (0:x, 0:x) are the eigenvectors
-          and (:, -1) is the eigenvalues
-        """
-        d, Q = torch.symeig(block, eigenvectors=True)
-        d = torch.mul(d, (d > self.eps).float())
-        d = d.unsqueeze(1)
-        return torch.cat([Q, d], 1)
-
-    def _get_block_inv(self, block):
-        """Compute inverse of a block
-
-        Adds a damping factor  `self.damping` to diagonal to prevent
-        ill-conditioned matrix inversion.
-
-        Args:
-          block (tensor): block of shape (x, x) to invert
-
-        Returns:
-          Tensor of shape (x, x), the inverse of block
-        """
-        diag = block.new(block.shape[0]).fill_(self.damping)
-        cholesky = torch.cholesky(block + torch.diag(diag))
-        return torch.cholesky_inverse(cholesky)
 
     def _get_bias_grad(self):
         """Get bias.grad tensor of module"""
@@ -202,6 +177,20 @@ class KFACLayer(object):
     def _get_weight_grad(self):
         """Get weight.grad tensor of module"""
         return self.module.weight.grad
+    
+    def _get_precondition_gradient_eigen(self):
+        """Compute preconditioned gradient for eigendecomp method"""
+        grad = self.get_gradient()
+        QA, QG = self.A_inv[:,:-1], self.G_inv[:,:-1]
+        dA, dG = self.A_inv[:,-1], self.G_inv[:,-1]
+        v1 = QG.t() @ grad @ QA
+        v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + self.damping)
+        return QG @ v2 @ QA.t()
+
+    def _get_precondition_gradient_inv(self):
+        """Compute preconditioned gradient for inverse method"""
+        grad = self.get_gradient() 
+        return self.G_inv @ grad @ self.A_inv
 
     def _init_A_buffers(self, factor):
         """Create buffers for factor A and its inverse"""
@@ -226,56 +215,4 @@ class KFACLayer(object):
         else:
             shape = factor.shape
         self.G_inv = factor.new_zeros(shape) 
-    
-    def _precondition_gradient_eigen(self):
-        """Compute preconditioned gradient for eigendecomp method"""
-        grad = self.get_gradient()
-        QA, QG = self.A_inv[:,:-1], self.G_inv[:,:-1]
-        dA, dG = self.A_inv[:,-1], self.G_inv[:,-1]
-        v1 = QG.t() @ grad @ QA
-        v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + self.damping)
-        return QG @ v2 @ QA.t()
-
-    def _precondition_gradient_inv(self):
-        """Compute preconditioned gradient for inverse method"""
-        grad = self.get_gradient() 
-        return self.G_inv @ grad @ self.A_inv
-
-    def _reshape_data(self, data_list, collapse_dims=False):
-        """Concat input/output data and clear buffers
-
-        Note: will clear the values in data_list in place. This is because this
-          function is intended to be used for preprocessing for the 
-          compute_?_factor() functions.
-
-        Args:
-          data_list (list): list of tensors of equal, arbitrary shape where the
-              batch_dim is either 0 or 1 depending on self.batch_first.
-          collapse_dim (bool, optional): if True, collapse all but the last dim
-              together forming a 2D output tensor.
-
-        Returns:
-          Single tensor with all tensors from data_list concatenated across
-          batch_dim. Guarenteed to be 2D if collapse_dims=True.
-        """
-        d = torch.cat(data_list, dim=int(not self.batch_first))
-        if collapse_dims and len(d.shape) > 2:
-            d = d.view(-1, d.shape[-1])
-        del data_list[:]  # clear data_list in place
-        return d
-
-    def _update_running_avg(self, new, current):
-        """Computes in-place running average
-
-        current = factor_decay*current + (1-factor_decay)*new
-
-        Args:
-          new (tensor): tensor to add to current average
-          current (tensor): tensor containing current average. Result will be
-              saved in place to this tensor.
-        """
-        if self.factor_decay != 1:
-            current *= self.factor_decay / (1 - self.factor_decay)
-            current += new
-            current *= (1 - self.factor_decay)
 
