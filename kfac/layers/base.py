@@ -10,7 +10,6 @@ class KFACLayer(object):
                  use_eigen_decomp=True,
                  damping = 0.001,
                  factor_decay=0.95,
-                 batch_averaged=True,
                  batch_first=True,
                  A_rank=None,
                  G_rank=None):
@@ -18,7 +17,6 @@ class KFACLayer(object):
         self.use_eigen_decomp=use_eigen_decomp
         self.damping = damping
         self.factor_decay = factor_decay
-        self.batch_averaged = batch_averaged
         self.batch_first = batch_first
         self.eps = 1e-10
         self.A_rank = A_rank
