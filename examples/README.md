@@ -6,7 +6,7 @@ The provided example training scripts have additional package requirements.
 
 ### ImageNet and Cifar-10
 ```
-$ pip install torch-summary tqdm
+$ pip install torch-summary tqdm torchvision
 ```
 
 ### Language Modeling
