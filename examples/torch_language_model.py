@@ -104,6 +104,9 @@ def parse_args():
                              '(default: [linear, embedding])')
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
+    parser.add_argument('--register_tied', action='store_true', default=False,
+                        help='Register the tied embedding and linear layer with KFAC.'
+                             'This feature is experimental. See issue GitHub #25.')
 
     # Set automatically by torch distributed launch
     parser.add_argument('--local_rank', type=int, default=0,
@@ -111,6 +114,9 @@ def parse_args():
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
+
+    if args.not_tied and args.register_tied:
+        raise ValueError('--not-tied and --register-tied cannot both be specified')
 
     return args
 
@@ -274,8 +280,9 @@ if __name__ == '__main__':
     lr_schedules = [StepLR(optimizer, step_size=1, gamma=args.lr_decay_rate)]
     if precon is not None:
         lr_schedules.append(StepLR(precon, step_size=1, gamma=args.lr_decay_rate))
-        #precon.register_shared_module(model.module.encoder, model.module.decoder,
-        #        reverse_hooks=True)
+        if args.register_tied:
+            precon.register_shared_module(model.module.encoder, model.module.decoder,
+                    reverse_hooks=True)
 
     start = time.time()
 
