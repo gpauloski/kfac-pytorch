@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-import horovod.torch as hvd
 
 def accuracy(output, target):
     pred = output.max(1, keepdim=True)[1]
