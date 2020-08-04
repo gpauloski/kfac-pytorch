@@ -104,7 +104,7 @@ def parse_args():
                              '(default: [linear, embedding])')
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
-    parser.add_argument('--register_tied', action='store_true', default=False,
+    parser.add_argument('--register-tied', action='store_true', default=False,
                         help='Register the tied embedding and linear layer with KFAC.'
                              'This feature is experimental. See issue GitHub #25.')
 
