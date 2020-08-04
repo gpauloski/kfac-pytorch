@@ -157,7 +157,8 @@ class KFACLayer(object):
             )
         else:
             inverse.data.copy_(
-                utils.get_inverse(factor, symmetric=self.factors_are_symmetric)
+                utils.get_inverse(factor, damping=self.damping, 
+                        symmetric=self.factors_are_symmetric)
             )
  
     def _get_A_factor(self, a_inputs):

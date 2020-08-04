@@ -22,7 +22,7 @@ class EmbeddingLayer(KFACLayer):
     def compute_A_inv(self, rank):
         if self.A_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
-        if rank == self.A_rank:
+        if rank == self.A_rank: 
             self.A_inv.copy_(utils.get_elementwise_inverse(self.A_factor))
 
     def _get_A_factor(self, a_inputs):
@@ -44,10 +44,8 @@ class EmbeddingLayer(KFACLayer):
         Reference: 
           https://github.com/tensorflow/kfac/blob/master/kfac/python/ops/fisher_factors.py#L1107
         """
-        #a_inputs = a_inputs[:1]
-        batch_dim = int(not self.batch_first)
         # one hot encode all non-one-hot encoded inputs
-        for i, a in enumerate(self.a_inputs):
+        for i, a in enumerate(a_inputs):
             if a.size(-1) != self.module.num_embeddings:
                 one_hot = torch.nn.functional.one_hot(a.long(), 
                         num_classes=self.module.num_embeddings)
@@ -58,16 +56,8 @@ class EmbeddingLayer(KFACLayer):
         return  torch.mean(a, dim=0)
 
     def _get_G_factor(self, g_outputs):
-        #for i, g in enumerate(self.g_outputs):
-        #    print(i, g.shape, torch.min(g), torch.max(g))
-        #self.g_outputs = self.g_outputs[:1]
         g = utils.reshape_data(g_outputs, batch_first=self.batch_first, 
                 collapse_dims=True)
-        # The output of the embedding layer is (*, H) and since the input is at
-        # least shape (input_size, batch_size) (or batch_first), then the
-        # output has at least 3 dimensions so after reshaping, the batch_dim
-        # will be 0 regardless of self.batch_first.
-        #print('g1', torch.min(g), torch.max(g), g.shape)
         return utils.get_cov(g)
 
     def _init_A_buffers(self, factor):
@@ -82,11 +72,11 @@ class EmbeddingLayer(KFACLayer):
             shape = factor.shape
         self.A_inv = factor.new_zeros(shape)
     
-    def _precondition_gradient_eigen(self):
+    def _get_precondition_gradient_eigen(self):
         """Compute preconditioned gradient for eigendecomp method"""
         raise NotImplementedError('Use inv method for embedding layers')
 
-    def _precondition_gradient_inv(self):
+    def _get_precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method
         Note: For embedding layers, A is a diagonal matrix stored as a 1-D
         tensors of the diagonal and the gradient is (input_size, output_size).
