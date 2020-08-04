@@ -53,8 +53,8 @@ def parse_args():
                         help='sequence length')
     parser.add_argument('--dropout', type=float, default=0.5,
                         help='dropout applied to layers (0 = no dropout)')
-    parser.add_argument('--not-tied', action='store_true',
-                        help='do not tie the word embedding and softmax weights')
+    parser.add_argument('--tied', action='store_true',
+                        help='tie the word embedding and linear weights')
 
     # Training Settings
     parser.add_argument('--batch-size', type=int, default=20, metavar='N',
@@ -115,8 +115,8 @@ def parse_args():
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    if args.not_tied and args.register_tied:
-        raise ValueError('--not-tied and --register-tied cannot both be specified')
+    if not args.tied and args.register_tied:
+        raise ValueError('--register-tied cannot be specified without --tied')
 
     return args
 
@@ -256,7 +256,7 @@ if __name__ == '__main__':
     data_loaders, data_samplers, args.ntokens = get_dataset(args)
 
     model = models.LSTMModel(args.ntokens, args.emsize, args.nhid, args.nlayers, 
-            dropout=args.dropout, tie_weights=not args.not_tied)
+            dropout=args.dropout, tie_weights=args.tied)
     model =  model.cuda() if args.cuda else model
     model = torch.nn.parallel.DistributedDataParallel(model, 
             device_ids=[args.local_rank])
