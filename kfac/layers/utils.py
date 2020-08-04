@@ -87,8 +87,8 @@ def get_inverse(tensor, damping=None, symmetric=True):
       The inverse of tensor
     """
     if damping is not None:
-        diag = tensor.new(tensor.shape[0]).fill_(damping)
-        tensor += diag
+        d = tensor.new(tensor.shape[0]).fill_(damping)
+        tensor = tensor + torch.diag(d)
 
     if symmetric:
         return torch.cholesky_inverse(torch.cholesky(tensor))
@@ -96,10 +96,11 @@ def get_inverse(tensor, damping=None, symmetric=True):
         return torch.inverse(tensor)
 
 def get_elementwise_inverse(vector):
-    """Compute inverse of each non-zero element of v"""
-    idx = v.nonzero()
-    v[idx[:, 0]] = 1 / v[idx[:, 0]]
-    return v
+    """Computes the reciprocal of each non-zero element of v"""
+    mask = vector != 0.0
+    reciprocal = vector.clone()
+    reciprocal[mask] = torch.reciprocal(reciprocal[mask])
+    return reciprocal
 
 def reshape_data(data_list, batch_first=True, collapse_dims=False):
     """Concat input/output data and clear buffers
