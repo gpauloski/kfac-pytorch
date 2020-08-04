@@ -23,7 +23,9 @@ class EmbeddingLayer(KFACLayer):
         if self.A_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank == self.A_rank: 
-            self.A_inv.copy_(utils.get_elementwise_inverse(self.A_factor))
+            self.A_inv.copy_(
+                utils.get_elementwise_inverse(self.A_factor, damping=self.damping)
+            )
 
     def _get_A_factor(self, a_inputs):
         """Compute A for Embedding layer
@@ -52,12 +54,16 @@ class EmbeddingLayer(KFACLayer):
                 a_inputs[i] = one_hot.float()
         a = utils.reshape_data(a_inputs, batch_first=self.batch_first, 
                 collapse_dims=True)
+        assert a.size(-1) == self.module.num_embeddings
+        assert len(a.shape) == 2  # shape should be (batch, vocab_size) where batch dim
+                                  # has size batch_size * seq_len
         a = a ** 2
         return  torch.mean(a, dim=0)
 
     def _get_G_factor(self, g_outputs):
         g = utils.reshape_data(g_outputs, batch_first=self.batch_first, 
                 collapse_dims=True)
+        assert len(g.shape) == 2
         return utils.get_cov(g)
 
     def _init_A_buffers(self, factor):

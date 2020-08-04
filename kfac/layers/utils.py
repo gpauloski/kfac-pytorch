@@ -95,8 +95,10 @@ def get_inverse(tensor, damping=None, symmetric=True):
     else:
         return torch.inverse(tensor)
 
-def get_elementwise_inverse(vector):
+def get_elementwise_inverse(vector, damping=None):
     """Computes the reciprocal of each non-zero element of v"""
+    if damping is not None:
+        vector = vector + damping
     mask = vector != 0.0
     reciprocal = vector.clone()
     reciprocal[mask] = torch.reciprocal(reciprocal[mask])

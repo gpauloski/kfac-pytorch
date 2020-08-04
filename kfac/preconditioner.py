@@ -1,4 +1,5 @@
 import math
+import warnings
 import torch
 import torch.optim as optim
 
@@ -167,6 +168,9 @@ class KFAC(optim.Optimizer):
               `second_module`. Useful in cases such as tied embeddings where the input
               to the embedding is related to the output of the decoding.
         """
+        warnings.warn('Registering shared weight modules with KFAC is '
+                      'experimental and may produce poor results')
+
         if not isinstance(main_module, torch.nn.Module):
             raise ValueError('main_module must be of type torch.nn.Module')
         if not isinstance(second_module, torch.nn.Module):
