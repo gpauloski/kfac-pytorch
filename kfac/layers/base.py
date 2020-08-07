@@ -11,6 +11,7 @@ class KFACLayer(object):
                  damping = 0.001,
                  factor_decay=0.95,
                  batch_first=True,
+                 accumulate_data=True,
                  A_rank=None,
                  G_rank=None):
         self.module = module
@@ -18,6 +19,7 @@ class KFACLayer(object):
         self.damping = damping
         self.factor_decay = factor_decay
         self.batch_first = batch_first
+        self.accumulate_data = accumulate_data
         self.eps = 1e-10
         self.A_rank = A_rank
         self.G_rank = G_rank
@@ -114,11 +116,17 @@ class KFACLayer(object):
 
     def save_inputs(self, input):
         """Save inputs locally"""
-        self.a_inputs.append(input[0].data)
+        if self.accumulate_data:
+            self.a_inputs.append(input[0].data)
+        else:
+            self.a_inputs = [input[0].data]
 
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
-        self.g_outputs.append(grad_output[0].data)
+        if self.accumulate_data:
+            self.g_outputs.append(grad_output[0].data)
+        else:
+            self.g_outputs = [grad_output[0].data]
 
     def update_A_factor(self):
         """Compute factor A and add to running averages"""
