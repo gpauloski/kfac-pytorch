@@ -30,39 +30,57 @@ class KFAC(optim.Optimizer):
 
     Args:
       model (nn): Torch model to precondition
-      lr (float, optional): learning rate (default: 0.1)
+      damping (float, optional): Tikhonov damping parameter (default: 0.001)
       factor_decay (float, optional): running average coefficient for Kronecker
           factors (default: 0.95)
-      damping (float, optional): Tikhonov damping parameter (default: 0.001)
-      kl_clip (float, optional): clipping parameter for gradient scaling. If
-          None, no scaling/clipping will be applied. (default: 0.001)
       fac_update_freq (int, optional): iterations between calculating and
           updating the running average of the Kronecker factors (default: 10)
       kfac_update_freq (int, optional): iterations between applying gradient
           preconditioning (default: 100)
-      use_eigen_decomp (bool, optional): use the eigendecomposition method for
-          the KFAC update, otherwise use normal inv method (default: True)
+      kl_clip (float, optional): clipping parameter for gradient scaling. If
+          None, no scaling/clipping will be applied. (default: 0.001)
+      lr (float, optional): learning rate (default: 0.1)
+      accumulate_data (bool, optional): if `True`, accumulates the input/output
+          data for each KFAC registered module. This is useful if you have a
+          module that is called multiple times per optimization step (e.g.
+          LSTMCells) or if you are accumulating gradients over multiple batches
+          and you want KFAC to use the input/output for all batches when
+          computing the factors. Note: if accumulating the data, memory usage
+          can increase substantially. (default: True)
       batch_first (bool, optional): True if the batch dimension is dim 0
           (default: True)
+      compute_factor_in_hook (bool, optional): If `True`, compute the factors
+          during the module forward/backward pass hooks and add to the running
+          average. Recommended if using gradient accumulation and 
+          `accumulate_data=False`, however it is usually slower. If `False`,
+          factors are computed during `KFAC.step()`. (default: False)
       distribute_layer_factors (bool, optional): if `True`, computes factors A
           and G on different workers else computes A and G for a single layer
           on the same worker. For small worker counts, computing per layer
           factors on the same device can yeild improvements. (default: True)
+      use_eigen_decomp (bool, optional): use the eigendecomposition method for
+          the KFAC update, otherwise use normal inv method (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
-          ignore when registering layers (default: None)
+          ignore when registering layers. Note: this prevents recursively
+          registering within an ignored module. I.e. if you have a module named
+          `my_module` and skip it, then any sub module of `my_module` will also
+          be skipped even if it is not explicitly passed to `skip_layers`. 
+          (default: None)
       verbose (bool, optional): print information about registered layers
     """
     def __init__(self,
                  model,
-                 lr=0.1,
-                 factor_decay=0.95,
                  damping=0.001,
-                 kl_clip=0.001,
+                 factor_decay=0.95,
                  fac_update_freq=10,
                  kfac_update_freq=100,
-                 use_eigen_decomp=True,
+                 kl_clip=0.001,
+                 lr=0.1,
+                 accumulate_data=True,
                  batch_first=True,
+                 compute_factor_in_hook=False,
                  distribute_layer_factors=True,
+                 use_eigen_decomp=True,
                  skip_layers=None,
                  verbose=True):
 
@@ -91,27 +109,28 @@ class KFAC(optim.Optimizer):
 
         self.steps = 0
 
-        self.lr = lr
         self.damping = damping
-        self.fac_update_freq = fac_update_freq
-        self.kfac_update_freq = kfac_update_freq
         self.factor_decay = factor_decay
-        self.kl_clip = kl_clip
         self.fac_update_freq = fac_update_freq
         self.kfac_update_freq = kfac_update_freq
-        self.use_eigen_decomp = use_eigen_decomp
+        self.kl_clip = kl_clip
+        self.lr = lr
+        self.accumulate_data = accumulate_data
         self.batch_first = batch_first
+        self.compute_factor_in_hook = compute_factor_in_hook
         self.distribute_layer_factors = distribute_layer_factors
+        self.use_eigen_decomp = use_eigen_decomp
         self.verbose = verbose
 
         self.backend = utils.get_comm_backend()
 
-        self.known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
         if isinstance(skip_layers, str):
-            self.known_modules.discard(skip_layers.lower())
+            self.skip_layers = [skip_layers.lower()]
         elif isinstance(skip_layers, list):
-            for layer in skip_layers: 
-                self.known_modules.discard(layer.lower())
+            self.skip_layers = [s.lower() for s in skip_layers]
+        self.known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
+        for layer in self.skip_layers: 
+            self.known_modules.discard(layer)
 
         self.layers = []
         self.hook_layers = {}  # key: nn.Module, value: KFACLayer
@@ -130,7 +149,8 @@ class KFAC(optim.Optimizer):
             use_eigen_decomp = self.use_eigen_decomp, 
             damping = self.damping,
             factor_decay = self.factor_decay,
-            batch_first = self.batch_first
+            batch_first = self.batch_first,
+            accumulate_data = self.accumulate_data
         )
         for module, kfac_layer in layer_list:
             if self.backend.rank() == 0 and self.verbose:
@@ -143,8 +163,14 @@ class KFAC(optim.Optimizer):
     def register_modules(self, model):
         """Iterate over and register modules that KFAC supports."""
         for module in model.children():
-            if module.__class__.__name__.lower() not in self.known_modules:
+            # Do not recurse in children if we are skipping the module
+            if module.__class__.__name__.lower() in self.skip_layers:
+                pass
+            # Recurse into module if we are not skipping it but it is also not
+            # a known module to KFAC
+            elif module.__class__.__name__.lower() not in self.known_modules:
                 self.register_modules(module)
+            # This is a known module to KFAC so register it if it is trainable
             else:
                 if kfac_layers.module_requires_grad(module):
                     self.register_module(module)
@@ -175,6 +201,12 @@ class KFAC(optim.Optimizer):
             raise ValueError('main_module must be of type torch.nn.Module')
         if not isinstance(second_module, torch.nn.Module):
             raise ValueError('second_module must be of type torch.nn.Module')
+        # Note: this is because the second module hook that gets called will
+        # overwrite the saved data from the first module hook call so we need
+        # the hook calls to accumulate the data and not just save the most recent
+        if not self.accumulate_data:
+            raise ValueError('shared weight module registration will not work '
+                             'is self.accumulate_data=False')
         layer_list = kfac_layers.get_kfac_layers(
             main_module,
             use_eigen_decomp = self.use_eigen_decomp, 
@@ -196,6 +228,8 @@ class KFAC(optim.Optimizer):
         self.layers.append(kfac_layer)
         main_module.register_forward_pre_hook(self._save_input)
         main_module.register_backward_hook(self._save_grad_output)
+        # TODO(gpauloski): this will not work with compute_factor_in_hook=True
+        # because the factors may be computed before _save_*_as_*() is called.
         if reverse_hooks:
             second_module.register_forward_pre_hook(self._save_input_as_grad_output)
             second_module.register_backward_hook(self._save_grad_output_as_input)
@@ -208,8 +242,11 @@ class KFAC(optim.Optimizer):
         """Perform one K-FAC step
 
         Note:
-        - this function should always be called before `optimizer.step()`
-        - gradients must be averaged across ranks before calling `step()`
+        - This function should always be called before `optimizer.step()` as
+          it modifies the gradients in-place and does not modify the weights.
+        - Gradients must be averaged across ranks before calling `step()`.
+          This condition is guarenteed to be true if using `torch.distributed`
+          as gradients are communicated during `loss.backward()`.
 
         Args:
           closure: for compatibility with the base optimizer class.
@@ -227,11 +264,12 @@ class KFAC(optim.Optimizer):
         handles = []
 
         if self.steps % self.fac_update_freq == 0:
-            for layer in self.layers:
-                layer.update_A_factor()
-                layer.update_G_factor()
+            if not self.compute_factor_in_hook:
+                for layer in self.layers:
+                    layer.update_A_factor()
+                    layer.update_G_factor()
 
-            # We do this after layer.update_*_factors because the inverse buffers
+            # We do this after layer.update_*_factor because the buffers
             # are not instantiate until this point and we use the size of the
             # buffers to approximate the time each layer will take to compute.
             if self.steps == 0:
@@ -257,6 +295,27 @@ class KFAC(optim.Optimizer):
             layer.update_gradient(nu)
 
         self.steps += 1
+
+    def memory_usage(self):
+        """Returns approximate memory usage for KFAC
+
+        Note: this does not take into account:
+          - intermediate memory requirements of computations
+          - input/output accumulation depending on when the function is called
+        """
+        b = 0
+
+        def sizeof_tensor(tensor):
+            return tensor.nelement() * tensor.element_size() if tensor is not None else 0
+
+        for layer in self.layers:
+            b += sizeof_tensor(layer.A_factor)
+            b += sizeof_tensor(layer.G_factor)
+            b += sizeof_tensor(layer.A_inv)
+            b += sizeof_tensor(layer.G_inv)
+            b += sum(map(sizeof_tensor, layer.a_inputs))
+            b += sum(map(sizeof_tensor, layer.g_outputs))
+        return b
 
     def _allreduce_factors(self):
         """Allreduce the factors for all layers"""
@@ -322,6 +381,8 @@ class KFAC(optim.Optimizer):
             if layer.has_bias:
                 vg_sum += (v[1] * layer._get_bias_grad().data * 
                            self.lr ** 2).sum().item()
+        if vg_sum == 0.0:
+            return None
         return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
     def _periodic_hook(grad_enabled=True):
@@ -340,10 +401,14 @@ class KFAC(optim.Optimizer):
     @_periodic_hook(grad_enabled=True)
     def _save_input(self, module, input):
         self.hook_layers[module].save_inputs(input)
+        if self.compute_factor_in_hook:
+            self.hook_layers[module].update_A_factor()
 
     @_periodic_hook(grad_enabled=False)
     def _save_grad_output(self, module, grad_input, grad_output):
         self.hook_layers[module].save_grad_outputs(grad_output)
+        if self.compute_factor_in_hook:
+            self.hook_layers[module].update_G_factor()
 
     @_periodic_hook(grad_enabled=True)
     def _save_input_as_grad_output(self, module, input):
