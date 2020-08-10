@@ -130,7 +130,7 @@ class KFACLayer(object):
 
     def update_A_factor(self):
         """Compute factor A and add to running averages"""
-        A_new = self._get_A_factor(self.a_inputs)
+        A_new = self._get_A_factor(self.a_inputs).to(torch.float32)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self._init_A_buffers(A_new)
@@ -138,7 +138,7 @@ class KFACLayer(object):
 
     def update_G_factor(self):
         """Compute factor G and add to running averages"""
-        G_new = self._get_G_factor(self.g_outputs)
+        G_new = self._get_G_factor(self.g_outputs).to(torch.float32)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self._init_G_buffers(G_new)
