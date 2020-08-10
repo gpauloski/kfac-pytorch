@@ -10,7 +10,6 @@ def append_bias_ones(tensor):
     shape = list(tensor.shape[:-1]) + [1]
     return torch.cat([tensor, tensor.new_ones(shape)], dim=-1)
 
-
 def get_cov(a, b=None, scale=None):
     """Computes the empirical second moment of a 2D tensor
 
