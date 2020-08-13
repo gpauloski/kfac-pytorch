@@ -220,7 +220,8 @@ class KFAC(optim.Optimizer):
                 self.register_modules(module)
             # This is a known module to KFAC so register it if it is trainable
             else:
-                if kfac_layers.module_requires_grad(module):
+                if (kfac_layers.module_requires_grad(module) and
+                        module not in self.hook_layers):
                     self.register_module(module)
 
     def register_shared_module(self, main_module, second_module, reverse_hooks=False):

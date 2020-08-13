@@ -37,7 +37,4 @@ def get_kfac_layers(module, **kwargs):
 
 def module_requires_grad(module):
     """Returns False if any module param has .requires_grad=False"""
-    for param in module.parameters():
-        if not param.requires_grad:
-            return False
-    return True
+    return all([p.requires_grad for p in module.parameters()])
