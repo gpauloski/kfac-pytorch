@@ -14,6 +14,7 @@ import cnn_utils.optimizers as optimizers
 
 from torchsummary import summary
 from torch.utils.tensorboard import SummaryWriter
+from utils import save_checkpoint
 
 
 def parse_args():
@@ -21,8 +22,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Example')
     parser.add_argument('--data-dir', type=str, default='/tmp/cifar10', metavar='D',
                         help='directory to download cifar10 dataset to')
-    parser.add_argument('--log-dir', default='./logs',
-                        help='TensorBoard log directory')
+    parser.add_argument('--log-dir', default='./logs/torch_cifar10',
+                        help='TensorBoard/checkpoint directory')
+    parser.add_argument('--checkpoint-format', default='checkpoint_{epoch}.pth.tar',
+                        help='checkpoint file format')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=42, metavar='S',
@@ -51,6 +54,8 @@ def parse_args():
                         help='SGD momentum (default: 0.9)')
     parser.add_argument('--weight-decay', type=float, default=5e-4, metavar='W',
                         help='SGD weight decay (default: 5e-4)')
+    parser.add_argument('--checkpoint-freq', type=int, default=10,
+                        help='epochs between checkpoints')
 
     # KFAC Parameters
     parser.add_argument('--kfac-update-freq', type=int, default=10,
@@ -95,6 +100,8 @@ def main():
     if args.cuda:
         torch.cuda.set_device(args.local_rank)
         torch.cuda.manual_seed(args.seed)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     print('rank = {}, world_size = {}, device_ids = {}'.format(
             torch.distributed.get_rank(), torch.distributed.get_world_size(),
@@ -108,34 +115,54 @@ def main():
     train_sampler, train_loader, _, val_loader = datasets.get_cifar(args)
     model = models.get_model(args.model)
 
-    if args.cuda:
-        model.cuda()
-    torch.backends.cudnn.benchmark = True
-    
-    model = torch.nn.parallel.DistributedDataParallel(model, 
-            device_ids=[args.local_rank])
-
     if args.verbose:
         summary(model, (3, 32, 32))
 
-    args.log_dir = os.path.join(args.log_dir, 
-             "cifar10_{}_kfac{}_gpu_{}_{}".format(
-             args.model, args.kfac_update_freq, args.backend.size(),
-             datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
+    device = 'cpu' if not args.cuda else 'cuda' 
+    model.to(device)
+
+    model = torch.nn.parallel.DistributedDataParallel(model, 
+            device_ids=[args.local_rank])
+
     os.makedirs(args.log_dir, exist_ok=True)
+    args.checkpoint_format = os.path.join(args.log_dir, args.checkpoint_format)
     args.log_writer = SummaryWriter(args.log_dir) if args.verbose else None
 
-    optimizer, precon, lr_schedules, lrs, = optimizers.get_optimizer(model, args)
+    args.resume_from_epoch = 0
+    for try_epoch in range(args.epochs, 0, -1):
+        if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
+            args.resume_from_epoch = try_epoch
+            break
+
+    optimizer, preconditioner, lr_schedules = optimizers.get_optimizer(model, args)
     loss_func = torch.nn.CrossEntropyLoss()
+
+    if args.resume_from_epoch > 0:
+        filepath = args.checkpoint_format.format(epoch=args.resume_from_epoch)
+        checkpoint = torch.load(filepath)
+        model.module.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        if isinstance(checkpoint['schedulers'], list):
+            for sched, state in zip(lr_schedules, checkpoint['schedulers']):
+                sched.load_state_dict(state)
+        if (checkpoint['preconditioner'] is not None and 
+                preconditioner is not None):
+            preconditioner.load_state_dict(checkpoint['preconditioner'])
 
     start = time.time()
 
-    for epoch in range(args.epochs):
-        engine.train(epoch, model, optimizer, precon, lrs, loss_func, 
+    for epoch in range(args.resume_from_epoch + 1, args.epochs + 1):
+        engine.train(epoch, model, optimizer, preconditioner, loss_func,
                      train_sampler, train_loader, args)
+        engine.test(epoch, model, loss_func, val_loader, args)
         for scheduler in lr_schedules:
             scheduler.step()
-        engine.test(epoch, model, loss_func, val_loader, args)
+        if (epoch > 0 and epoch % args.checkpoint_freq == 0 and 
+                args.backend.rank() == 0):
+            # Note: save model.module b/c model may be Distributed wrapper so saving
+            # the underlying model is more generic
+            save_checkpoint(model.module, optimizer, preconditioner, lr_schedules,
+                            args.checkpoint_format.format(epoch=epoch))
 
     if args.verbose:
         print('\nTraining time: {}'.format(datetime.timedelta(seconds=time.time() - start)))

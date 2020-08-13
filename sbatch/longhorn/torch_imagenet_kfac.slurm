@@ -17,7 +17,7 @@
 
 mkdir -p sbatch_logs
 
-source $SCRATCH/anaconda3/bin/activate pytorch
+#source $SCRATCH/anaconda3/bin/activate pytorch1.2
 
 HOSTFILE=/tmp/hostfile
 
@@ -34,7 +34,5 @@ MASTER_NODE=$(head -n 1 $HOSTFILE)
 mpiexec -hostfile $HOSTFILE -N 1 \
   ./sbatch/longhorn/launch_node_torch_imagenet.sh \
     -n $GPU_PER_NODE -N $NODES -m $MASTER_NODE
-
-# MASTER=$(head -n 1 /tmp/hostfile4) mpiexec -hostfile /tmp/hostfile4 -N 1 ./sbatch/longhorn/launch_node_torch_imagenet.sh -n 4 -N 4 -m $MASTER
 
 # -----------------------------------------------------------------------------
