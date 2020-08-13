@@ -22,25 +22,29 @@ class Conv2dLayer(KFACLayer):
         return grad
 
     def _get_A_factor(self, a_inputs):
-        a = utils.reshape_data(a_inputs, batch_first=self.batch_first)
-        a = self._extract_patches(a)
-        spatial_size = a.size(1) * a.size(2)
-        a = a.view(-1, a.size(-1))
-        if self.has_bias:
-            a = utils.append_bias_ones(a)
-        a = a / spatial_size
+        reshaped_a = []
+        for a in a_inputs:
+            a = self._extract_patches(a)
+            spatial_size = a.size(1) * a.size(2)
+            a = a.view(-1, a.size(-1))
+            if self.has_bias:
+                a = utils.append_bias_ones(a)
+            reshaped_a.append(a / spatial_size)
+        a = utils.reshape_data(reshaped_a, batch_first=self.batch_first)
         return utils.get_cov(a)
 
     def _get_G_factor(self, g_outputs):
         # g: batch_size * n_filters * out_h * out_w
         # n_filters is actually the output dimension (analogous to Linear layer)
-        g = utils.reshape_data(g_outputs, batch_first=self.batch_first)
-        spatial_size = g.size(2) * g.size(3)
-        batch_size = g.shape[0]
-        g = g.transpose(1, 2).transpose(2, 3)
-        g = try_contiguous(g)
-        g = g.view(-1, g.size(-1))
-        g = g * spatial_size
+        reshaped_g = []
+        for g in g_outputs:
+            spatial_size = g.size(2) * g.size(3)
+            batch_size = g.shape[0]
+            g = g.transpose(1, 2).transpose(2, 3)
+            g = try_contiguous(g)
+            g = g.view(-1, g.size(-1))
+            reshaped_g.append(g / spatial_size)
+        g = utils.reshape_data(reshaped_g, batch_first=self.batch_first)
         return utils.get_cov(g)
     
     # TODO: refactor extract_params to not reuire x arg
