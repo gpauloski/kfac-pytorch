@@ -10,7 +10,6 @@ def train(epoch,
           model,
           optimizer, 
           preconditioner, 
-          lrs,
           loss_func, 
           train_sampler, 
           train_loader, 
@@ -23,7 +22,7 @@ def train(epoch,
 
     with tqdm(total=len(train_loader),
               bar_format='{l_bar}{bar:10}{r_bar}',
-              desc='Epoch {:3d}/{:3d}'.format(epoch + 1, args.epochs),
+              desc='Epoch {:3d}/{:3d}'.format(epoch, args.epochs),
               disable=not args.verbose) as t:
         for batch_idx, (data, target) in enumerate(train_loader):
             if args.cuda:
@@ -61,14 +60,16 @@ def train(epoch,
                     preconditioner.step()
                 optimizer.step()
 
-            t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%".format(
-                    train_loss.avg, 100*train_accuracy.avg))
+            t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%, lr: {:.4f}".format(
+                    train_loss.avg, 100*train_accuracy.avg,
+                    optimizer.param_groups[0]['lr']))
             t.update(1)
 
     if args.log_writer is not None:
         args.log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         args.log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
-        args.log_writer.add_scalar('train/lr', args.base_lr * lrs(epoch), epoch)
+        args.log_writer.add_scalar('train/lr', optimizer.param_groups[0]['lr'],
+                                    epoch)
 
 
 def test(epoch, 
@@ -82,7 +83,7 @@ def test(epoch,
 
     with tqdm(total=len(val_loader),
               bar_format='{l_bar}{bar:10}|{postfix}',
-              desc='             '.format(epoch + 1, args.epochs),
+              desc='             '.format(epoch, args.epochs),
               disable=not args.verbose) as t:
         with torch.no_grad():
             for i, (data, target) in enumerate(val_loader):

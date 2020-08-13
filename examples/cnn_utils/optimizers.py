@@ -23,8 +23,8 @@ def get_optimizer(model, args, batch_first=True):
             damping=args.damping, 
             kl_clip=args.kl_clip,
             batch_first=batch_first,
-            fac_update_freq=args.kfac_cov_update_freq,
-            kfac_update_freq=args.kfac_update_freq,
+            factor_update_freq=args.kfac_cov_update_freq,
+            inv_update_freq=args.kfac_update_freq,
             use_eigen_decomp=not args.use_inv_kfac,
             skip_layers=args.skip_layers,
             distribute_layer_factors=not args.coallocate_layer_factors
@@ -58,4 +58,4 @@ def get_optimizer(model, args, batch_first=True):
         lr_scheduler.append(optim.lr_scheduler.LambdaLR(preconditioner, lrs))
         lr_scheduler.append(kfac_param_scheduler)
 
-    return optimizer, preconditioner, lr_scheduler, lrs
+    return optimizer, preconditioner, lr_scheduler

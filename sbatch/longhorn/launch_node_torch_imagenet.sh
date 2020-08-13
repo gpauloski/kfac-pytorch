@@ -22,10 +22,6 @@ while getopts ":hcn:N:m:b:i:s:l:" opt; do
   esac
 done
 
-module load conda
-conda activate powerai_1.7
-which python
-
 if [ $NNODES -eq 1 ]; then
   python -m torch.distributed.launch \
       --nproc_per_node=$NGPUS \
