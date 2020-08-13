@@ -81,10 +81,12 @@ $ python -m torch.distributed.launch \
 Note: if using model parallel training as well (i.e. the model is split across multiple GPUs), KFAC will perform the ops for each module on the device the module is on. So if a model is split across two GPUs, the KFAC factors and inverses will also be split across GPUs.
 
 ### Mixed-Precision Training
-KFAC will not work with NVIDIA AMP training because the inverse operations used in KFAC (`torch.inverse` and `torch.symeig`) do not support half-precision inputs, and NVIDIA AMP does allow for disabling autocast in certain code regions.
-The `experimental` KFAC branch has worked with `torch.cuda.amp` and `torch.nn.parallel.DistributedDataParallel` although this support is still considered experimental.
+KFAC will **not** work with NVIDIA AMP training because the inverse operations used in KFAC (`torch.inverse` and `torch.symeig`) do not support half-precision inputs, and NVIDIA AMP does not have functionality for disabling autocast in certain code regions.
+
+The `experimental` KFAC branch works with `torch.cuda.amp` and `torch.nn.parallel.DistributedDataParallel` although this support is still considered experimental.
 Note that this will require PyTorch 1.6 or newer.
 When using `torch.cuda.amp` for mixed precision training, be sure to call `KFAC.step()` outside of an `autocast()` region. E.g.
+
 ```Python
 ...
 scaler = GradScaler()

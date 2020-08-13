@@ -33,9 +33,9 @@ class KFAC(optim.Optimizer):
       damping (float, optional): Tikhonov damping parameter (default: 0.001)
       factor_decay (float, optional): running average coefficient for Kronecker
           factors (default: 0.95)
-      fac_update_freq (int, optional): iterations between calculating and
+      factor_update_freq (int, optional): iterations between calculating and
           updating the running average of the Kronecker factors (default: 10)
-      kfac_update_freq (int, optional): iterations between applying gradient
+      inv_update_freq (int, optional): iterations between applying gradient
           preconditioning (default: 100)
       kl_clip (float, optional): clipping parameter for gradient scaling. If
           None, no scaling/clipping will be applied. (default: 0.001)
@@ -72,8 +72,8 @@ class KFAC(optim.Optimizer):
                  model,
                  damping=0.001,
                  factor_decay=0.95,
-                 fac_update_freq=10,
-                 kfac_update_freq=100,
+                 factor_update_freq=10,
+                 inv_update_freq=100,
                  kl_clip=0.001,
                  lr=0.1,
                  accumulate_data=True,
@@ -92,49 +92,99 @@ class KFAC(optim.Optimizer):
             raise ValueError("Invalid damping: {}".format(damping))
         if kl_clip is not None and not 0.0 < kl_clip:
             raise ValueError("Invalid clipping value: {}".format(kl_clip))
-        if not 0 < fac_update_freq:
-            raise ValueError("Invalid factor update frequency: {}".format(fac_update_freq))
-        if not 0 < kfac_update_freq:
-            raise ValueError("Invalid K-FAC update frequency: {}".format(kfac_update_freq))
-        if not 0 == kfac_update_freq % fac_update_freq:
-            print("WARNING: it is suggested that kfac_update_freq be a multiple of fac_update_freq")
+        if not 0 < factor_update_freq:
+            raise ValueError("Invalid factor update frequency: {}".format(factor_update_freq))
+        if not 0 < inv_update_freq:
+            raise ValueError("Invalid K-FAC update frequency: {}".format(inv_update_freq))
+        if not 0 == inv_update_freq % factor_update_freq:
+            print("WARNING: it is suggested that inv_update_freq be a multiple of factor_update_freq")
+
+        if isinstance(skip_layers, str):
+            skip_layers = [skip_layers.lower()]
+        elif isinstance(skip_layers, list):
+            skip_layers = [s.lower() for s in skip_layers]
+        known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
+        for layer in skip_layers: 
+            known_modules.discard(layer)
 
         # For compatibility with `KFACParamScheduler`
-        defaults = dict(lr=lr,
-                        damping=damping,
-                        fac_update_freq=fac_update_freq,
-                        kfac_update_freq=kfac_update_freq) 
+        defaults = dict(
+            damping=damping,
+            factor_decay=factor_decay,
+            factor_update_freq=factor_update_freq,
+            inv_update_freq=inv_update_freq,
+            kl_clip=kl_clip,
+            lr=lr,
+            step=0
+        ) 
 
-        super(KFAC, self).__init__(model.parameters(), defaults)
+        # KFAC does not register parameters so we pass fake tensor
+        super(KFAC, self).__init__([torch.tensor(0.0)], defaults)
 
-        self.steps = 0
-
-        self.damping = damping
-        self.factor_decay = factor_decay
-        self.fac_update_freq = fac_update_freq
-        self.kfac_update_freq = kfac_update_freq
-        self.kl_clip = kl_clip
-        self.lr = lr
+        # We do not need to save the params to the default group because
+        # they are not dependent on the current state of training
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
         self.compute_factor_in_hook = compute_factor_in_hook
         self.distribute_layer_factors = distribute_layer_factors
         self.use_eigen_decomp = use_eigen_decomp
+        self.skip_layers = skip_layers
+        self.known_modules = known_modules
         self.verbose = verbose
-
         self.backend = utils.get_comm_backend()
-
-        if isinstance(skip_layers, str):
-            self.skip_layers = [skip_layers.lower()]
-        elif isinstance(skip_layers, list):
-            self.skip_layers = [s.lower() for s in skip_layers]
-        self.known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
-        for layer in self.skip_layers: 
-            self.known_modules.discard(layer)
+        self.workers_assigned = False
 
         self.layers = []
         self.hook_layers = {}  # key: nn.Module, value: KFACLayer
         self.register_modules(model)
+
+    def state_dict(self, include_layer_factors=True, 
+                   include_layer_inverses=False):
+        """Returns KFAC state dict.
+
+        Args:
+          include_layer_factors (optional, bool): include tensors with factors
+              for all registered KFACLayers as a part of the state_dict. Note: 
+              can make the state_dict fairly large. (default: True)
+          include_layer_inverses (optional, bool): include tensors with inverse
+              for all registered KFACLayers as a part of the state_dict. Note: 
+              can make the state_dict fairly large. If False, the inverses can
+              be recomputed from the factors to save storage space 
+              (default: False).
+        """
+        state_dict = super(KFAC, self).state_dict()
+        layers = None
+        if include_layer_factors:
+            layers = [layer.state_dict(include_layer_inverses)
+                      for layer in self.layers]
+        state_dict['layers'] = layers
+        return state_dict
+
+    def load_state_dict(self, state_dict, compute_inverses=True):
+        """Loads the KFAC state.
+
+        Args:
+          state_dict (dict): KFAC state. Should be an object returned from a
+              call to `state_dict`.
+          compute_inverse (bool, optional): if True, compute the inverses
+              from the loaded factors. This is useful if the loaded state dict
+              was produced from with a call to state_dict() with 
+              `include_layer_inverses=False`. (default: True)
+        """
+        if state_dict['layers'] is not None:
+            if len(state_dict['layers']) != len(self.layers):
+                raise ValueError('loaded state dict contains a different '
+                                 'number of layers')
+            for layer, layer_state in zip(self.layers, state_dict['layers']):
+                layer.load_state_dict(layer_state)
+            state_dict = {key: state_dict[key] for key in state_dict
+                          if key != 'layers'}
+        super(KFAC, self).load_state_dict(state_dict)
+        if compute_inverses:
+            self._assign_layers_to_workers()
+            self.workers_assigned = True
+            self.compute_inverses()
+            self.broadcast_inverses()
 
     def register_module(self, module):
         """Create and register a KFAC layer for a module.
@@ -147,8 +197,6 @@ class KFAC(optim.Optimizer):
         layer_list = kfac_layers.get_kfac_layers(
             module,
             use_eigen_decomp = self.use_eigen_decomp, 
-            damping = self.damping,
-            factor_decay = self.factor_decay,
             batch_first = self.batch_first,
             accumulate_data = self.accumulate_data
         )
@@ -210,9 +258,8 @@ class KFAC(optim.Optimizer):
         layer_list = kfac_layers.get_kfac_layers(
             main_module,
             use_eigen_decomp = self.use_eigen_decomp, 
-            damping = self.damping,
-            factor_decay = self.factor_decay,
-            batch_first = self.batch_first
+            batch_first = self.batch_first,
+            accumulate_data = self.accumulate_data
         )
         
         if len(layer_list) > 1:
@@ -252,52 +299,91 @@ class KFAC(optim.Optimizer):
           closure: for compatibility with the base optimizer class.
               `closure` is ignored by KFAC
         """
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
 
-        # Update params, used for compatibilty with `KFACParamScheduler`
-        group = self.param_groups[0]
-        self.lr = group['lr']
-        self.damping = group['damping']
-        self.fac_update_freq = group['fac_update_freq']
-        self.kfac_update_freq = group['kfac_update_freq']
+        params = self.param_groups[0]
 
-        updates = {}
-        handles = []
-
-        if self.steps % self.fac_update_freq == 0:
+        if params['step'] % params['factor_update_freq'] == 0:
             if not self.compute_factor_in_hook:
-                for layer in self.layers:
-                    layer.update_A_factor()
-                    layer.update_G_factor()
+                self.compute_factors(alpha=params['factor_decay'])
+            self.allreduce_factors()
 
-            # We do this after layer.update_*_factor because the buffers
-            # are not instantiate until this point and we use the size of the
-            # buffers to approximate the time each layer will take to compute.
-            if self.steps == 0:
-                self._assign_layers_to_workers()
+        # We do this after layer.update_*_factor because the buffers
+        # are not instantiate until this point and we use the size of the
+        # buffers to approximate the time each layer will take to compute.
+        if not self.workers_assigned:
+            self._assign_layers_to_workers()
+            self.workers_assigned = True
 
-            if self.backend.size() > 1:
-                self._allreduce_factors()
-
-        if self.steps % self.kfac_update_freq == 0:
-            rank = self.backend.rank()
-            for i, layer in enumerate(self.layers):
-                layer.compute_A_inv(rank)
-                layer.compute_G_inv(rank)
-            if self.backend.size() > 1:
-                self._broadcast_inverses()
+        if params['step'] % params['inv_update_freq'] == 0:
+            self.compute_inverses(damping=params['damping'])
+            self.broadcast_inverses()
 
         for layer in self.layers:
-            layer.compute_preconditioned_gradient()
+            layer.compute_preconditioned_gradient(damping=params['damping'])
 
-        nu = None if self.kl_clip is None else self._compute_grad_scale()
+        scale = None if params['kl_clip'] is None else self._compute_grad_scale()
 
         for layer in self.layers:
-            layer.update_gradient(nu)
+            layer.update_gradient(scale=scale)
 
-        self.steps += 1
+        params['step'] += 1
+
+        return loss
+
+    def allreduce_factors(self):
+        """Allreduce the factors for all layers"""
+        if self.backend.size() == 1:
+            return
+
+        tensors = []
+        for layer in self.layers:
+            tensors.extend(layer.get_factors())
+
+        self.backend.allreduce(tensors, op=self.backend.Average)
+
+    def broadcast_inverses(self):
+        """Broadcast the eigendecomp/invs for all layers"""
+        if self.backend.size() == 1:
+            return
+
+        tensors = []
+        ranks = []
+        for layer in self.layers:
+            tensor_list, rank_list = layer.get_inverses(return_ranks=True)
+            tensors.extend(tensor_list)
+            ranks.extend(rank_list)
+
+        self.backend.broadcast(tensors, ranks)
+
+    @torch.no_grad()
+    def compute_inverses(self, damping=0.001):
+        """Compute inverses of all factors and broadcast results.
+
+        Args:
+          damping (float, optional): inverse damping value (default: 0.001)
+        """
+        rank = self.backend.rank()
+        for i, layer in enumerate(self.layers):
+            layer.compute_A_inv(rank, damping=damping)
+            layer.compute_G_inv(rank, damping=damping)
+    
+    @torch.no_grad()
+    def compute_factors(self, alpha=0.95):
+        """Compute all factors and reduce results.
+
+        Args:
+          alpha (float, optional): running average parameter (default: 0.95)
+        """
+        for layer in self.layers:
+            layer.update_A_factor(alpha=alpha)
+            layer.update_G_factor(alpha=alpha)
 
     def memory_usage(self):
-        """Returns approximate memory usage for KFAC
+        """Returns current approximate memory usage for KFAC
 
         Note: this does not take into account:
           - intermediate memory requirements of computations
@@ -317,15 +403,6 @@ class KFAC(optim.Optimizer):
             b += sum(map(sizeof_tensor, layer.g_outputs))
         return b
 
-    def _allreduce_factors(self):
-        """Allreduce the factors for all layers"""
-        tensors = []
-
-        for layer in self.layers:
-            tensors.extend(layer.get_factors())
-
-        self.backend.allreduce(tensors, op=self.backend.Average)
-
     def _assign_layers_to_workers(self):
         """Assigns layers to workers to minimize max load on any worker.
 
@@ -336,8 +413,8 @@ class KFAC(optim.Optimizer):
             return
 
         func = lambda n: n**3  # approx inverse complexity
-        a_sizes = [l.A_inv.shape[0] for l in self.layers]
-        g_sizes = [l.G_inv.shape[0] for l in self.layers]
+        a_sizes = [l.A_factor.shape[0] for l in self.layers]
+        g_sizes = [l.G_factor.shape[0] for l in self.layers]
         a_times = list(map(func, a_sizes))
         g_times = list(map(func, g_sizes))
             
@@ -354,19 +431,6 @@ class KFAC(optim.Optimizer):
             layer.A_rank = a_locs[i]
             layer.G_rank = g_locs[i]
 
-    def _broadcast_inverses(self):
-        """Broadcast the eigendecomp/invs for all layers"""
-        tensors = []
-        ranks = []
-
-        for layer in self.layers:
-            tensor_list, rank_list = layer.get_inverses(return_ranks=True)
-            tensors.extend(tensor_list)
-            ranks.extend(rank_list)
-
-        assert len(tensors) == len(ranks) 
-        self.backend.broadcast(tensors, ranks)
-
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients
 
@@ -374,27 +438,32 @@ class KFAC(optim.Optimizer):
           sum_{layers} (sum_{gradients} precon_grad * grad * lr^2) 
         """
         vg_sum = 0.
+        group = self.param_groups[0]
+        lr = group['lr']
+        kl_clip = group['kl_clip']
         for layer in self.layers:
             v = layer.preconditioned_gradient
-            vg_sum += (v[0] * layer._get_weight_grad().data *
-                       self.lr ** 2).sum().item()
+            vg_sum += (v[0] * layer._get_weight_grad().data * lr ** 2).sum().item()
             if layer.has_bias:
-                vg_sum += (v[1] * layer._get_bias_grad().data * 
-                           self.lr ** 2).sum().item()
+                vg_sum += (v[1] * layer._get_bias_grad().data * lr ** 2).sum().item()
         if vg_sum == 0.0:
             return None
-        return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
+        return min(1.0, math.sqrt(kl_clip / abs(vg_sum)))
 
     def _periodic_hook(grad_enabled=True):
         def decorator(func):
             def wrapper(self, *args, **kwargs):
+                group = self.param_groups[0]
+                step = group['step']
+                update_freq = group['factor_update_freq']
                 if grad_enabled:
-                    if (torch.is_grad_enabled() and 
-                        self.steps % self.fac_update_freq == 0):
-                        func(self, *args, **kwargs)
+                    if torch.is_grad_enabled() and step % update_freq == 0:
+                        with torch.no_grad():
+                            func(self, *args, **kwargs)
                 else:
-                    if self.steps % self.fac_update_freq == 0:
-                        func(self, *args, **kwargs)
+                    if step % update_freq == 0:
+                        with torch.no_grad():
+                            func(self, *args, **kwargs)
             return wrapper
         return decorator
 
@@ -402,13 +471,15 @@ class KFAC(optim.Optimizer):
     def _save_input(self, module, input):
         self.hook_layers[module].save_inputs(input)
         if self.compute_factor_in_hook:
-            self.hook_layers[module].update_A_factor()
+            self.hook_layers[module].update_A_factor(
+                    alpha=self.param_groups[0]['factor_decay'])
 
     @_periodic_hook(grad_enabled=False)
     def _save_grad_output(self, module, grad_input, grad_output):
         self.hook_layers[module].save_grad_outputs(grad_output)
         if self.compute_factor_in_hook:
-            self.hook_layers[module].update_G_factor()
+            self.hook_layers[module].update_G_factor(
+                    alpha=self.param_groups[0]['factor_decay'])
 
     @_periodic_hook(grad_enabled=True)
     def _save_input_as_grad_output(self, module, input):

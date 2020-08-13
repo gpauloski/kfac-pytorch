@@ -27,9 +27,9 @@ def parse_args():
                         help='path to training data')
     parser.add_argument('--val-dir', default='/tmp/imagenet/ILSVRC2012_img_val/',
                         help='path to validation data')    
-    parser.add_argument('--log-dir', default='./logs',
-                        help='TensorBoard log directory')
-    parser.add_argument('--checkpoint-format', default='checkpoint-{epoch}.pth.tar',
+    parser.add_argument('--log-dir', default='./logs/horovod_imagenet',
+                        help='TensorBoard/checkpoint log directory')
+    parser.add_argument('--checkpoint-format', default='checkpoint_{epoch}.pth.tar',
                         help='checkpoint file format')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
@@ -61,6 +61,8 @@ def parse_args():
                         help='weight decay')
     parser.add_argument('--label-smoothing', type=float, default=0.1,
                         help='label smoothing (default 0.1)')
+    parser.add_argument('--checkpoint-freq', type=int, default=5,
+                        help='epochs between checkpoints')
 
     # KFAC Parameters
     parser.add_argument('--kfac-update-freq', type=int, default=100,
@@ -93,16 +95,26 @@ def parse_args():
 
     return args
 
-
-if __name__ == '__main__': 
+def main():
     torch.multiprocessing.set_start_method('spawn')
     args = parse_args()
 
+    os.environ['HOROVOD_FUSION_THRESHOLD'] = "0"
     hvd.init()
-    args.verbose = True if hvd.rank() == 0 else False
+    args.local_rank = hvd.local_rank()
+
+    if args.cuda:
+        torch.cuda.set_device(hvd.local_rank())
+        torch.cuda.manual_seed(args.seed)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+    print('rank = {}, world_size = {}, device_ids = {}'.format(
+            hvd.rank(), hvd.size(), args.local_rank))
+
     args.backend = kfac.utils.get_comm_backend()
     args.base_lr = args.base_lr * args.backend.size() * args.batches_per_allreduce
-    args.local_rank = hvd.local_rank()
+    args.verbose = True if hvd.rank() == 0 else False
     args.horovod = True
 
     train_sampler, train_loader, _, val_loader = datasets.get_imagenet(args)
@@ -113,18 +125,11 @@ if __name__ == '__main__':
     elif args.model.lower() == 'resnet152':
         model = models.resnet152()
 
-    if args.cuda:
-        torch.cuda.set_device(hvd.local_rank())
-        torch.cuda.manual_seed(args.seed)
-        model.cuda()
-    torch.backends.cudnn.benchmark = True
+    device = 'cpu' if not args.cuda else 'cuda'
+    model.to(device)
 
-    args.log_dir = os.path.join(args.log_dir, 
-             "imagenet_{}_kfac{}_gpu_{}_{}".format(
-             args.model, args.kfac_update_freq, hvd.size(),
-             datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
-    args.checkpoint_format=os.path.join(args.log_dir, args.checkpoint_format)
     os.makedirs(args.log_dir, exist_ok=True)
+    args.checkpoint_format=os.path.join(args.log_dir, args.checkpoint_format)
     args.log_writer = SummaryWriter(args.log_dir) if args.verbose else None
 
     # If set > 0, will resume training from a given checkpoint.
@@ -134,38 +139,36 @@ if __name__ == '__main__':
             args.resume_from_epoch = try_epoch
             break
 
-    # Horovod: broadcast resume_from_epoch from rank 0 (which will have
-    # checkpoints) to other ranks.
-    args.resume_from_epoch = hvd.broadcast(torch.tensor(args.resume_from_epoch),
-                                           root_rank=0,
-                                           name='resume_from_epoch').item()
-
-    optimizer, precon, lr_schedules, lrs, = optimizers.get_optimizer(model, args)
+    optimizer, preconditioner, lr_schedules = optimizers.get_optimizer(model, args)
     loss_func = LabelSmoothLoss(args.label_smoothing)
     
-    # Restore from a previous checkpoint, if initial_epoch is specified.
-    # Horovod: restore on the first worker which will broadcast weights
-    # to other workers.
-    if args.resume_from_epoch > 0 and args.backend.rank() == 0:
+    if args.resume_from_epoch > 0:
         filepath = args.checkpoint_format.format(epoch=args.resume_from_epoch)
         checkpoint = torch.load(filepath)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
-
-        hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+        if isinstance(checkpoint['schedulers'], list):
+            for sched, state in zip(lr_schedules, checkpoint['schedulers']):
+                sched.load_state_dict(state)
+        if (checkpoint['preconditioner'] is not None and
+                preconditioner is not None):
+            preconditioner.load_state_dict(checkpoint['preconditioner'])
 
     start = time.time()
 
-    for epoch in range(args.epochs):
-        engine.train(epoch, model, optimizer, precon, lrs, loss_func, 
+    for epoch in range(args.resume_from_epoch + 1, args.epochs + 1):
+        engine.train(epoch, model, optimizer, preconditioner, loss_func, 
                      train_sampler, train_loader, args)
+        engine.test(epoch, model, loss_func, val_loader, args)
         for scheduler in lr_schedules:
             scheduler.step()
-        engine.test(epoch, model, loss_func, val_loader, args)
-        if args.backend.rank() == 0:
-            save_checkpoint(model, optimizer, args.checkpoint_format, epoch)
+        if (epoch > 0 and epoch % args.checkpoint_freq == 0 and
+                args.backend.rank() == 0):
+            save_checkpoint(model, optimizer, preconditioner, lr_schedules,
+                            args.checkpoint_format.format(epoch=epoch))
 
     if args.verbose:
         print('\nTraining time: {}'.format(datetime.timedelta(seconds=time.time() - start)))
 
+if __name__ == '__main__': 
+    main()

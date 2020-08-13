@@ -5,11 +5,14 @@ def accuracy(output, target):
     pred = output.max(1, keepdim=True)[1]
     return pred.eq(target.view_as(pred)).float().mean()
 
-def save_checkpoint(model, optimizer, checkpoint_format, epoch):
-    filepath = checkpoint_format.format(epoch=epoch + 1)
+def save_checkpoint(model, optimizer, preconditioner, schedulers, filepath):
     state = {
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict(),
+        'preconditioner': preconditioner.state_dict()
+                if preconditioner is not None else None,
+        'schedulers': [s.state_dict() for s in schedulers]
+                if isinstance(schedulers, list) else None
     }
     torch.save(state, filepath)
 
