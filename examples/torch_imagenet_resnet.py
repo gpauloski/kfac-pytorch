@@ -13,7 +13,6 @@ import cnn_utils.datasets as datasets
 import cnn_utils.engine as engine
 import cnn_utils.optimizers as optimizers
 
-from torchsummary import summary
 from torch.utils.tensorboard import SummaryWriter
 from utils import LabelSmoothLoss, save_checkpoint
 
@@ -90,6 +89,8 @@ def parse_args():
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
 
+    parser.add_argument('--backend', type=str, default='nccl',
+                        help='backend for distribute training (default: nccl)')
     # Set automatically by torch distributed launch
     parser.add_argument('--local_rank', type=int, default=0,
                         help='local rank for distributed training')
@@ -103,7 +104,7 @@ if __name__ == '__main__':
     torch.multiprocessing.set_start_method('spawn')
     args = parse_args()
 
-    torch.distributed.init_process_group(backend='nccl', init_method='env://')
+    torch.distributed.init_process_group(backend=args.backend, init_method='env://')
     torch.distributed.barrier()
     
     if args.cuda:
