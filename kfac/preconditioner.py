@@ -186,7 +186,7 @@ class KFAC(optim.Optimizer):
             self.compute_inverses()
             self.broadcast_inverses()
 
-    def register_module(self, module):
+    def register_module(self, module, name=None):
         """Create and register a KFAC layer for a module.
 
         Note: For a single module, there may be multiple KFAC layers
@@ -202,27 +202,29 @@ class KFAC(optim.Optimizer):
         )
         for module, kfac_layer in layer_list:
             if self.backend.rank() == 0 and self.verbose:
-                print('Registered: {}'.format(kfac_layer))
+                print('Registered {}: {}'.format(
+                        name if name is not None else '', kfac_layer))
             self.hook_layers[module] = kfac_layer
             self.layers.append(kfac_layer)
             module.register_forward_pre_hook(self._save_input)
             module.register_backward_hook(self._save_grad_output)
 
-    def register_modules(self, model):
+    def register_modules(self, model, prefix=''):
         """Iterate over and register modules that KFAC supports."""
-        for module in model.children():
+        for name, module in model.named_children():
+            name = prefix + ('.' if prefix != '' else '') + name
             # Do not recurse in children if we are skipping the module
             if module.__class__.__name__.lower() in self.skip_layers:
                 pass
             # Recurse into module if we are not skipping it but it is also not
             # a known module to KFAC
             elif module.__class__.__name__.lower() not in self.known_modules:
-                self.register_modules(module)
+                self.register_modules(module, prefix=name)
             # This is a known module to KFAC so register it if it is trainable
             else:
                 if (kfac_layers.module_requires_grad(module) and
                         module not in self.hook_layers):
-                    self.register_module(module)
+                    self.register_module(module, name)
 
     def register_shared_module(self, main_module, second_module, reverse_hooks=False):
         """Create and register a KFAC layer for modules that share a weight
