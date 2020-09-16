@@ -15,19 +15,28 @@ def get_optimizer(model, args, batch_first=True):
         weight_decay=args.weight_decay
     )
 
+    if args.kfac_comm_method == 'comm-opt':
+        comm_method=kfac.CommMethod.COMM_OPT
+    elif args.kfac_comm_method == 'mem-opt':
+        comm_method=kfac.CommMethod.MEM_OPT
+    else:
+        raise ValueError('Unknwon KFAC Comm Method: {}'.format(
+                args.kfac_comm_method))
+
     if use_kfac:
         preconditioner = kfac.KFAC(
             model, 
-            lr=args.base_lr, 
-            factor_decay=args.stat_decay,
             damping=args.damping, 
-            kl_clip=args.kl_clip,
-            batch_first=batch_first,
+            factor_decay=args.stat_decay,
             factor_update_freq=args.kfac_cov_update_freq,
             inv_update_freq=args.kfac_update_freq,
-            use_eigen_decomp=not args.use_inv_kfac,
+            kl_clip=args.kl_clip,
+            lr=args.base_lr, 
+            batch_first=batch_first,
+            comm_method=comm_method,
+            distribute_layer_factors=not args.coallocate_layer_factors,
             skip_layers=args.skip_layers,
-            distribute_layer_factors=not args.coallocate_layer_factors
+            use_eigen_decomp=not args.use_inv_kfac,
         ) 
         kfac_param_scheduler = kfac.KFACParamScheduler(
             preconditioner,

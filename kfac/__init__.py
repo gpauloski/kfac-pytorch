@@ -1,4 +1,4 @@
-from .preconditioner import KFAC
+from .preconditioner import CommMethod, KFAC
 from .scheduler import KFACParamScheduler
 from . import modules
 from . import utils

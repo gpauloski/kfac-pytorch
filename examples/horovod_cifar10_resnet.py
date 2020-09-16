@@ -82,6 +82,9 @@ def parse_args():
                         help='Layer types to ignore registering with KFAC (default: [])')
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
+    parser.add_argument('--kfac-comm-method', type=str, default='comm-opt',
+                        help='KFAC communication optimization strategy. One of comm-opt '
+                             'or mem-opt. (default: comm-opt)')
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()

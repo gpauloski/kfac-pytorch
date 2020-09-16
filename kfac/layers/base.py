@@ -7,15 +7,17 @@ from . import utils
 class KFACLayer(object):
     def __init__(self,
                  module,
-                 use_eigen_decomp=True,
-                 batch_first=True,
                  accumulate_data=True,
+                 batch_first=True,
+                 keep_inv_copy=False,
+                 use_eigen_decomp=True,
                  A_rank=None,
                  G_rank=None):
         self.module = module
-        self.use_eigen_decomp=use_eigen_decomp
-        self.batch_first = batch_first
         self.accumulate_data = accumulate_data
+        self.batch_first = batch_first
+        self.keep_inv_copy = keep_inv_copy
+        self.use_eigen_decomp=use_eigen_decomp
         self.eps = 1e-10
         self.A_rank = A_rank
         self.G_rank = G_rank
@@ -40,7 +42,10 @@ class KFACLayer(object):
 
         Used by kfac.KFAC for state saving/loading. Note by default only the
         factors are saved because the inverses can be recomputed from the
-        factors, however, the `include_inverses` flag can override this.
+        factors, however, the `include_inverses` flag can override this. If
+        `keep_inv_copy=False` and `A_rank != G_rank != get_rank()` then
+        the inverses may be `None` because this worker is not responsible for
+        this layer.
         """
         state = {'A_factor': self.A_factor, 'G_factor': self.G_factor}
         if include_inverses:
@@ -78,7 +83,7 @@ class KFACLayer(object):
         if self.A_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank == self.A_rank:
-            self._compute_factor_inverse(self.A_factor, self.A_inv, damping)
+            self.A_inv = self._compute_factor_inverse(self.A_factor, damping)
 
     def compute_G_inv(self, rank, damping=0.001):
         """Compute G inverse on specified ranks
@@ -88,7 +93,7 @@ class KFACLayer(object):
         if self.G_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank == self.G_rank:
-            self._compute_factor_inverse(self.G_factor, self.G_inv, damping)
+            self.G_inv = self._compute_factor_inverse(self.G_factor, damping)
 
     def get_gradient(self):
         """Get formated gradients (weight and bias) of module
@@ -115,15 +120,48 @@ class KFACLayer(object):
         if return_ranks:
             return [self.A_inv, self.G_inv], [self.A_rank, self.G_rank] 
         return [self.A_inv, self.G_inv]
+ 
+    def get_preconditioned_gradient(self, return_rank=False):
+        """Returns the preconditioned gradients (weight and bias)
 
-    def compute_preconditioned_gradient(self, damping=0.001):
-        """Compute precondition gradient of each weight in module
-
-        Produces a list of preconditioned weight gradient and bias gradient
-        (if there is a bias) where each has shape [output_dim, input_dim].
-        Preconditioned gradients can be applied to the actual gradients with 
-        `update_gradient()`.
+        Args:
+          return_rank (bool): If True, return list indicating rank that 
+              the preconditioned gradient is on
         """
+        # If the preconditioned gradient is None, initialize it so
+        # we can correctly perform the broadcast op between ranks
+        if self.preconditioned_gradient is None:
+            w = self._get_weight_grad()
+            self.preconditioned_gradient = [w.new_zeros(w.shape)]
+            if self.has_bias:
+                b = self._get_bias_grad()
+                self.preconditioned_gradient.append(b.new_zeros(b.shape))
+
+        self.preconditioned_gradient = [t.contiguous() for t in
+               self.preconditioned_gradient]
+
+        if return_rank:
+            return (self.preconditioned_gradient,
+                    len(self.preconditioned_gradient) * [self.A_rank])
+        return self.preconditioned_gradient
+
+    def compute_preconditioned_gradient(self, rank=None, damping=0.001):
+        """Compute precondition gradient of each weight in module
+        
+        Preconditioned gradients can be applied to the actual gradients with 
+        `update_gradient()`. Note the steps are separate in the event that
+        intermediate steps will be applied to the preconditioned gradient.
+
+        Args:
+          rank (int, optional): The rank entering this function. If specified,
+              the preconditioned_gradient will only be computed if 
+              `rank==self.A_rank==self.G_rank`. (default: None)
+          damping (float, optional): damping to use if preconditioning using
+              the eigendecomposition method. (default: 0.001)
+        """
+        if rank is not None and not (rank == self.A_rank == self.G_rank):
+            return
+
         # Compute preconditioned gradient using specified inverse method
         if self.use_eigen_decomp:
             grad = self._get_precondition_gradient_eigen(damping)
@@ -177,21 +215,17 @@ class KFACLayer(object):
             v = [scale * x for x in self.preconditioned_gradient]
         else:
             v = self.preconditioned_gradient
-        self._get_weight_grad().data.copy_(v[0])
+        self._get_weight_grad().data = v[0].data
         if self.has_bias:
-            self._get_bias_grad().data.copy_(v[1])
+            self._get_bias_grad().data = v[1].data
 
-    def _compute_factor_inverse(self, factor, inverse, damping=0.001):
+    def _compute_factor_inverse(self, factor, damping=0.001):
         """Computes inverse/eigendecomp of factor and saves result to inverse"""
         if self.use_eigen_decomp:
-            inverse.data.copy_(
-                utils.get_eigendecomp(factor, symmetric=self.factors_are_symmetric)
-            )
+            return utils.get_eigendecomp(factor, symmetric=self.factors_are_symmetric)
         else:
-            inverse.data.copy_(
-                utils.get_inverse(factor, damping=damping, 
+            return utils.get_inverse(factor, damping=damping, 
                         symmetric=self.factors_are_symmetric)
-            )
  
     def _get_A_factor(self, a_inputs):
         """Compute A factor. Returns A."""
@@ -228,22 +262,24 @@ class KFACLayer(object):
         assert self.A_factor is None, ('A buffers have already been '
                 'initialized. Was _init_A_buffers() called more than once?')
         self.A_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
-        if self.use_eigen_decomp:
-            # add one axtra column for eigenvalues
-            shape = (factor.shape[0], factor.shape[0] + 1) 
-        else:
-            shape = factor.shape
-        self.A_inv = factor.new_zeros(shape) 
+        if self.keep_inv_copy:
+            if self.use_eigen_decomp:
+                # add one axtra column for eigenvalues
+                shape = (factor.shape[0], factor.shape[0] + 1) 
+            else:
+                shape = factor.shape
+            self.A_inv = factor.new_zeros(shape) 
 
     def _init_G_buffers(self, factor):
         """Create buffers for factor G and its inverse"""
         assert self.G_factor is None, ('G buffers have already been '
                 'initialized. Was _init_G_buffers() called more than once?')
         self.G_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
-        if self.use_eigen_decomp:
-            # add one axtra column for eigenvalues
-            shape = (factor.shape[0], factor.shape[0] + 1)
-        else:
-            shape = factor.shape
-        self.G_inv = factor.new_zeros(shape) 
+        if self.keep_inv_copy:
+            if self.use_eigen_decomp:
+                # add one axtra column for eigenvalues
+                shape = (factor.shape[0], factor.shape[0] + 1)
+            else:
+                shape = factor.shape
+            self.G_inv = factor.new_zeros(shape) 
 
