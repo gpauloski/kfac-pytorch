@@ -11,6 +11,7 @@ class KFACLayer(object):
                  batch_first=True,
                  keep_inv_copy=False,
                  use_eigen_decomp=True,
+                 use_half_precision=False,
                  A_rank=None,
                  G_rank=None):
         self.module = module
@@ -18,6 +19,7 @@ class KFACLayer(object):
         self.batch_first = batch_first
         self.keep_inv_copy = keep_inv_copy
         self.use_eigen_decomp=use_eigen_decomp
+        self.precision = torch.float16 if use_half_precision else torch.float32
         self.eps = 1e-10
         self.A_rank = A_rank
         self.G_rank = G_rank
@@ -179,20 +181,20 @@ class KFACLayer(object):
     def save_inputs(self, input):
         """Save inputs locally"""
         if self.accumulate_data:
-            self.a_inputs.append(input[0].data)
+            self.a_inputs.append(input[0].data.to(self.precision))
         else:
-            self.a_inputs = [input[0].data]
+            self.a_inputs = [input[0].data.to(self.precision)]
 
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
         if self.accumulate_data:
-            self.g_outputs.append(grad_output[0].data)
+            self.g_outputs.append(grad_output[0].data.to(self.precision))
         else:
-            self.g_outputs = [grad_output[0].data]
+            self.g_outputs = [grad_output[0].data.to(self.precision)]
 
     def update_A_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
-        A_new = self._get_A_factor(self.a_inputs).to(torch.float32)
+        A_new = self._get_A_factor(self.a_inputs)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self._init_A_buffers(A_new)
@@ -200,7 +202,7 @@ class KFACLayer(object):
 
     def update_G_factor(self, alpha=0.95):
         """Compute factor G and add to running averages"""
-        G_new = self._get_G_factor(self.g_outputs).to(torch.float32)
+        G_new = self._get_G_factor(self.g_outputs).to(self.precision)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self._init_G_buffers(G_new)
@@ -221,6 +223,7 @@ class KFACLayer(object):
 
     def _compute_factor_inverse(self, factor, damping=0.001):
         """Computes inverse/eigendecomp of factor and saves result to inverse"""
+        factor = factor.float()  # in case the factors are stored in fp16
         if self.use_eigen_decomp:
             return utils.get_eigendecomp(factor, symmetric=self.factors_are_symmetric)
         else:
@@ -261,7 +264,8 @@ class KFACLayer(object):
         """Create buffers for factor A and its inverse"""
         assert self.A_factor is None, ('A buffers have already been '
                 'initialized. Was _init_A_buffers() called more than once?')
-        self.A_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
+        self.A_factor = torch.diag(factor.new(factor.shape[0]).fill_(1)).to(
+                self.precision)
         if self.keep_inv_copy:
             if self.use_eigen_decomp:
                 # add one axtra column for eigenvalues
@@ -274,7 +278,8 @@ class KFACLayer(object):
         """Create buffers for factor G and its inverse"""
         assert self.G_factor is None, ('G buffers have already been '
                 'initialized. Was _init_G_buffers() called more than once?')
-        self.G_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
+        self.G_factor = torch.diag(factor.new(factor.shape[0]).fill_(1)).to(
+                self.precision)
         if self.keep_inv_copy:
             if self.use_eigen_decomp:
                 # add one axtra column for eigenvalues
