@@ -1,3 +1,4 @@
+import enum
 import math
 import warnings
 import torch
@@ -5,6 +6,20 @@ import torch.optim as optim
 
 from . import layers as kfac_layers
 from . import utils
+
+class CommMethod(enum.Enum):
+    """KFAC Communication Method
+
+    - COMM_OPT: Optimize KFAC to reduce communication by decoupling gradient
+        preconditioning from inverse calculations. This method is referred
+        to as 'KFAC_opt' in https://arxiv.org/abs/2007.00784.
+    - MEM_OPT: Optimize KFAC to reduce memory usage by computing the inverse
+        calculations and preconditioned gradient for a single layer on one
+        worker and broadcasting the gradient to all workers. This method is 
+        referred to as 'KFAC_lw' in https://arxiv.org/abs/2007.00784.
+    """
+    COMM_OPT = 1
+    MEM_OPT = 2
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
@@ -49,6 +64,8 @@ class KFAC(optim.Optimizer):
           can increase substantially. (default: True)
       batch_first (bool, optional): True if the batch dimension is dim 0
           (default: True)
+      communication_method (CommMethod, optional): Communication optimization
+          to use. See `CommMethod` docstring for more info. (default: MEM_OPT)
       compute_factor_in_hook (bool, optional): If `True`, compute the factors
           during the module forward/backward pass hooks and add to the running
           average. Recommended if using gradient accumulation and 
@@ -78,6 +95,7 @@ class KFAC(optim.Optimizer):
                  lr=0.1,
                  accumulate_data=True,
                  batch_first=True,
+                 comm_method=CommMethod.COMM_OPT,
                  compute_factor_in_hook=False,
                  distribute_layer_factors=True,
                  use_eigen_decomp=True,
@@ -97,7 +115,12 @@ class KFAC(optim.Optimizer):
         if not 0 < inv_update_freq:
             raise ValueError("Invalid K-FAC update frequency: {}".format(inv_update_freq))
         if not 0 == inv_update_freq % factor_update_freq:
-            print("WARNING: it is suggested that inv_update_freq be a multiple of factor_update_freq")
+            warnings.warn('It is suggested that inv_update_freq be a multiple of factor_update_freq')
+        if comm_method is CommMethod.MEM_OPT and distribute_layer_factors is True:
+            warnings.warn('CommMethod.MEM_OPT and distribute_layer_factors=True '
+                          'cannot be used at the same time. Defaulting to '
+                          'distribute_layer_factors=False')
+            distribute_layer_factors = False 
 
         if isinstance(skip_layers, str):
             skip_layers = [skip_layers.lower()]
@@ -125,6 +148,7 @@ class KFAC(optim.Optimizer):
         # they are not dependent on the current state of training
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
+        self.comm_method = comm_method
         self.compute_factor_in_hook = compute_factor_in_hook
         self.distribute_layer_factors = distribute_layer_factors
         self.use_eigen_decomp = use_eigen_decomp
@@ -155,8 +179,12 @@ class KFAC(optim.Optimizer):
         state_dict = super(KFAC, self).state_dict()
         layers = None
         if include_layer_factors:
-            layers = [layer.state_dict(include_layer_inverses)
-                      for layer in self.layers]
+            if self.comm_method is CommMethod.MEM_OPT:
+                warnings.warn('Layer inverses cannot be saved to the state '
+                              'dict when using CommMethod.MEM_OPT.')
+            else:
+                layers = [layer.state_dict(include_layer_inverses)
+                          for layer in self.layers]
         state_dict['layers'] = layers
         return state_dict
 
@@ -196,9 +224,10 @@ class KFAC(optim.Optimizer):
         """
         layer_list = kfac_layers.get_kfac_layers(
             module,
-            use_eigen_decomp = self.use_eigen_decomp, 
+            accumulate_data = self.accumulate_data,
             batch_first = self.batch_first,
-            accumulate_data = self.accumulate_data
+            keep_inv_copy = self.comm_method is CommMethod.COMM_OPT,
+            use_eigen_decomp = self.use_eigen_decomp, 
         )
         for module, kfac_layer in layer_list:
             if self.backend.rank() == 0 and self.verbose:
@@ -323,10 +352,12 @@ class KFAC(optim.Optimizer):
 
         if params['step'] % params['inv_update_freq'] == 0:
             self.compute_inverses(damping=params['damping'])
-            self.broadcast_inverses()
+            if self.comm_method is CommMethod.COMM_OPT:
+                self.broadcast_inverses()
 
-        for layer in self.layers:
-            layer.compute_preconditioned_gradient(damping=params['damping'])
+        self.compute_preconditioned_gradients(damping=params['damping'])
+        if self.comm_method is CommMethod.MEM_OPT:
+            self.broadcast_gradients()
 
         scale = None if params['kl_clip'] is None else self._compute_grad_scale()
 
@@ -362,21 +393,35 @@ class KFAC(optim.Optimizer):
 
         self.backend.broadcast(tensors, ranks)
 
+    def broadcast_gradients(self):
+        """Broadcast the preconditioned gradients for all layers"""
+        if self.backend.size() == 1:
+            return
+
+        tensors = []
+        ranks = []
+        for layer in self.layers:
+            tensor_list, rank_list = layer.get_preconditioned_gradient(return_rank=True)
+            tensors.extend(tensor_list)
+            ranks.extend(rank_list)
+
+        self.backend.broadcast(tensors, ranks)
+
     @torch.no_grad()
     def compute_inverses(self, damping=0.001):
-        """Compute inverses of all factors and broadcast results.
+        """Compute inverses of all factors.
 
         Args:
           damping (float, optional): inverse damping value (default: 0.001)
         """
         rank = self.backend.rank()
-        for i, layer in enumerate(self.layers):
+        for layer in self.layers:
             layer.compute_A_inv(rank, damping=damping)
             layer.compute_G_inv(rank, damping=damping)
     
     @torch.no_grad()
     def compute_factors(self, alpha=0.95):
-        """Compute all factors and reduce results.
+        """Compute all factors.
 
         Args:
           alpha (float, optional): running average parameter (default: 0.95)
@@ -385,12 +430,25 @@ class KFAC(optim.Optimizer):
             layer.update_A_factor(alpha=alpha)
             layer.update_G_factor(alpha=alpha)
 
+    @torch.no_grad()
+    def compute_preconditioned_gradients(self, damping=0.001):
+        """Compute the preconditioned gradients for all layers.
+
+        Args:
+          damping (float, optional): damping value (default: 0.001)
+        """
+        rank = self.backend.rank() if self.comm_method is CommMethod.MEM_OPT else None
+        for layer in self.layers:
+            layer.compute_preconditioned_gradient(rank=rank, damping=damping)
+
     def memory_usage(self):
         """Returns current approximate memory usage for KFAC
 
         Note: this does not take into account:
           - intermediate memory requirements of computations
           - input/output accumulation depending on when the function is called
+          - differences in memory usage between workers when using 
+            CommMethod.MEM_OPT
         """
         b = 0
 
