@@ -83,6 +83,10 @@ class KFAC(optim.Optimizer):
           `my_module` and skip it, then any sub module of `my_module` will also
           be skipped even if it is not explicitly passed to `skip_layers`. 
           (default: None)
+      store_factors_as_fp16 (bool, optional): store factors as fp16 tensors
+          instead of fp32. Useful in KFAC memory usage is a concern. Note:
+          could result in worse performance due to round-off, this has not 
+          been investigated in depth. (default: False)
       verbose (bool, optional): print information about registered layers
     """
     def __init__(self,
@@ -100,6 +104,7 @@ class KFAC(optim.Optimizer):
                  distribute_layer_factors=True,
                  use_eigen_decomp=True,
                  skip_layers=None,
+                 store_factors_as_fp16=False,
                  verbose=True):
 
         if not 0.0 <= lr:
@@ -153,6 +158,7 @@ class KFAC(optim.Optimizer):
         self.distribute_layer_factors = distribute_layer_factors
         self.use_eigen_decomp = use_eigen_decomp
         self.skip_layers = skip_layers
+        self.store_factors_as_fp16 = store_factors_as_fp16
         self.known_modules = known_modules
         self.verbose = verbose
         self.backend = utils.get_comm_backend()
@@ -227,7 +233,8 @@ class KFAC(optim.Optimizer):
             accumulate_data = self.accumulate_data,
             batch_first = self.batch_first,
             keep_inv_copy = self.comm_method is CommMethod.COMM_OPT,
-            use_eigen_decomp = self.use_eigen_decomp, 
+            use_eigen_decomp = self.use_eigen_decomp,
+            use_half_precision = self.store_factors_as_fp16,
         )
         for module, kfac_layer in layer_list:
             if self.backend.rank() == 0 and self.verbose:
