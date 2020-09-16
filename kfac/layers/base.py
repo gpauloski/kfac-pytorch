@@ -272,7 +272,7 @@ class KFACLayer(object):
                 shape = (factor.shape[0], factor.shape[0] + 1) 
             else:
                 shape = factor.shape
-            self.A_inv = factor.new_zeros(shape) 
+            self.A_inv = factor.new_zeros(shape).to(torch.float32)
 
     def _init_G_buffers(self, factor):
         """Create buffers for factor G and its inverse"""
@@ -286,5 +286,5 @@ class KFACLayer(object):
                 shape = (factor.shape[0], factor.shape[0] + 1)
             else:
                 shape = factor.shape
-            self.G_inv = factor.new_zeros(shape) 
+            self.G_inv = factor.new_zeros(shape).to(torch.float32) 
 
