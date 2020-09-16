@@ -88,6 +88,9 @@ def parse_args():
                         help='Layer types to ignore registering with KFAC (default: [])')
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
+    parser.add_argument('--kfac-comm-method', type=str, default='comm-opt',
+                        help='KFAC communication optimization strategy. One of comm-opt '
+                             'or mem-opt. (default: comm-opt)')
 
     parser.add_argument('--backend', type=str, default='nccl',
                         help='backend for distribute training (default: nccl)')
@@ -135,6 +138,9 @@ if __name__ == '__main__':
 
     model = torch.nn.parallel.DistributedDataParallel(model,
             device_ids=[args.local_rank])
+
+    if args.verbose():
+        print(model)
 
     os.makedirs(args.log_dir, exist_ok=True)
     args.checkpoint_format = os.path.join(args.log_dir, args.checkpoint_format)

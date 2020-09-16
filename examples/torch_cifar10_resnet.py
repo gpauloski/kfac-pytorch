@@ -82,7 +82,12 @@ def parse_args():
                         help='Layer types to ignore registering with KFAC (default: [])')
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
+    parser.add_argument('--kfac-comm-method', type=str, default='comm-opt',
+                        help='KFAC communication optimization strategy. One of comm-opt '
+                             'or mem-opt. (default: comm-opt)')
     
+    parser.add_argument('--backend', type=str, default='nccl',
+                        help='backend for distribute training (default: nccl)')
     # Set automatically by torch distributed launch
     parser.add_argument('--local_rank', type=int, default=0,
                         help='local rank for distributed training')
@@ -95,7 +100,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    torch.distributed.init_process_group(backend='nccl', init_method='env://')
+    torch.distributed.init_process_group(backend=args.backend, init_method='env://')
 
     if args.cuda:
         torch.cuda.set_device(args.local_rank)
