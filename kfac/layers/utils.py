@@ -63,6 +63,7 @@ def get_eigendecomp(tensor, clip=0.0, concat=True, symmetric=True):
         d, Q = torch.symeig(tensor, eigenvectors=True)
     else:
         d, Q = torch.eig(tensor, eigenvectors=True)
+        d = d[:, 0]
 
     if clip is not None:
         d = torch.max(d, d.new_tensor([clip]))

@@ -188,13 +188,13 @@ class KFACLayer(object):
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
         if self.accumulate_data:
-            self.g_outputs.append(grad_output[0].data.to(self.precision))
+            self.g_outputs.append(grad_output[0].data.to(torch.float32))
         else:
-            self.g_outputs = [grad_output[0].data.to(self.precision)]
+            self.g_outputs = [grad_output[0].data.to(torch.float32)]
 
     def update_A_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
-        A_new = self._get_A_factor(self.a_inputs)
+        A_new = self._get_A_factor(self.a_inputs).to(self.precision)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self._init_A_buffers(A_new)
@@ -202,7 +202,7 @@ class KFACLayer(object):
 
     def update_G_factor(self, alpha=0.95):
         """Compute factor G and add to running averages"""
-        G_new = self._get_G_factor(self.g_outputs).to(self.precision)
+        G_new = self._get_G_factor(self.g_outputs).to(torch.float32)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self._init_G_buffers(G_new)
@@ -279,7 +279,7 @@ class KFACLayer(object):
         assert self.G_factor is None, ('G buffers have already been '
                 'initialized. Was _init_G_buffers() called more than once?')
         self.G_factor = torch.diag(factor.new(factor.shape[0]).fill_(1)).to(
-                self.precision)
+                torch.float32)
         if self.keep_inv_copy:
             if self.use_eigen_decomp:
                 # add one axtra column for eigenvalues
