@@ -64,7 +64,7 @@ class KFAC(optim.Optimizer):
           can increase substantially. (default: True)
       batch_first (bool, optional): True if the batch dimension is dim 0
           (default: True)
-      communication_method (CommMethod, optional): Communication optimization
+      comm_method (CommMethod, optional): Communication optimization
           to use. See `CommMethod` docstring for more info. (default: MEM_OPT)
       compute_factor_in_hook (bool, optional): If `True`, compute the factors
           during the module forward/backward pass hooks and add to the running
@@ -83,10 +83,10 @@ class KFAC(optim.Optimizer):
           `my_module` and skip it, then any sub module of `my_module` will also
           be skipped even if it is not explicitly passed to `skip_layers`. 
           (default: None)
-      store_factors_as_fp16 (bool, optional): store factors as fp16 tensors
+      store_factors_as_fp16 (bool, optional): store A factors as fp16 tensors
           instead of fp32. Useful in KFAC memory usage is a concern. Note:
-          could result in worse performance due to round-off, this has not 
-          been investigated in depth. (default: False)
+          G factors are not stored as fp16 because the lack of precision can
+          create NANs when casting to fp32 before inversion. (default: False)
       verbose (bool, optional): print information about registered layers
     """
     def __init__(self,
