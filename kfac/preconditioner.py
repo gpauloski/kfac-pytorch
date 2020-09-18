@@ -210,12 +210,13 @@ class KFAC(optim.Optimizer):
         state_dict = super(KFAC, self).state_dict()
         layers = None
         if include_layer_factors:
-            if self.comm_method is CommMethod.MEM_OPT:
+            if self.comm_method is CommMethod.MEM_OPT and include_layer_inverses:
                 warnings.warn('Layer inverses cannot be saved to the state '
-                              'dict when using CommMethod.MEM_OPT.')
-            else:
-                layers = [layer.state_dict(include_layer_inverses)
-                          for layer in self.layers]
+                              'dict when using CommMethod.MEM_OPT. Skipping '
+                              'saving inverses.')
+                include_layer_inverses = False
+            layers = [layer.state_dict(include_layer_inverses)
+                      for layer in self.layers]
         state_dict['layers'] = layers
         return state_dict
 
@@ -238,12 +239,18 @@ class KFAC(optim.Optimizer):
                 layer.load_state_dict(layer_state)
             state_dict = {key: state_dict[key] for key in state_dict
                           if key != 'layers'}
+        else:
+            warnings.warn('Layer factors are not included in the state_dict so '
+                          'inverses cannot be computed. Skipping inverse '
+                          'computation.')
+            compute_inverses = False  # Cannot be computed if no layers
         super(KFAC, self).load_state_dict(state_dict)
         if compute_inverses:
             self._assign_layers_to_workers()
             self.workers_assigned = True
-            self.compute_inverses()
-            self.broadcast_inverses()
+            self.compute_inverses(damping=self.param_groups[0]['damping'])
+            if self.comm_method is CommMethod.COMM_OPT:
+                self.broadcast_inverses()
 
     def register_module(self, module, name=None):
         """Create and register a KFAC layer for a module.
