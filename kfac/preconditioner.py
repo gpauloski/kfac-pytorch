@@ -127,13 +127,16 @@ class KFAC(optim.Optimizer):
                           'distribute_layer_factors=False')
             distribute_layer_factors = False 
 
-        if isinstance(skip_layers, str):
-            skip_layers = [skip_layers.lower()]
-        elif isinstance(skip_layers, list):
-            skip_layers = [s.lower() for s in skip_layers]
         known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
-        for layer in skip_layers: 
-            known_modules.discard(layer)
+        if skip_layers is not None:
+            if isinstance(skip_layers, str):
+                skip_layers = [skip_layers.lower()]
+            elif isinstance(skip_layers, list):
+                skip_layers = [s.lower() for s in skip_layers]
+            for layer in skip_layers: 
+                known_modules.discard(layer)
+        else:
+            skip_layers = []
 
         # For compatibility with `KFACParamScheduler`
         defaults = dict(
@@ -167,6 +170,28 @@ class KFAC(optim.Optimizer):
         self.layers = []
         self.hook_layers = {}  # key: nn.Module, value: KFACLayer
         self.register_modules(model)
+
+    def __repr__(self):
+        extra_params = {
+            'accumulate_data': self.accumulate_data,
+            'batch_first': self.batch_first,
+            'comm_method': self.comm_method,
+            'compute_factor_in_hook': self.compute_factor_in_hook,
+            'distribute_layer_factors': self.distribute_layer_factors,
+            'use_eigen_decomp': self.use_eigen_decomp,
+            'skip_layers': self.skip_layers,
+            'store_factors_as_fp16': self.store_factors_as_fp16,
+            'verbose': self.verbose,
+        }
+        format_string = self.__class__.__name__ + ' ('
+        for i, group in enumerate(self.param_groups + [extra_params]):
+            format_string += '\n'
+            format_string += 'Parameter Group {0}\n'.format(i)
+            for key in sorted(group.keys()):
+                if key != 'params':
+                    format_string += '    {0}: {1}\n'.format(key, group[key]) 
+        format_string += ')'
+        return format_string
 
     def state_dict(self, include_layer_factors=True, 
                    include_layer_inverses=False):
