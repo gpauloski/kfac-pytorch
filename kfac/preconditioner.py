@@ -282,13 +282,13 @@ class KFAC(optim.Optimizer):
         for name, module in model.named_modules():
             name = prefix + ('.' if prefix != '' else '') + name
             module_name = module.__class__.__name__.lower()
-            # Known module so register it
-            if module_name in self.known_modules:
+            if module_name in self.skip_layers:
+                pass
+            elif module_name in self.known_modules:
                 if (kfac_layers.module_requires_grad(module) and
                         module not in self.hook_layers):
                     self.register_module(module, name)
-            # Recurse into module unless we are skipping it
-            elif module_name not in self.skip_layers and module is not model:
+            elif module is not model:
                 self.register_modules(module, prefix=name)
 
     def register_shared_module(self, main_module, second_module, reverse_hooks=False):
