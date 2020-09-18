@@ -272,20 +272,17 @@ class KFAC(optim.Optimizer):
 
     def register_modules(self, model, prefix=''):
         """Iterate over and register modules that KFAC supports."""
-        for name, module in model.named_children():
+        for name, module in model.named_modules():
             name = prefix + ('.' if prefix != '' else '') + name
-            # Do not recurse in children if we are skipping the module
-            if module.__class__.__name__.lower() in self.skip_layers:
-                pass
-            # Recurse into module if we are not skipping it but it is also not
-            # a known module to KFAC
-            elif module.__class__.__name__.lower() not in self.known_modules:
-                self.register_modules(module, prefix=name)
-            # This is a known module to KFAC so register it if it is trainable
-            else:
+            module_name = module.__class__.__name__.lower()
+            # Known module so register it
+            if module_name in self.known_modules:
                 if (kfac_layers.module_requires_grad(module) and
                         module not in self.hook_layers):
                     self.register_module(module, name)
+            # Recurse into module unless we are skipping it
+            elif module_name not in self.skip_layers and module is not model:
+                self.register_modules(module, prefix=name)
 
     def register_shared_module(self, main_module, second_module, reverse_hooks=False):
         """Create and register a KFAC layer for modules that share a weight
