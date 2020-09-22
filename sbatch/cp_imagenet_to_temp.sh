@@ -17,13 +17,15 @@ done
 DEST=/tmp
 if [ "$tiny" == true ]; then
   SOURCE=/scratch/05714/jgpaul/datasets/imagenet-tiny.tar
+  STRIP=1
 else
   SOURCE=/scratch/05714/jgpaul/datasets/imagenet.tar
+  STRIP=5
 fi
 
 echo Copying $SOURCE to $DEST
 cp $SOURCE $DEST/imagenet.tar
 echo "Done copying. Extracting"
 mkdir $DEST/imagenet
-tar xf $DEST/imagenet.tar -C $DEST/imagenet --strip-components 1
+tar xf $DEST/imagenet.tar -C $DEST/imagenet --strip-components $STRIP
 echo "Done."
