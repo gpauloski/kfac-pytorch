@@ -16,6 +16,12 @@ import cnn_utils.optimizers as optimizers
 from torch.utils.tensorboard import SummaryWriter
 from utils import LabelSmoothLoss, save_checkpoint
 
+try:
+    from torch.cuda.amp import autocast, GradScaler
+    TORCH_FP16 = True
+except:
+    TORCH_FP16 = False
+
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 
 def parse_args():
@@ -34,6 +40,8 @@ def parse_args():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=42, metavar='S',
                         help='random seed (default: 42)')
+    parser.add_argument('--fp16', action='store_true', default=False,
+                        help='use torch.cuda.amp for fp16 training (default: false)')
 
    # Default settings from https://arxiv.org/abs/1706.02677.
     parser.add_argument('--model', default='resnet50',
@@ -139,7 +147,7 @@ if __name__ == '__main__':
     model = torch.nn.parallel.DistributedDataParallel(model,
             device_ids=[args.local_rank])
 
-    if args.verbose():
+    if args.verbose:
         print(model)
 
     os.makedirs(args.log_dir, exist_ok=True)
@@ -152,6 +160,14 @@ if __name__ == '__main__':
         if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
             args.resume_from_epoch = try_epoch
             break
+
+    scaler = None
+    if args.fp16:
+         if not TORCH_FP16:
+             raise ValueError('The installed version of torch does not '
+                              'support torch.cuda.amp fp16 training. This '
+                              'requires torch version >= 1.16')
+         scaler = GradScaler()
 
     optimizer, preconditioner, lr_schedules = optimizers.get_optimizer(model, args)
     loss_func = LabelSmoothLoss(args.label_smoothing)
@@ -173,7 +189,7 @@ if __name__ == '__main__':
 
     for epoch in range(args.resume_from_epoch + 1, args.epochs + 1):
         engine.train(epoch, model, optimizer, preconditioner, loss_func, 
-                     train_sampler, train_loader, args)
+                     train_sampler, train_loader, args, scaler=scaler)
         engine.test(epoch, model, loss_func, val_loader, args)
         for scheduler in lr_schedules:
             scheduler.step()

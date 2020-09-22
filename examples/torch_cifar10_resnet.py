@@ -16,6 +16,11 @@ from torchsummary import summary
 from torch.utils.tensorboard import SummaryWriter
 from utils import save_checkpoint
 
+try:
+    from torch.cuda.amp import autocast, GradScaler
+    TORCH_FP16 = True
+except:
+    TORCH_FP16 = False
 
 def parse_args():
     # General settings
@@ -30,6 +35,8 @@ def parse_args():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=42, metavar='S',
                         help='random seed (default: 42)')
+    parser.add_argument('--fp16', action='store_true', default=False,
+                        help='use torch.cuda.amp for fp16 training (default: false)')
 
     # Training settings
     parser.add_argument('--model', type=str, default='resnet32',
@@ -138,6 +145,14 @@ def main():
         if os.path.exists(args.checkpoint_format.format(epoch=try_epoch)):
             args.resume_from_epoch = try_epoch
             break
+    
+    scaler = None
+    if args.fp16:
+         if not TORCH_FP16:
+             raise ValueError('The installed version of torch does not '
+                              'support torch.cuda.amp fp16 training. This '
+                              'requires torch version >= 1.16')
+         scaler = GradScaler()
 
     optimizer, preconditioner, lr_schedules = optimizers.get_optimizer(model, args)
     loss_func = torch.nn.CrossEntropyLoss()
@@ -155,10 +170,10 @@ def main():
             preconditioner.load_state_dict(checkpoint['preconditioner'])
 
     start = time.time()
-
+    
     for epoch in range(args.resume_from_epoch + 1, args.epochs + 1):
         engine.train(epoch, model, optimizer, preconditioner, loss_func,
-                     train_sampler, train_loader, args)
+                     train_sampler, train_loader, args, scaler=scaler)
         engine.test(epoch, model, loss_func, val_loader, args)
         for scheduler in lr_schedules:
             scheduler.step()
