@@ -13,7 +13,8 @@ def train(epoch,
           loss_func, 
           train_sampler, 
           train_loader, 
-          args):
+          args,
+          scaler=None):
 
     model.train()
     train_sampler.set_epoch(epoch)
@@ -32,18 +33,32 @@ def train(epoch,
             for i in range(0, len(data), args.batch_size):
                 data_batch = data[i:i + args.batch_size]
                 target_batch = target[i:i + args.batch_size]
-                output = model(data_batch)
-                loss = loss_func(output, target_batch)
+
+                if scaler is not None:
+                    with torch.cuda.amp.autocast():
+                        output = model(data_batch)
+                        loss = loss_func(output, target_batch)
+                else:
+                    output = model(data_batch)
+                    loss = loss_func(output, target_batch)
+
                 loss_ = loss.detach().clone() 
                 loss = loss / args.batches_per_allreduce
+
                 if args.horovod:
                     loss.backward()
                 else:
                     if i < args.batches_per_allreduce:
                         with model.no_sync():
-                            loss.backward()
+                            if scaler is not None:
+                                scaler.scale(loss).backward()
+                            else:
+                                loss.backward()
                     else:
-                        loss.backward()
+                        if scaler is not None:
+                            scaler.scale(loss).backward()
+                        else:
+                            loss.backward()
 
                 with torch.no_grad():            
                     train_loss.update(loss_)
@@ -57,8 +72,14 @@ def train(epoch,
                     optimizer.step()
             else:
                 if preconditioner is not None:
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
                     preconditioner.step()
-                optimizer.step()
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
 
             t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%, lr: {:.4f}".format(
                     train_loss.avg, 100*train_accuracy.avg,
