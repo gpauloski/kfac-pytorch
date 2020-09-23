@@ -156,9 +156,9 @@ However, depending on how the distributed computing environment is set up, it is
 
 KFAC supports Linear and Conv2d modules.
 KFAC will iterate over the model and register all supported modules that it finds.
-Modules can be excluded from KFAC by passing a list of modules names to KFAC.
-E.g. `kfac.KFAC(module, skip_layers=['Linear', 'ModelBasicBlock'].
-In this example, KFAC will not register any modules name Linear or ModelBasicBlock, and this feature works recursively, i.e. KFAC will not register and submodules of ModelBasicBlock.
+Modules can be excluded from KFAC by passing a list of module names to KFAC.
+E.g. `kfac.KFAC(module, skip_layers=['Linear', 'ModelBasicBlock']`.
+In this example, KFAC will not register any modules named `Linear` or `ModelBasicBlock`, and this feature works recursively, i.e. KFAC will not register any submodules of `ModelBasicBlock`.
 
 KFAC also experimentally supports Embedding and LSTM modules.
 Note that for LSTM support, you must use the LSTM modules provided in `kfac.modules`.
@@ -166,8 +166,8 @@ The LSTM module provided by PyTorch uses certain CUDA optimizations that make ex
 
 ### KFAC Parameter Scheduling
 
-The learning rate in KFAC can be scheduling using standard PyTorch lr schedulers. E.g. `scheduler = torch.optim.LambdaLR(preconditioner, func)`.
-To schedule the KFAC damping or update freqencies parameters, see the [KFACParamScheduler](kfac/scheduler.py).
+The learning rate in KFAC can be scheduled using standard PyTorch LR schedulers. E.g. `scheduler = torch.optim.LambdaLR(preconditioner, func)`.
+To schedule the KFAC damping or update freqencies parameters, see the [KFACParamScheduler](kfac/scheduler.py) and example usage [here](examples/cnn_utils/optimizers.py).
 
 ### State Dict
 
