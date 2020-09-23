@@ -32,7 +32,7 @@ MASTER_NODE=$(head -n 1 $HOSTFILE)
 
 # We use mpiexec to launch one python -m torch.distributed.launch per node
 mpiexec -hostfile $HOSTFILE -N 1 \
-  ./sbatch/longhorn/launch_node_torch_imagenet.sh \
+  ./scripts/launch_node_torch_imagenet.sh \
     -n $GPU_PER_NODE -N $NODES -m $MASTER_NODE
 
 # -----------------------------------------------------------------------------
