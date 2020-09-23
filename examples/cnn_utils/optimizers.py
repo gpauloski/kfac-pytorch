@@ -35,6 +35,7 @@ def get_optimizer(model, args, batch_first=True):
             batch_first=batch_first,
             comm_method=comm_method,
             distribute_layer_factors=not args.coallocate_layer_factors,
+            grad_scaler=args.grad_scaler,
             skip_layers=args.skip_layers,
             use_eigen_decomp=not args.use_inv_kfac,
         ) 

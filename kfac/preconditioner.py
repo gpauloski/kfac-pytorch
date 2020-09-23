@@ -75,6 +75,8 @@ class KFAC(optim.Optimizer):
           and G on different workers else computes A and G for a single layer
           on the same worker. For small worker counts, computing per layer
           factors on the same device can yeild improvements. (default: True)
+      grad_scaler (torch.cuda.amp.GradScaler, optional): Gradient scaler used
+          if using torch.cuda.amp for fp16 training. (default: None)
       use_eigen_decomp (bool, optional): use the eigendecomposition method for
           the KFAC update, otherwise use normal inv method (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
@@ -83,10 +85,6 @@ class KFAC(optim.Optimizer):
           `my_module` and skip it, then any sub module of `my_module` will also
           be skipped even if it is not explicitly passed to `skip_layers`. 
           (default: None)
-      store_factors_as_fp16 (bool, optional): store A factors as fp16 tensors
-          instead of fp32. Useful in KFAC memory usage is a concern. Note:
-          G factors are not stored as fp16 because the lack of precision can
-          create NANs when casting to fp32 before inversion. (default: False)
       verbose (bool, optional): print information about registered layers
     """
     def __init__(self,
@@ -102,9 +100,9 @@ class KFAC(optim.Optimizer):
                  comm_method=CommMethod.COMM_OPT,
                  compute_factor_in_hook=False,
                  distribute_layer_factors=True,
+                 grad_scaler=None,
                  use_eigen_decomp=True,
-                 skip_layers=None,
-                 store_factors_as_fp16=False,
+                 skip_layers=[],
                  verbose=True):
 
         if not 0.0 <= lr:
@@ -159,9 +157,9 @@ class KFAC(optim.Optimizer):
         self.comm_method = comm_method
         self.compute_factor_in_hook = compute_factor_in_hook
         self.distribute_layer_factors = distribute_layer_factors
+        self.grad_scaler = grad_scaler
         self.use_eigen_decomp = use_eigen_decomp
         self.skip_layers = skip_layers
-        self.store_factors_as_fp16 = store_factors_as_fp16
         self.known_modules = known_modules
         self.verbose = verbose
         self.backend = utils.get_comm_backend()
@@ -180,7 +178,6 @@ class KFAC(optim.Optimizer):
             'distribute_layer_factors': self.distribute_layer_factors,
             'use_eigen_decomp': self.use_eigen_decomp,
             'skip_layers': self.skip_layers,
-            'store_factors_as_fp16': self.store_factors_as_fp16,
             'verbose': self.verbose,
         }
         format_string = self.__class__.__name__ + ' ('
@@ -264,9 +261,9 @@ class KFAC(optim.Optimizer):
             module,
             accumulate_data = self.accumulate_data,
             batch_first = self.batch_first,
+            grad_scaler = self.grad_scaler,
             keep_inv_copy = self.comm_method is CommMethod.COMM_OPT,
             use_eigen_decomp = self.use_eigen_decomp,
-            use_half_precision = self.store_factors_as_fp16,
         )
         for module, kfac_layer in layer_list:
             if self.backend.rank() == 0 and self.verbose:
@@ -387,8 +384,8 @@ class KFAC(optim.Optimizer):
                 self.compute_factors(alpha=params['factor_decay'])
             self.allreduce_factors()
 
-        # We do this after layer.update_*_factor because the buffers
-        # are not instantiate until this point and we use the size of the
+        # We do this after compute_factors() because the buffers
+        # are not instantiated until this point and we use the size of the
         # buffers to approximate the time each layer will take to compute.
         if not self.workers_assigned:
             self._assign_layers_to_workers()
@@ -593,3 +590,4 @@ class KFAC(optim.Optimizer):
     @_periodic_hook(grad_enabled=False)
     def _save_grad_output_as_input(self, module, grad_input, grad_output):
         self.hook_layers[module].save_inputs(grad_output)
+
