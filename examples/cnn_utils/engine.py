@@ -13,13 +13,13 @@ def train(epoch,
           loss_func, 
           train_sampler, 
           train_loader, 
-          args,
-          scaler=None):
+          args):
 
     model.train()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss', args.backend) 
     train_accuracy = Metric('train_accuracy', args.backend)
+    scaler = args.grad_scaler if args.grad_scaler else None
 
     with tqdm(total=len(train_loader),
               bar_format='{l_bar}{bar:10}{r_bar}',
@@ -41,7 +41,7 @@ def train(epoch,
                 else:
                     output = model(data_batch)
                     loss = loss_func(output, target_batch)
-
+                
                 loss_ = loss.detach().clone() 
                 loss = loss / args.batches_per_allreduce
 
