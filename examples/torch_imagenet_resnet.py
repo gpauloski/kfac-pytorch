@@ -168,6 +168,7 @@ if __name__ == '__main__':
                               'support torch.cuda.amp fp16 training. This '
                               'requires torch version >= 1.16')
          scaler = GradScaler()
+    args.grad_scaler = scaler
 
     optimizer, preconditioner, lr_schedules = optimizers.get_optimizer(model, args)
     loss_func = LabelSmoothLoss(args.label_smoothing)
@@ -189,7 +190,7 @@ if __name__ == '__main__':
 
     for epoch in range(args.resume_from_epoch + 1, args.epochs + 1):
         engine.train(epoch, model, optimizer, preconditioner, loss_func, 
-                     train_sampler, train_loader, args, scaler=scaler)
+                     train_sampler, train_loader, args)
         engine.test(epoch, model, loss_func, val_loader, args)
         for scheduler in lr_schedules:
             scheduler.step()
