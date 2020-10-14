@@ -19,7 +19,7 @@ def train(epoch,
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss', args.backend) 
     train_accuracy = Metric('train_accuracy', args.backend)
-    scaler = args.grad_scaler if args.grad_scaler else None
+    scaler = args.grad_scaler if 'grad_scaler' in args else None
 
     with tqdm(total=len(train_loader),
               bar_format='{l_bar}{bar:10}{r_bar}',
