@@ -1,5 +1,6 @@
 import math
 import torch
+import warnings
 
 from . import utils
 
@@ -86,7 +87,8 @@ class KFACLayer(object):
         if self.A_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank == self.A_rank:
-            self.A_inv = self._compute_factor_inverse(self.A_factor, damping)
+            self.A_inv = self._compute_factor_inverse(
+                    self.A_factor.float(), damping)
 
     def compute_G_inv(self, rank, damping=0.001):
         """Compute G inverse on specified ranks
@@ -96,7 +98,8 @@ class KFACLayer(object):
         if self.G_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
         if rank == self.G_rank:
-            self.G_inv = self._compute_factor_inverse(self.G_factor, damping)
+            self.G_inv = self._compute_factor_inverse(
+                    self.G_factor.float(), damping)
 
     def get_gradient(self):
         """Get formated gradients (weight and bias) of module
@@ -188,9 +191,9 @@ class KFACLayer(object):
 
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
-        g = grad_output[0].data.to(torch.float32)
+        g = grad_output[0].data
         if self.grad_scaler is not None:
-            g = g * (1 / self.grad_scaler.get_scale())
+            g = (g, self.grad_scaler.get_scale())
         if self.accumulate_data:
             self.g_outputs.append(g)
         else:
@@ -206,6 +209,20 @@ class KFACLayer(object):
 
     def update_G_factor(self, alpha=0.95):
         """Compute factor G and add to running averages"""
+        # If half precision training: unscale accumulated gradients and discard
+        # any with inf/NaN because of round-off errors. We need to unscale
+        # to correctly compute G.
+        if self.grad_scaler is not None:
+            self.g_outputs = [g / scale for g, scale in self.g_outputs]
+            length = len(self.g_outputs)
+            self.g_outputs = [g for g in self.g_outputs 
+                    if not (torch.isinf(g).any() or torch.isnan(g).any())]
+            if len(self.g_outputs) != length:
+                warnings.warn('Some gradients were discarded when computing '
+                              'G because they were unable to be unscaled. '
+                              'Note this can degrade KFAC performance if too '
+                              'many gradients are discarded.')
+
         G_new = self._get_G_factor(self.g_outputs)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
@@ -227,7 +244,6 @@ class KFACLayer(object):
 
     def _compute_factor_inverse(self, factor, damping=0.001):
         """Computes inverse/eigendecomp of factor and saves result to inverse"""
-        factor = factor.float()  # in case fp16 training
         if self.use_eigen_decomp:
             return utils.get_eigendecomp(factor, symmetric=self.factors_are_symmetric)
         else:
