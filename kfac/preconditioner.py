@@ -65,7 +65,7 @@ class KFAC(optim.Optimizer):
       batch_first (bool, optional): True if the batch dimension is dim 0
           (default: True)
       comm_method (CommMethod, optional): Communication optimization
-          to use. See `CommMethod` docstring for more info. (default: MEM_OPT)
+          to use. See `CommMethod` docstring for more info. (default: COMM_OPT)
       compute_factor_in_hook (bool, optional): If `True`, compute the factors
           during the module forward/backward pass hooks and add to the running
           average. Recommended if using gradient accumulation and 
@@ -74,9 +74,16 @@ class KFAC(optim.Optimizer):
       distribute_layer_factors (bool, optional): if `True`, computes factors A
           and G on different workers else computes A and G for a single layer
           on the same worker. For small worker counts, computing per layer
-          factors on the same device can yeild improvements. (default: True)
+          factors on the same device can yeild improvements. When using 
+          `MEM_OPT`, distribute_layer_factors is forced to False. 
+          (default: True)
       grad_scaler (torch.cuda.amp.GradScaler, optional): Gradient scaler used
-          if using torch.cuda.amp for fp16 training. (default: None)
+          if using torch.cuda.amp for fp16 training. KFAC will use the same
+          data type for storing the factors as the data in the forward/backward
+          pass. E.g. with torch.cuda.amp, the forward/backward pass data is 
+          fp16 so KFAC will store data in fp16, saving memory. The grad scaler
+          is needed by KFAC to correctly unscale the gradients from the
+          backward pass. (default: None)
       use_eigen_decomp (bool, optional): use the eigendecomposition method for
           the KFAC update, otherwise use normal inv method (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
@@ -103,7 +110,7 @@ class KFAC(optim.Optimizer):
                  grad_scaler=None,
                  use_eigen_decomp=True,
                  skip_layers=[],
-                 verbose=True):
+                 verbose=False):
 
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
