@@ -15,7 +15,8 @@ class KFACLayer(object):
                  use_eigen_decomp=True,
                  use_half_precision=False,
                  compute_A_inv_rank=None,
-                 compute_G_inv_rank=None):
+                 compute_G_inv_rank=None,
+                 compute_grad_ranks=None):
         self.module = module
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
@@ -24,6 +25,7 @@ class KFACLayer(object):
         self.use_eigen_decomp=use_eigen_decomp
         self.compute_A_inv_rank = compute_A_inv_rank
         self.compute_G_inv_rank = compute_G_inv_rank
+        self.compute_grad_ranks = compute_grad_ranks
         self.eps = 1e-10
 
         # Should be overridden by implementing class
@@ -71,10 +73,19 @@ class KFACLayer(object):
             raise KeyError('KFACLayer state_dict must contain keys: '
                            '["A_factor", "G_factor"].')
 
-    def assign_workers(self, compute_A_inv_rank, compute_G_inv_rank):
-        """Assign ranks to this layer"""
+    def assign_workers(self, compute_A_inv_rank, compute_G_inv_rank,
+                compute_grad_ranks):
+        """Assign ranks to this layer
+
+        Args:
+          compute_A_inv_rank (int): rank to compute A inverse on
+          compute_G_inv_rank (int): rank to compute G inverse on
+          compute_grad_ranks (list(int)): ranks that should compute
+                  preconditioned gradient
+        """
         self.compute_A_inv_rank = compute_A_inv_rank
         self.compute_G_inv_rank = compute_G_inv_rank
+        self.compute_grad_ranks = compute_grad_ranks
 
     def allreduce_factors(self):
         """Allreduce A and G factors
@@ -98,7 +109,7 @@ class KFACLayer(object):
         """Broadcast preconditioned gradient
 
         Returns:
-          async handle
+          list of async work handles
         """
         # If the preconditioned gradient is None, initialize it so
         # we can correctly perform the broadcast op between ranks
@@ -169,10 +180,12 @@ class KFACLayer(object):
           damping (float, optional): damping to use if preconditioning using
               the eigendecomposition method. (default: 0.001)
         """
-        #if comm.backend.rank() is not None and \
-        #        not (comm.backend.rank() == self.compute_A_inv_rank \
-        #             == self.compute_G_inv_rank):
-        #    return
+        if self.compute_grad_ranks is None:
+            raise ValueError('Gradient preconditioning workers have not been '
+                             'assigned yet. Have you called assign_workers() '
+                             'yet?')
+        if comm.backend.rank() not in self.compute_grad_ranks:
+            return
 
         # Compute preconditioned gradient using specified inverse method
         if self.use_eigen_decomp:
