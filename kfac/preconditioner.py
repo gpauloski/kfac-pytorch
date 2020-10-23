@@ -443,7 +443,9 @@ class KFAC(optim.Optimizer):
         if comm.backend.size() == 1:
             return
 
-        handles = [layer.broadcast_gradient() for layer in self.layers]
+        handles = []
+        for layer in self.layers:
+            handles.extend(layer.broadcast_gradient())
         comm.backend.sync(handles)
 
     @torch.no_grad()
@@ -526,7 +528,9 @@ class KFAC(optim.Optimizer):
             a_locs, g_locs = locs, locs
 
         for i, layer in enumerate(self.layers):
-            layer.assign_workers(a_locs[i], g_locs[i])
+            grad_ranks = [a_locs[i]] if self.comm_method == CommMethod.MEM_OPT \
+                    else list(range(comm.backend.size()))
+            layer.assign_workers(a_locs[i], g_locs[i], grad_ranks)
 
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients
