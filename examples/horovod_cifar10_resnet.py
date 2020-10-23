@@ -96,6 +96,7 @@ def main():
 
     os.environ['HOROVOD_FUSION_THRESHOLD'] = "0"
     hvd.init()
+    kfac.comm.init_comm_backend()
     args.local_rank = hvd.local_rank()
 
     if args.cuda:
@@ -109,8 +110,8 @@ def main():
     print('rank = {}, world_size = {}, device_ids = {}'.format(
             hvd.rank(), hvd.size(), args.local_rank))
 
-    args.backend = kfac.utils.get_comm_backend()
-    args.base_lr = args.base_lr * args.backend.size() * args.batches_per_allreduce
+    args.backend = kfac.comm.backend
+    args.base_lr = args.base_lr * hvd.size() * args.batches_per_allreduce
     args.verbose = True if hvd.rank() == 0 else False
     args.horovod = True
 
@@ -157,7 +158,7 @@ def main():
         for scheduler in lr_schedules:
             scheduler.step()
         if (epoch > 0 and epoch % args.checkpoint_freq == 0 and
-                args.backend.rank() == 0):
+                hvd.rank() == 0):
             save_checkpoint(model, optimizer, preconditioner, lr_schedules,
                             args.checkpoint_format.format(epoch=epoch))
 
