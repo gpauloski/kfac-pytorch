@@ -6,6 +6,7 @@ import torch.optim as optim
 
 from . import layers as kfac_layers
 from . import utils
+from . import comm
 
 class CommMethod(enum.Enum):
     """KFAC Communication Method
@@ -169,8 +170,9 @@ class KFAC(optim.Optimizer):
         self.skip_layers = skip_layers
         self.known_modules = known_modules
         self.verbose = verbose
-        self.backend = utils.get_comm_backend()
         self.workers_assigned = False
+
+        comm.init_comm_backend()
 
         self.layers = []
         self.hook_layers = {}  # key: nn.Module, value: KFACLayer
@@ -273,7 +275,7 @@ class KFAC(optim.Optimizer):
             use_eigen_decomp = self.use_eigen_decomp,
         )
         for module, kfac_layer in layer_list:
-            if self.backend.rank() == 0 and self.verbose:
+            if comm.backend.rank() == 0 and self.verbose:
                 print('Registered {}: {}'.format(
                         name if name is not None else '', kfac_layer))
             self.hook_layers[module] = kfac_layer
@@ -348,7 +350,7 @@ class KFAC(optim.Optimizer):
         else:
             _, kfac_layer = layer_list[0]
 
-        if self.backend.rank() == 0 and self.verbose:
+        if comm.backend.rank() == 0 and self.verbose:
             print('Registered: {} (shared weight)'.format(kfac_layer))
         self.hook_layers[main_module] = kfac_layer
         self.hook_layers[second_module] = kfac_layer
@@ -418,42 +420,31 @@ class KFAC(optim.Optimizer):
 
     def allreduce_factors(self):
         """Allreduce the factors for all layers"""
-        if self.backend.size() == 1:
+        if comm.backend.size() == 1:
             return
 
-        tensors = []
+        handles = []
         for layer in self.layers:
-            tensors.extend(layer.get_factors())
-
-        self.backend.allreduce(tensors, op=self.backend.Average)
+            handles.extend(layer.allreduce_factors())
+        comm.backend.sync(handles)
 
     def broadcast_inverses(self):
         """Broadcast the eigendecomp/invs for all layers"""
-        if self.backend.size() == 1:
+        if comm.backend.size() == 1:
             return
-
-        tensors = []
-        ranks = []
+        
+        handles = []
         for layer in self.layers:
-            tensor_list, rank_list = layer.get_inverses(return_ranks=True)
-            tensors.extend(tensor_list)
-            ranks.extend(rank_list)
-
-        self.backend.broadcast(tensors, ranks)
+            handles.extend(layer.broadcast_inverses())
+        comm.backend.sync(handles)
 
     def broadcast_gradients(self):
         """Broadcast the preconditioned gradients for all layers"""
-        if self.backend.size() == 1:
+        if comm.backend.size() == 1:
             return
 
-        tensors = []
-        ranks = []
-        for layer in self.layers:
-            tensor_list, rank_list = layer.get_preconditioned_gradient(return_rank=True)
-            tensors.extend(tensor_list)
-            ranks.extend(rank_list)
-
-        self.backend.broadcast(tensors, ranks)
+        handles = [layer.broadcast_gradient() for layer in self.layers]
+        comm.backend.sync(handles)
 
     @torch.no_grad()
     def compute_inverses(self, damping=0.001):
@@ -462,10 +453,9 @@ class KFAC(optim.Optimizer):
         Args:
           damping (float, optional): inverse damping value (default: 0.001)
         """
-        rank = self.backend.rank()
         for layer in self.layers:
-            layer.compute_A_inv(rank, damping=damping)
-            layer.compute_G_inv(rank, damping=damping)
+            layer.compute_A_inv(damping=damping)
+            layer.compute_G_inv(damping=damping)
     
     @torch.no_grad()
     def compute_factors(self, alpha=0.95):
@@ -485,9 +475,8 @@ class KFAC(optim.Optimizer):
         Args:
           damping (float, optional): damping value (default: 0.001)
         """
-        rank = self.backend.rank() if self.comm_method is CommMethod.MEM_OPT else None
         for layer in self.layers:
-            layer.compute_preconditioned_gradient(rank=rank, damping=damping)
+            layer.compute_preconditioned_gradient(damping=damping)
 
     def memory_usage(self):
         """Returns current approximate memory usage for KFAC
@@ -529,16 +518,15 @@ class KFAC(optim.Optimizer):
             
         if self.distribute_layer_factors:
             times = a_times + g_times
-            locs = utils.load_balance(self.backend.size(), times)
+            locs = utils.load_balance(comm.backend.size(), times)
             a_locs, g_locs = locs[0:len(a_times)], locs[len(a_times):]
         else:
             times = [sum(x) for x in zip(a_times, g_times)]
-            locs = utils.load_balance(self.backend.size(), times)
+            locs = utils.load_balance(comm.backend.size(), times)
             a_locs, g_locs = locs, locs
 
         for i, layer in enumerate(self.layers):
-            layer.A_rank = a_locs[i]
-            layer.G_rank = g_locs[i]
+            layer.assign_workers(a_locs[i], g_locs[i])
 
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients

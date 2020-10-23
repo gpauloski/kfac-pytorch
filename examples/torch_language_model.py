@@ -127,13 +127,13 @@ def get_dataset(args):
 
 
     if not args.verbose: 
-        args.backend.barrier()
+        dist.barrier()
     if args.dataset == 'wikitext2':
         datasets = wikitext_2_dataset(directory=args.data_dir, train=True, dev=True, test=True)
     elif args.dataset == 'penntreebank':
         datasets = penn_treebank_dataset(directory=args.data_dir, train=True, dev=True, test=True)
     if args.verbose:
-        args.backend.barrier()
+        dist.barrier()
 
     encoder = LabelEncoder(datasets[0])
     datasets = [encoder.batch_encode(d) for d in datasets]
@@ -153,7 +153,7 @@ def get_dataset(args):
         for d in datasets
     ])
     dist_samplers = tuple([
-        DistributedSampler(d, num_replicas=args.backend.size(), rank=args.backend.rank(), shuffle=True)
+        DistributedSampler(d, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True)
         for d in (bptt_samplers)
     ])
     data_loaders = tuple([
@@ -167,7 +167,7 @@ def get_dataset(args):
 def train(epoch, model, optimizer, preconditioner, loss_func, data_loader, args):
     model.train()
     
-    train_loss = Metric('train_loss', args.backend)
+    train_loss = Metric('train_loss')
     hidden = None
 
     with tqdm(total=len(data_loader),
@@ -205,7 +205,7 @@ def train(epoch, model, optimizer, preconditioner, loss_func, data_loader, args)
 
 def evaluate(epoch, model, loss_func, data_loader, args):
     model.eval()
-    val_loss = Metric('val_loss', args.backend)
+    val_loss = Metric('val_loss')
 
     verbose = args.verbose if epoch is not None else False
 
@@ -236,6 +236,7 @@ if __name__ == '__main__':
     args = parse_args()
 
     torch.distributed.init_process_group(backend='nccl', init_method='env://')
+    kfac.comm.init_comm_backend()
 
     if args.cuda:
         torch.cuda.set_device(args.local_rank)
@@ -245,12 +246,12 @@ if __name__ == '__main__':
         torch.manual_seed(args.seed)
 
     print('rank = {}, world_size = {}, device_ids = {}'.format(
-            torch.distributed.get_rank(), torch.distributed.get_world_size(),
+            dist.get_rank(), torch.distributed.get_world_size(),
             args.local_rank))
 
-    args.backend = kfac.utils.get_comm_backend()
-    args.base_lr = args.base_lr * args.backend.size()
-    args.verbose = True if args.backend.rank() == 0 else False
+    args.backend = kfac.comm.backend
+    args.base_lr = dist.get_rank() * dist.get_world_size()
+    args.verbose = True if dist.get_rank() == 0 else False
     args.horovod = False
 
     data_loaders, data_samplers, args.ntokens = get_dataset(args)
@@ -264,7 +265,7 @@ if __name__ == '__main__':
 
     args.log_dir = os.path.join(args.log_dir, 
             "language_model_kfac{}_gpu_{}_{}".format(
-            args.kfac_update_freq, args.backend.size(),
+            args.kfac_update_freq, dist.get_world_size(),
             datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')))
     os.makedirs(args.log_dir, exist_ok=True)
     args.log_writer = SummaryWriter(args.log_dir) if args.verbose else None

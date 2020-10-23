@@ -3,7 +3,7 @@ import torch
 import warnings
 
 from . import utils
-
+from .. import comm
 
 class KFACLayer(object):
     def __init__(self,
@@ -14,17 +14,17 @@ class KFACLayer(object):
                  keep_inv_copy=False,
                  use_eigen_decomp=True,
                  use_half_precision=False,
-                 A_rank=None,
-                 G_rank=None):
+                 compute_A_inv_rank=None,
+                 compute_G_inv_rank=None):
         self.module = module
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
         self.grad_scaler = grad_scaler
         self.keep_inv_copy = keep_inv_copy
         self.use_eigen_decomp=use_eigen_decomp
+        self.compute_A_inv_rank = compute_A_inv_rank
+        self.compute_G_inv_rank = compute_G_inv_rank
         self.eps = 1e-10
-        self.A_rank = A_rank
-        self.G_rank = G_rank
 
         # Should be overridden by implementing class
         self.has_bias = False
@@ -47,7 +47,7 @@ class KFACLayer(object):
         Used by kfac.KFAC for state saving/loading. Note by default only the
         factors are saved because the inverses can be recomputed from the
         factors, however, the `include_inverses` flag can override this. If
-        `keep_inv_copy=False` and `A_rank != G_rank != get_rank()` then
+        `keep_inv_copy=False` and `compute_A_inv_rank != compute_G_inv_rank != get_rank()` then
         the inverses may be `None` because this worker is not responsible for
         this layer.
         """
@@ -71,8 +71,52 @@ class KFACLayer(object):
             raise KeyError('KFACLayer state_dict must contain keys: '
                            '["A_factor", "G_factor"].')
 
-    def compute_A_inv(self, rank, damping=0.001):
-        """Compute A inverse on specified ranks
+    def assign_workers(self, compute_A_inv_rank, compute_G_inv_rank):
+        """Assign ranks to this layer"""
+        self.compute_A_inv_rank = compute_A_inv_rank
+        self.compute_G_inv_rank = compute_G_inv_rank
+
+    def allreduce_factors(self):
+        """Allreduce A and G factors
+
+        Returns:
+          list of async work handles
+        """
+        return [comm.backend.allreduce(self.A_factor),
+                comm.backend.allreduce(self.G_factor)]
+
+    def broadcast_inverses(self):
+        """Broadcast A and G inverses
+
+        Returns:
+          list of async work handles
+        """
+        return [comm.backend.broadcast(self.A_inv, self.compute_A_inv_rank),
+                comm.backend.broadcast(self.G_inv, self.compute_G_inv_rank)]
+
+    def broadcast_gradient(self):
+        """Broadcast preconditioned gradient
+
+        Returns:
+          async handle
+        """
+        # If the preconditioned gradient is None, initialize it so
+        # we can correctly perform the broadcast op between ranks
+        if self.preconditioned_gradient is None:
+            w = self._get_weight_grad()
+            self.preconditioned_gradient = [w.new_zeros(w.shape)]
+            if self.has_bias:
+                b = self._get_bias_grad()
+                self.preconditioned_gradient.append(b.new_zeros(b.shape))
+
+        self.preconditioned_gradient = [t.contiguous() for t in
+                self.preconditioned_gradient]
+        
+        return [comm.backend.broadcast(tensor, self.compute_A_inv_rank)
+                for tensor in self.preconditioned_gradient]
+
+    def compute_A_inv(self, damping=0.001, ignore_rank=False):
+        """Compute A inverse on assigned rank
 
         Note: all ranks will enter this function but only the ranks assigned
         to this layer will continue to actually compute the inverses.
@@ -81,23 +125,25 @@ class KFACLayer(object):
         results of locally computed inverses.
 
         Args:
-          rank (int): rank of worker entering function
-          damping (float): damping value to condition inverse
+          damping (float, optional): damping value to condition inverse 
+             (default: 0.001)
+          ignore_rank (bool, optional): ignore assigned rank and compute
+             inverse (default: False)
         """
-        if self.A_rank is None:
+        if self.compute_A_inv_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
-        if rank == self.A_rank:
+        if ignore_rank or comm.backend.rank() == self.compute_A_inv_rank:
             self.A_inv = self._compute_factor_inverse(
                     self.A_factor.float(), damping)
 
-    def compute_G_inv(self, rank, damping=0.001):
+    def compute_G_inv(self, damping=0.001, ignore_rank=False):
         """Compute G inverse on specified ranks
 
         See `compute_A_inv` for more info`
         """
-        if self.G_rank is None:
+        if self.compute_G_inv_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
-        if rank == self.G_rank:
+        if ignore_rank or comm.backend.rank() == self.compute_G_inv_rank:
             self.G_inv = self._compute_factor_inverse(
                     self.G_factor.float(), damping)
 
@@ -112,46 +158,7 @@ class KFACLayer(object):
             g = torch.cat([g, self._get_bias_grad().data.view(-1, 1)], 1)
         return g
 
-    def get_factors(self):
-        """Returns list of all factors in layer"""
-        return [self.A_factor, self.G_factor]
-
-    def get_inverses(self, return_ranks=False):
-        """Returns list of all inv factors in layer
-
-        Args:
-          return_ranks (bool): If True, return list indicating rank that 
-              inverse tensor is on
-        """
-        if return_ranks:
-            return [self.A_inv, self.G_inv], [self.A_rank, self.G_rank] 
-        return [self.A_inv, self.G_inv]
- 
-    def get_preconditioned_gradient(self, return_rank=False):
-        """Returns the preconditioned gradients (weight and bias)
-
-        Args:
-          return_rank (bool): If True, return list indicating rank that 
-              the preconditioned gradient is on
-        """
-        # If the preconditioned gradient is None, initialize it so
-        # we can correctly perform the broadcast op between ranks
-        if self.preconditioned_gradient is None:
-            w = self._get_weight_grad()
-            self.preconditioned_gradient = [w.new_zeros(w.shape)]
-            if self.has_bias:
-                b = self._get_bias_grad()
-                self.preconditioned_gradient.append(b.new_zeros(b.shape))
-
-        self.preconditioned_gradient = [t.contiguous() for t in
-               self.preconditioned_gradient]
-
-        if return_rank:
-            return (self.preconditioned_gradient,
-                    len(self.preconditioned_gradient) * [self.A_rank])
-        return self.preconditioned_gradient
-
-    def compute_preconditioned_gradient(self, rank=None, damping=0.001):
+    def compute_preconditioned_gradient(self, damping=0.001):
         """Compute precondition gradient of each weight in module
         
         Preconditioned gradients can be applied to the actual gradients with 
@@ -159,14 +166,13 @@ class KFACLayer(object):
         intermediate steps will be applied to the preconditioned gradient.
 
         Args:
-          rank (int, optional): The rank entering this function. If specified,
-              the preconditioned_gradient will only be computed if 
-              `rank==self.A_rank==self.G_rank`. (default: None)
           damping (float, optional): damping to use if preconditioning using
               the eigendecomposition method. (default: 0.001)
         """
-        if rank is not None and not (rank == self.A_rank == self.G_rank):
-            return
+        #if comm.backend.rank() is not None and \
+        #        not (comm.backend.rank() == self.compute_A_inv_rank \
+        #             == self.compute_G_inv_rank):
+        #    return
 
         # Compute preconditioned gradient using specified inverse method
         if self.use_eigen_decomp:
@@ -305,5 +311,4 @@ class KFACLayer(object):
             else:
                 shape = factor.shape
             self.G_inv = factor.new_zeros(shape).to(torch.float32)
-
 

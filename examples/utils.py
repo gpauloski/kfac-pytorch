@@ -1,6 +1,8 @@
 import torch
 import torch.nn.functional as F
 
+from kfac import comm
+
 def accuracy(output, target):
     pred = output.max(1, keepdim=True)[1]
     return pred.eq(target.view_as(pred)).float().mean()
@@ -31,15 +33,14 @@ class LabelSmoothLoss(torch.nn.Module):
         return loss
 
 class Metric(object):
-    def __init__(self, name, backend):
+    def __init__(self, name):
         self.name = name
-        self.backend = backend
         self.total = torch.tensor(0.0)
         self.n = torch.tensor(0.0)
 
     def update(self, val, n=1):
-        self.backend.reduce_scalar(val)
-        self.total += float(val.cpu()) / self.backend.size()
+        comm.backend.allreduce(val, async=False)
+        self.total += float(val.cpu())
         self.n += n
 
     @property
