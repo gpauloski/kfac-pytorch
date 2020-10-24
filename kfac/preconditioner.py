@@ -1,12 +1,15 @@
 import enum
+import itertools
 import math
 import warnings
+
 import torch
 import torch.optim as optim
 
 from . import layers as kfac_layers
 from . import utils
 from . import comm
+
 
 class CommMethod(enum.Enum):
     """KFAC Communication Method
@@ -18,9 +21,15 @@ class CommMethod(enum.Enum):
         calculations and preconditioned gradient for a single layer on one
         worker and broadcasting the gradient to all workers. This method is 
         referred to as 'KFAC_lw' in https://arxiv.org/abs/2007.00784.
+    - HYBRID_OPT: A hybrid between COMM_OPT and MEM_OPT. A user defined
+        fraction of the workers will receive the inverses and precondition
+        the gradients, while the remaining workers will wait for the 
+        preconditioned gradient to be sent for them.
     """
     COMM_OPT = 1
     MEM_OPT = 2
+    HYBRID_OPT = 3
+
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
@@ -85,6 +94,13 @@ class KFAC(optim.Optimizer):
           fp16 so KFAC will store data in fp16, saving memory. The grad scaler
           is needed by KFAC to correctly unscale the gradients from the
           backward pass. (default: None)
+      grad_worker_fraction (float): Fraction of workers to compute the
+          preconditioned gradient. If `comm_method=COMM_OPT`, this fraction is
+          overridden to 1.0, i.e. all workers compute the gradient. If 
+          `comm_method=MEM_OPT`, this fraction is overridden to 1/world_size,
+          i.e. only one worker computes the gradient. If
+          `comm_method=HYBRID_OPT`, this fraction can be between 1/world_size
+          and 1.0 (default: 0.25).
       use_eigen_decomp (bool, optional): use the eigendecomposition method for
           the KFAC update, otherwise use normal inv method (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
@@ -109,6 +125,7 @@ class KFAC(optim.Optimizer):
                  compute_factor_in_hook=False,
                  distribute_layer_factors=True,
                  grad_scaler=None,
+                 grad_worker_fraction=0.25,
                  use_eigen_decomp=True,
                  skip_layers=[],
                  verbose=False):
@@ -127,11 +144,14 @@ class KFAC(optim.Optimizer):
             raise ValueError("Invalid K-FAC update frequency: {}".format(inv_update_freq))
         if not 0 == inv_update_freq % factor_update_freq:
             warnings.warn('It is suggested that inv_update_freq be a multiple of factor_update_freq')
-        if comm_method is CommMethod.MEM_OPT and distribute_layer_factors is True:
-            warnings.warn('CommMethod.MEM_OPT and distribute_layer_factors=True '
+        # TODO(gpauloski): asserting distribute_layer_factors if HYBRID_OPT is not actually
+        # necessary because we will have to communicate the inverses anyways
+        if comm_method in [CommMethod.MEM_OPT, CommMethod.HYBRID_OPT] \
+                and distribute_layer_factors is True:
+            warnings.warn('MEM_OPT or HYBRID_OPT and distribute_layer_factors=True '
                           'cannot be used at the same time. Defaulting to '
                           'distribute_layer_factors=False')
-            distribute_layer_factors = False 
+            distribute_layer_factors = False
 
         known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
         if skip_layers is not None:
@@ -173,6 +193,21 @@ class KFAC(optim.Optimizer):
         self.workers_assigned = False
 
         comm.init_comm_backend()
+        if self.comm_method == CommMethod.COMM_OPT:
+            self.grad_worker_fraction = 1
+        elif self.comm_method == CommMethod.MEM_OPT:
+            self.grad_worker_fraction = 1 / comm.backend.size()
+        elif self.comm_method == CommMethod.HYBRID_OPT:
+            if 0 >= grad_worker_fraction or 1 < grad_worker_fraction:
+                raise ValueError('grad_worker_fraction must in (0, 1]')
+            if 0.5 < grad_worker_fraction:
+                warnings.warn('grad_worker_fraction={}, for best performance '
+                              'use a value in (0, 0.5] when using '
+                              'HYBRID_OPT.'.format(grad_worker_fraction))
+            if 1 - (1 / comm.backend.size()) <= grad_worker_fraction:
+                warnings.warn('The grad_worker_fraction is larger than 1 - '
+                              '(1 / world_size). COMM_OPT is recommended.')
+            self.grad_worker_fraction = grad_worker_fraction
 
         self.layers = []
         self.hook_layers = {}  # key: nn.Module, value: KFACLayer
@@ -252,10 +287,10 @@ class KFAC(optim.Optimizer):
             compute_inverses = False  # Cannot be computed if no layers
         super(KFAC, self).load_state_dict(state_dict)
         if compute_inverses:
-            self._assign_layers_to_workers()
+            self._assign_workers()
             self.workers_assigned = True
             self.compute_inverses(damping=self.param_groups[0]['damping'])
-            if self.comm_method is CommMethod.COMM_OPT:
+            if self.comm_method in [CommMethod.COMM_OPT, CommMethod.HYBRID_OPT]:
                 self.broadcast_inverses()
 
     def register_module(self, module, name=None):
@@ -271,7 +306,6 @@ class KFAC(optim.Optimizer):
             accumulate_data = self.accumulate_data,
             batch_first = self.batch_first,
             grad_scaler = self.grad_scaler,
-            keep_inv_copy = self.comm_method is CommMethod.COMM_OPT,
             use_eigen_decomp = self.use_eigen_decomp,
         )
         for module, kfac_layer in layer_list:
@@ -397,19 +431,21 @@ class KFAC(optim.Optimizer):
         # are not instantiated until this point and we use the size of the
         # buffers to approximate the time each layer will take to compute.
         if not self.workers_assigned:
-            self._assign_layers_to_workers()
+            self._assign_workers()
             self.workers_assigned = True
 
         if params['step'] % params['inv_update_freq'] == 0:
             self.compute_inverses(damping=params['damping'])
-            if self.comm_method is CommMethod.COMM_OPT:
+            if self.comm_method in \
+                    [CommMethod.COMM_OPT, CommMethod.HYBRID_OPT]:
                 self.broadcast_inverses()
 
         self.compute_preconditioned_gradients(damping=params['damping'])
-        if self.comm_method is CommMethod.MEM_OPT:
+        if self.comm_method in [CommMethod.MEM_OPT, CommMethod.HYBRID_OPT]:
             self.broadcast_gradients()
 
-        scale = None if params['kl_clip'] is None else self._compute_grad_scale()
+        scale = None if params['kl_clip'] is None \
+                     else self._compute_grad_scale()
 
         for layer in self.layers:
             layer.update_gradient(scale=scale)
@@ -434,8 +470,10 @@ class KFAC(optim.Optimizer):
             return
         
         handles = []
+        print('get handles')
         for layer in self.layers:
             handles.extend(layer.broadcast_inverses())
+        print('sync handles')
         comm.backend.sync(handles)
 
     def broadcast_gradients(self):
@@ -503,8 +541,8 @@ class KFAC(optim.Optimizer):
             b += sum(map(sizeof_tensor, layer.g_outputs))
         return b
 
-    def _assign_layers_to_workers(self):
-        """Assigns layers to workers to minimize max load on any worker.
+    def _assign_workers(self):
+        """Assigns workers to minimize max load on any worker.
 
         Approximates load by estimating inverse computation time as O(n^3)
         for each n x n factor.
@@ -527,10 +565,36 @@ class KFAC(optim.Optimizer):
             locs = utils.load_balance(comm.backend.size(), times)
             a_locs, g_locs = locs, locs
 
+        rank_iter = iter(itertools.cycle(range(comm.backend.size())))
+
         for i, layer in enumerate(self.layers):
-            grad_ranks = [a_locs[i]] if self.comm_method == CommMethod.MEM_OPT \
-                    else list(range(comm.backend.size()))
-            layer.assign_workers(a_locs[i], g_locs[i], grad_ranks)
+            grad_worker_count = int(comm.backend.size() * 
+                                    self.grad_worker_fraction)
+            grad_worker_count = max(1, grad_worker_count)
+
+            if self.comm_method == CommMethod.MEM_OPT:
+                assert a_locs[i] == g_locs[i]
+                assert grad_worker_count == 1
+            if self.comm_method == CommMethod.COMM_OPT:
+                assert grad_worker_count == comm.backend.size()
+
+            grad_ranks = [a_locs[i]]
+            grad_worker_count -= 1
+            if grad_worker_count > 0 and a_locs[i] != g_locs[i]:
+                grad_ranks.append(g_locs[i])
+                grad_worker_count -= 1
+            if grad_worker_count > 0:
+                # If we still have available grad workers left, round robin
+                # select from remaining ranks
+                ranks = []
+                while len(ranks) < grad_worker_count:
+                    r = next(rank_iter)
+                    if r not in grad_ranks:
+                        ranks.append(r)
+                grad_ranks.extend(ranks)
+            
+            layer.assign_inverse_workers(a_locs[i], g_locs[i])
+            layer.assign_gradient_workers(grad_ranks)
 
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients

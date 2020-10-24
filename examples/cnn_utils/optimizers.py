@@ -19,6 +19,8 @@ def get_optimizer(model, args, batch_first=True):
         comm_method=kfac.CommMethod.COMM_OPT
     elif args.kfac_comm_method == 'mem-opt':
         comm_method=kfac.CommMethod.MEM_OPT
+    elif args.kfac_comm_method == 'hybrid-opt':
+        comm_method=kfac.CommMethod.HYBRID_OPT
     else:
         raise ValueError('Unknwon KFAC Comm Method: {}'.format(
                 args.kfac_comm_method))
@@ -36,6 +38,7 @@ def get_optimizer(model, args, batch_first=True):
             comm_method=comm_method,
             distribute_layer_factors=not args.coallocate_layer_factors,
             grad_scaler=args.grad_scaler if 'grad_scaler' in args else None,
+            grad_worker_fraction = args.kfac_grad_worker_fraction,
             skip_layers=args.skip_layers,
             use_eigen_decomp=not args.use_inv_kfac,
         ) 
