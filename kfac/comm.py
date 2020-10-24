@@ -69,22 +69,13 @@ class BroadcastGroup(object):
 
     Args:
       ranks (list(int)): ranks to include in collective op
-      src (None or int): src rank for broadcasts. If None, src defaults to
-          ranks[0]. (default: None)
     """
-    def __init__(self, ranks, src=None):
+    def __init__(self, ranks):
         if not isinstance(ranks, list):
             raise ValueError('ranks must be a list')
-        if len(ranks) < 1:
-            raise ValueError('len(ranks) must be at least one')
 
         self._ranks = ranks
-        self._src = src if src is not None else ranks[0]
-
-    @property
-    def source(self):
-        return self._src
-
+    
     @property
     def ranks(self):
         return self._ranks
@@ -131,18 +122,14 @@ class CommBackend(object):
         """
         return
 
-    def broadcast(self, tensor, group=None, src=None, async=True):
+    def broadcast(self, tensor, src, group=None, async=True):
         """Broadcast tensor.
 
         Args:
           tensor (torch.Tensor)
+          src (int): source rank for tensor.
           group (BroadcastGroup, optional): BroadcastGroup for collective
-              communication. If None, rank must be specified for the source
-              and all ranks will be included in operation (default: None).
-          src (int, optional): source rank for tensor. If None, the source
-              rank will be determined from the communication group. If both
-              BroadcastGroup and rank are provided, rank will overrule
-              BroadcastGroup (default: None).
+              communication. If None, uses default group (default: None).
           async (bool, optional): whether this op should be asynchronous
 
         Returns:
@@ -196,10 +183,8 @@ class HorovodBackend(CommBackend):
         else:
             hvd.allreduce_(tensor, op=op)
 
-    def broadcast(self, tensor, group=None, src=None, async=True):
-        if group is not None:
-            if src is None:
-                src = group.source
+    def broadcast(self, tensor, src, group=None, async=True):
+        # HVD does not have broadcast groups so we ignore
         if async:
             return hvd.broadcast_async_(tensor, root_rank=src)
         else:
@@ -251,7 +236,7 @@ class TorchBackend(CommBackend):
         # because there is no average op in Torch distribted so
         # we need to pass the tensor to sync() to be averages
         handle = dist.all_reduce(tensor, async_op=async)
-        
+ 
         if not async:
             if op == Ops.Average:
                 tensor /= self.size()
@@ -260,19 +245,10 @@ class TorchBackend(CommBackend):
             if op == Ops.Average:
                 return (handle, tensor)
             return handle
-                
 
-    def broadcast(self, tensor, group=None, src=None, async=True):
-        if group is not None:
-            if src is None:
-                src = group.source
-            kwargs = {'group': group.group}
-        else:
-            kwargs = {}
-        if self.rank() == 0: print('start')
-        h = dist.broadcast(tensor, src=src, async_op=async)#, **kwargs)
-        if self.rank() == 0: print('end')
-        return h
+    def broadcast(self, tensor, src, group=None, async=True):
+        kwargs = {'group': group.group} if group is not None else {}
+        return dist.broadcast(tensor, src=src, async_op=async, **kwargs)
 
     def reduce(self, tensor, dst, op=Ops.Average, async=True):
         # Note: actually returns tuple(handle, should_average)

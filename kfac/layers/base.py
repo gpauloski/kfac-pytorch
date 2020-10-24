@@ -11,19 +11,13 @@ class KFACLayer(object):
                  accumulate_data=True,
                  batch_first=True,
                  grad_scaler=None,
-                 use_eigen_decomp=True,
-                 compute_A_inv_rank=None,
-                 compute_G_inv_rank=None,
-                 compute_grad_ranks=None):
+                 use_eigen_decomp=True):
         self.module = module
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
         self.grad_scaler = grad_scaler
         self.use_eigen_decomp=use_eigen_decomp
         self.eps = 1e-10
-
-        self.assign_inverse_workers(compute_A_inv_rank, compute_G_inv_rank)
-        self.assign_gradient_workers(compute_grad_ranks)
 
         # Should be overridden by implementing class
         self.has_bias = False
@@ -70,63 +64,37 @@ class KFACLayer(object):
             raise KeyError('KFACLayer state_dict must contain keys: '
                            '["A_factor", "G_factor"].')
 
-    def assign_inverse_workers(self, compute_A_inv_rank, compute_G_inv_rank):
+    def assign_inverse_workers(self, compute_A_inv_rank, compute_G_inv_rank,
+        broadcast_A_inv_group, broadcast_G_inv_group):
         """Assign ranks to compute inverses
-
-        Note: will override previous assignments.
 
         Args:
           compute_A_inv_rank (int): rank to compute A inverse on
           compute_G_inv_rank (int): rank to compute G inverse on
+          broadcast_A_inv_group (BroadcastGroup): broadcast group for A inv
+          broadcast_G_inv_group (BroadcastGroup): broadcast group for G inv
         """
         self.compute_A_inv_rank = compute_A_inv_rank
         self.compute_G_inv_rank = compute_G_inv_rank
+        self.broadcast_A_inv_group = broadcast_A_inv_group
+        self.broadcast_G_inv_group = broadcast_G_inv_group
 
-    def assign_gradient_workers(self, compute_grad_ranks):
+    def assign_gradient_workers(self, compute_grad_ranks,
+            broadcast_grad_groups):
         """Assign ranks to compute preconditioned gradients
-
-        This function will use the compute grad ranks to initialize
-        all of the communication groups and which ranks need to
-        store copies of the inverses.
-
-        Note: will override previous assignments.
-
+        
         Args:
-          compute_grad_ranks (list(int)): ranks that should compute
-                  preconditioned gradient. If None, this is a no-op.
+          compute_grad_ranks (list(int)): ranks to compute grads on
+          broadcast_grad_groups (list(tuple(int, BroadcastGroup))): list where
+              the indices are the ranks in the world and the values are tuples
+              (src, group) indicating the src rank and broadcast group to use
+              when broadcasting the gradients.
         """
-        if compute_grad_ranks is None:
-            return
+        if len(broadcast_grad_groups) != comm.backend.size():
+            raise ValueError('len(broadcast_grad_groups) != world size')
+
         self.compute_grad_ranks = compute_grad_ranks
-
-        # List of ranks that will rcv grads from the compute ranks
-        rcv_grad_ranks = [r for r in list(range(comm.backend.size()))
-                          if r not in self.compute_grad_ranks]
-        # Create sub groups where each group has one compute rank
-        # and round-robin distribute rcv ranks across compute ranks
-        groups_list = [[r] for r in self.compute_grad_ranks]
-        for i, rank in enumerate(rcv_grad_ranks):
-            groups_list[i % len(groups_list)].append(rank)
-
-        comm_groups = [comm.get_broadcast_group(
-                group, src=self.compute_grad_ranks[i])
-                for i, group in enumerate(groups_list)]
-
-        self.broadcast_grad_groups = {}  # key: rank, value: BroadcastGroup
-        for comm_group, group in zip(comm_groups, groups_list):
-            for rank in group:
-                self.broadcast_grad_groups[rank] = comm_group
-
-        # The ranks that compute the inverses only need to broadcast to
-        # ranks that will later compute the preconditioned gradient. I.e.
-        # we are excluding the ranks that will just end up receiving the
-        # final preconditioned gradient from receiving the inverse since
-        # they will not need the inverse for anything.
-        self.broadcast_A_inv_group = comm.get_broadcast_group(
-                self.compute_grad_ranks, src=self.compute_A_inv_rank)
-        self.broadcast_G_inv_group = comm.get_broadcast_group(
-                self.compute_grad_ranks, src=self.compute_G_inv_rank)
-
+        self.broadcast_grad_groups = broadcast_grad_groups
         self.keep_inv_copy = comm.backend.rank() in self.compute_grad_ranks
 
     def allreduce_factors(self):
@@ -148,10 +116,10 @@ class KFACLayer(object):
         Returns:
           list of async work handles
         """
-        return [comm.backend.broadcast(
-                        self.A_inv, group=self.broadcast_A_inv_group),
-                comm.backend.broadcast(
-                        self.G_inv, group=self.broadcast_G_inv_group)]
+        return [comm.backend.broadcast(self.A_inv, src=self.compute_A_inv_rank,
+                        group=self.broadcast_A_inv_group),
+                comm.backend.broadcast(self.G_inv, src=self.compute_G_inv_rank,
+                        group=self.broadcast_G_inv_group)]
 
     def broadcast_gradient(self):
         """Broadcast preconditioned gradient
@@ -174,9 +142,8 @@ class KFACLayer(object):
         self.preconditioned_gradient = [t.contiguous() for t in
                 self.preconditioned_gradient]
         
-        rank = comm.backend.rank()
-        return [comm.backend.broadcast(
-                tensor, group=self.broadcast_grad_groups[rank])
+        src, group = self.broadcast_grad_groups[comm.backend.rank()]
+        return [comm.backend.broadcast(tensor, src=src, group=group)
                 for tensor in self.preconditioned_gradient]
 
     def compute_A_inv(self, damping=0.001, ignore_rank=False):

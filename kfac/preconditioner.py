@@ -1,5 +1,4 @@
 import enum
-import itertools
 import math
 import warnings
 
@@ -198,6 +197,8 @@ class KFAC(optim.Optimizer):
         elif self.comm_method == CommMethod.MEM_OPT:
             self.grad_worker_fraction = 1 / comm.backend.size()
         elif self.comm_method == CommMethod.HYBRID_OPT:
+            if 'Horovod' in self.comm_method.__class__.__name__:
+                raise ValueError('HYBRID_OPT does not support Horovod backend')
             if 0 >= grad_worker_fraction or 1 < grad_worker_fraction:
                 raise ValueError('grad_worker_fraction must in (0, 1]')
             if 0.5 < grad_worker_fraction:
@@ -470,17 +471,15 @@ class KFAC(optim.Optimizer):
             return
         
         handles = []
-        print('get handles')
         for layer in self.layers:
             handles.extend(layer.broadcast_inverses())
-        print('sync handles')
         comm.backend.sync(handles)
 
     def broadcast_gradients(self):
         """Broadcast the preconditioned gradients for all layers"""
         if comm.backend.size() == 1:
             return
-
+        
         handles = []
         for layer in self.layers:
             handles.extend(layer.broadcast_gradient())
@@ -565,36 +564,39 @@ class KFAC(optim.Optimizer):
             locs = utils.load_balance(comm.backend.size(), times)
             a_locs, g_locs = locs, locs
 
-        rank_iter = iter(itertools.cycle(range(comm.backend.size())))
+        ranks = list(range(comm.backend.size()))
+
+        if self.comm_method == CommMethod.COMM_OPT:
+            # The inv process groups are the default group so we set as None
+            broadcast_A_inv_group = None 
+            broadcast_G_inv_group = None 
+        elif self.comm_method == CommMethod.MEM_OPT:
+            # COMM_OPT does not require inv broadcasting so we set as None
+            broadcast_A_inv_group = None 
+            broadcast_G_inv_group = None 
+        elif self.comm_method == CommMethod.HYBRID_OPT:
+            grad_workers = int(comm.backend.size() * self.grad_worker_fraction)
+            grad_workers = max(1, grad_workers)
+            assert False, 'HYBRID_OPT is temporarily disabled'
 
         for i, layer in enumerate(self.layers):
-            grad_worker_count = int(comm.backend.size() * 
-                                    self.grad_worker_fraction)
-            grad_worker_count = max(1, grad_worker_count)
+            layer.assign_inverse_workers(a_locs[i], g_locs[i],
+                    broadcast_A_inv_group, broadcast_G_inv_group)
 
-            if self.comm_method == CommMethod.MEM_OPT:
-                assert a_locs[i] == g_locs[i]
-                assert grad_worker_count == 1
             if self.comm_method == CommMethod.COMM_OPT:
-                assert grad_worker_count == comm.backend.size()
-
-            grad_ranks = [a_locs[i]]
-            grad_worker_count -= 1
-            if grad_worker_count > 0 and a_locs[i] != g_locs[i]:
-                grad_ranks.append(g_locs[i])
-                grad_worker_count -= 1
-            if grad_worker_count > 0:
-                # If we still have available grad workers left, round robin
-                # select from remaining ranks
-                ranks = []
-                while len(ranks) < grad_worker_count:
-                    r = next(rank_iter)
-                    if r not in grad_ranks:
-                        ranks.append(r)
-                grad_ranks.extend(ranks)
+                grad_ranks = [rank for rank in ranks]
+                # COMM_OPT does not require grad broadcasting so set as None
+                broadcast_grad_groups = [(rank, None) for rank in ranks]
+            elif self.comm_method == CommMethod.MEM_OPT:
+                grad_ranks = [ranks[i % len(ranks)]]
+                # MEM_OPT has a single process group (the default) so we can 
+                # leave as None.
+                broadcast_grad_groups = [(grad_ranks[0], None)
+                                         for rank in ranks]
+            elif self.comm_method == CommMethod.HYBRID_OPT:
+                pass
             
-            layer.assign_inverse_workers(a_locs[i], g_locs[i])
-            layer.assign_gradient_workers(grad_ranks)
+            layer.assign_gradient_workers(grad_ranks, broadcast_grad_groups)
 
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients
