@@ -11,9 +11,7 @@ class KFACLayer(object):
                  accumulate_data=True,
                  batch_first=True,
                  grad_scaler=None,
-                 keep_inv_copy=False,
                  use_eigen_decomp=True,
-                 use_half_precision=False,
                  compute_A_inv_rank=None,
                  compute_G_inv_rank=None,
                  compute_grad_ranks=None):
@@ -21,12 +19,11 @@ class KFACLayer(object):
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
         self.grad_scaler = grad_scaler
-        self.keep_inv_copy = keep_inv_copy
         self.use_eigen_decomp=use_eigen_decomp
-        self.compute_A_inv_rank = compute_A_inv_rank
-        self.compute_G_inv_rank = compute_G_inv_rank
-        self.compute_grad_ranks = compute_grad_ranks
         self.eps = 1e-10
+
+        self.assign_inverse_workers(compute_A_inv_rank, compute_G_inv_rank)
+        self.assign_gradient_workers(compute_grad_ranks)
 
         # Should be overridden by implementing class
         self.has_bias = False
@@ -63,8 +60,8 @@ class KFACLayer(object):
         """Loads the KFACLayer state."""
         device = next(self.module.parameters()).device
         try:
-            self._init_A_buffers(state_dict['A_factor'].to(device))
-            self._init_G_buffers(state_dict['G_factor'].to(device))
+            self.A_factor = state_dict['A_factor'].to(device)
+            self.G_factor = state_dict['G_factor'].to(device)
             if 'A_inv' in state_dict:
                 self.A_inv = state_dict['A_inv']
             if 'G_inv' in state_dict:
@@ -73,19 +70,64 @@ class KFACLayer(object):
             raise KeyError('KFACLayer state_dict must contain keys: '
                            '["A_factor", "G_factor"].')
 
-    def assign_workers(self, compute_A_inv_rank, compute_G_inv_rank,
-                compute_grad_ranks):
-        """Assign ranks to this layer
+    def assign_inverse_workers(self, compute_A_inv_rank, compute_G_inv_rank):
+        """Assign ranks to compute inverses
+
+        Note: will override previous assignments.
 
         Args:
           compute_A_inv_rank (int): rank to compute A inverse on
           compute_G_inv_rank (int): rank to compute G inverse on
-          compute_grad_ranks (list(int)): ranks that should compute
-                  preconditioned gradient
         """
         self.compute_A_inv_rank = compute_A_inv_rank
         self.compute_G_inv_rank = compute_G_inv_rank
+
+    def assign_gradient_workers(self, compute_grad_ranks):
+        """Assign ranks to compute preconditioned gradients
+
+        This function will use the compute grad ranks to initialize
+        all of the communication groups and which ranks need to
+        store copies of the inverses.
+
+        Note: will override previous assignments.
+
+        Args:
+          compute_grad_ranks (list(int)): ranks that should compute
+                  preconditioned gradient. If None, this is a no-op.
+        """
+        if compute_grad_ranks is None:
+            return
         self.compute_grad_ranks = compute_grad_ranks
+
+        # List of ranks that will rcv grads from the compute ranks
+        rcv_grad_ranks = [r for r in list(range(comm.backend.size()))
+                          if r not in self.compute_grad_ranks]
+        # Create sub groups where each group has one compute rank
+        # and round-robin distribute rcv ranks across compute ranks
+        groups_list = [[r] for r in self.compute_grad_ranks]
+        for i, rank in enumerate(rcv_grad_ranks):
+            groups_list[i % len(groups_list)].append(rank)
+
+        comm_groups = [comm.get_broadcast_group(
+                group, src=self.compute_grad_ranks[i])
+                for i, group in enumerate(groups_list)]
+
+        self.broadcast_grad_groups = {}  # key: rank, value: BroadcastGroup
+        for comm_group, group in zip(comm_groups, groups_list):
+            for rank in group:
+                self.broadcast_grad_groups[rank] = comm_group
+
+        # The ranks that compute the inverses only need to broadcast to
+        # ranks that will later compute the preconditioned gradient. I.e.
+        # we are excluding the ranks that will just end up receiving the
+        # final preconditioned gradient from receiving the inverse since
+        # they will not need the inverse for anything.
+        self.broadcast_A_inv_group = comm.get_broadcast_group(
+                self.compute_grad_ranks, src=self.compute_A_inv_rank)
+        self.broadcast_G_inv_group = comm.get_broadcast_group(
+                self.compute_grad_ranks, src=self.compute_G_inv_rank)
+
+        self.keep_inv_copy = comm.backend.rank() in self.compute_grad_ranks
 
     def allreduce_factors(self):
         """Allreduce A and G factors
@@ -99,11 +141,17 @@ class KFACLayer(object):
     def broadcast_inverses(self):
         """Broadcast A and G inverses
 
+        Note: all ranks enter this function but some ranks may not be in the
+          broadcast group for the inverses. comm.backend.broadcast() will be a
+          no-op if a group is provided in rank is not in the group.
+
         Returns:
           list of async work handles
         """
-        return [comm.backend.broadcast(self.A_inv, self.compute_A_inv_rank),
-                comm.backend.broadcast(self.G_inv, self.compute_G_inv_rank)]
+        return [comm.backend.broadcast(
+                        self.A_inv, group=self.broadcast_A_inv_group),
+                comm.backend.broadcast(
+                        self.G_inv, group=self.broadcast_G_inv_group)]
 
     def broadcast_gradient(self):
         """Broadcast preconditioned gradient
@@ -111,6 +159,9 @@ class KFACLayer(object):
         Returns:
           list of async work handles
         """
+        if self.compute_grad_ranks is None:
+            raise ValueError('Gradient compute ranks have not been assigned '
+                             'yet. Use assign_workers().')
         # If the preconditioned gradient is None, initialize it so
         # we can correctly perform the broadcast op between ranks
         if self.preconditioned_gradient is None:
@@ -123,17 +174,24 @@ class KFACLayer(object):
         self.preconditioned_gradient = [t.contiguous() for t in
                 self.preconditioned_gradient]
         
-        return [comm.backend.broadcast(tensor, self.compute_A_inv_rank)
+        rank = comm.backend.rank()
+        return [comm.backend.broadcast(
+                tensor, group=self.broadcast_grad_groups[rank])
                 for tensor in self.preconditioned_gradient]
 
     def compute_A_inv(self, damping=0.001, ignore_rank=False):
         """Compute A inverse on assigned rank
 
-        Note: all ranks will enter this function but only the ranks assigned
-        to this layer will continue to actually compute the inverses.
-        All other ranks will simply zero out their inverse buffers for. This 
-        is done so we can sum the inverses across all ranks to communicate the
-        results of locally computed inverses.
+        Note: 
+          - all ranks will enter this function but only the ranks assigned
+            to this layer will continue to actually compute the inverses.
+            All other ranks will simply zero out their inverse buffers for.
+            This is done so we can sum the inverses across all ranks to 
+            communicate the results of locally computed inverses.
+          - tensors for storing the inverse will be initialized based on the
+            shape of the factor if the inv is None. This means that
+            self.update_A_factor() must be called at least once before this
+            function.
 
         Args:
           damping (float, optional): damping value to condition inverse 
@@ -143,6 +201,20 @@ class KFACLayer(object):
         """
         if self.compute_A_inv_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
+        if self.keep_inv_copy is None:
+            raise ValueError('Grad workers have not been assigned to layer yet.')
+
+        if self.A_inv is None and self.keep_inv_copy:
+            if self.A_factor is None:
+                raise RuntimeError('update_A_factor() must be called at least '
+                                   'once before calling compute_A_inv().')
+            if self.use_eigen_decomp:
+                # add one axtra column for eigenvalues
+                shape = (self.A_factor.shape[0], self.A_factor.shape[0] + 1) 
+            else:
+                shape = self.A_factor.shape
+            self.A_inv = self.A_factor.new_zeros(shape).to(torch.float32)
+
         if ignore_rank or comm.backend.rank() == self.compute_A_inv_rank:
             self.A_inv = self._compute_factor_inverse(
                     self.A_factor.float(), damping)
@@ -154,6 +226,20 @@ class KFACLayer(object):
         """
         if self.compute_G_inv_rank is None:
             raise ValueError('Workers have not been assigned to layer yet.')
+        if self.keep_inv_copy is None:
+            raise ValueError('Grad workers have not been assigned to layer yet.')
+
+        if self.G_inv is None and self.keep_inv_copy:
+            if self.G_factor is None:
+                raise RuntimeError('update_G_factor() must be called at least '
+                                   'once before calling compute_G_inv().')
+            if self.use_eigen_decomp:
+                # add one axtra column for eigenvalues
+                shape = (self.G_factor.shape[0], self.G_factor.shape[0] + 1) 
+            else:
+                shape = self.G_factor.shape
+            self.G_inv = self.G_factor.new_zeros(shape).to(torch.float32)
+
         if ignore_rank or comm.backend.rank() == self.compute_G_inv_rank:
             self.G_inv = self._compute_factor_inverse(
                     self.G_factor.float(), damping)
@@ -223,7 +309,7 @@ class KFACLayer(object):
         A_new = self._get_A_factor(self.a_inputs)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
-            self._init_A_buffers(A_new)
+            self.A_factor = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
         utils.update_running_avg(A_new, self.A_factor, alpha=alpha)
 
     def update_G_factor(self, alpha=0.95):
@@ -245,7 +331,7 @@ class KFACLayer(object):
         G_new = self._get_G_factor(self.g_outputs)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
-            self._init_G_buffers(G_new)
+            self.G_factor = torch.diag(G_new.new(G_new.shape[0]).fill_(1))
         utils.update_running_avg(G_new, self.G_factor, alpha=alpha)
 
     def update_gradient(self, scale=None):
@@ -298,30 +384,4 @@ class KFACLayer(object):
         """Compute preconditioned gradient for inverse method"""
         grad = self.get_gradient() 
         return self.G_inv @ grad @ self.A_inv
-
-    def _init_A_buffers(self, factor):
-        """Create buffers for factor A and its inverse"""
-        assert self.A_factor is None, ('A buffers have already been '
-                'initialized. Was _init_A_buffers() called more than once?')
-        self.A_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
-        if self.keep_inv_copy:
-            if self.use_eigen_decomp:
-                # add one axtra column for eigenvalues
-                shape = (factor.shape[0], factor.shape[0] + 1) 
-            else:
-                shape = factor.shape
-            self.A_inv = factor.new_zeros(shape).to(torch.float32)
-
-    def _init_G_buffers(self, factor):
-        """Create buffers for factor G and its inverse"""
-        assert self.G_factor is None, ('G buffers have already been '
-                'initialized. Was _init_G_buffers() called more than once?')
-        self.G_factor = torch.diag(factor.new(factor.shape[0]).fill_(1))
-        if self.keep_inv_copy:
-            if self.use_eigen_decomp:
-                # add one axtra column for eigenvalues
-                shape = (factor.shape[0], factor.shape[0] + 1)
-            else:
-                shape = factor.shape
-            self.G_inv = factor.new_zeros(shape).to(torch.float32)
 
