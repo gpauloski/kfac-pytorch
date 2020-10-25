@@ -1,7 +1,4 @@
-import itertools
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 
 def try_contiguous(x):
@@ -9,44 +6,6 @@ def try_contiguous(x):
         x = x.contiguous()
 
     return x
-
-
-def partial_in(string, iterable):
-    """Returns True if the string is contained in any element of the iterable"""
-    for value in iterable:
-        if value.contains(string):
-            return True
-    return False
-
-
-class cycle:
-    def __init__(self, iterable):
-        """Iterator that produces tuples indefinitely.
-
-        Example:
-          iterator = tuple_cycle([1,2,3], 2)
-          assert iterator.next(2) == (1, 2)
-          assert iterator.next(1) == (3,)
-          assert iterator.next(4) == (1, 2, 3, 1)
-
-        Args:
-          iterable: Any iterable to iterate over indefinitely
-        """
-        self.iterable = iterable
-        self.reset()
-
-    def reset(self):
-        """Reset iterable to start"""
-        self.iterator = itertools.cycle(self.iterable)
-
-    def next(self, size):
-        """Get next tuple of size in rotation.
-
-        Returns:
-          iterator that returns a tuple of size each time next
-          is called.
-        """
-        return tuple([next(self.iterator) for x in range(size)])
 
 
 def load_balance(n_workers, work):
