@@ -24,17 +24,6 @@ def init_comm_backend():
     if backend is None:
         backend = _get_comm_backend()
 
-
-def get_broadcast_group(ranks, src):
-    if backend is None:
-        raise ValueError('KFAC communication backend has not been initialized '
-                         'yet. You must call kfac.comm.init_comm_backend() '
-                         'before creating a communication group.')
-    if _torch_distributed_is_initialized():
-        return TorchBroadcastGroup(ranks, src)
-    return BroadcastGroup(ranks, src)
-
-
 def _get_comm_backend():
     if _horovod_is_initialized():
         return HorovodBackend()
@@ -58,37 +47,6 @@ def _horovod_is_initialized():
 
 def _torch_distributed_is_initialized():
     return dist.is_initialized()
-
-
-class BroadcastGroup(object):
-    """BroadcastGroup
-
-    A KFAC communication abstraction for communication groups. The broadcast
-    groups defines the src rank for communication and the ranks in the
-    collective op.
-
-    Args:
-      ranks (list(int)): ranks to include in collective op
-    """
-    def __init__(self, ranks):
-        if not isinstance(ranks, list):
-            raise ValueError('ranks must be a list')
-
-        self._ranks = ranks
-    
-    @property
-    def ranks(self):
-        return self._ranks
-
-
-class TorchBroadcastGroup(BroadcastGroup):
-    def __init__(self, *args, **kwargs):
-        super(TorchBroadcastGroup, self).__init__(*args, **kwargs)
-        self._group = dist.new_group(ranks=self._ranks)
-
-    @property
-    def group(self):
-        return self._group
 
 
 class CommBackend(object):
@@ -247,8 +205,9 @@ class TorchBackend(CommBackend):
             return handle
 
     def broadcast(self, tensor, src, group=None, async=True):
-        kwargs = {'group': group.group} if group is not None else {}
-        return dist.broadcast(tensor, src=src, async_op=async, **kwargs)
+        if group is not None:
+            return dist.broadcast(tensor, src=src, async_op=async, group=group)
+        return dist.broadcast(tensor, src=src, async_op=async)
 
     def reduce(self, tensor, dst, op=Ops.Average, async=True):
         # Note: actually returns tuple(handle, should_average)
