@@ -116,6 +116,8 @@ class KFACLayer(object):
         Returns:
           list of async work handles
         """
+        if not self.keep_inv_copy:
+            return []
         return [comm.backend.broadcast(self.A_inv, src=self.compute_A_inv_rank,
                         group=self.broadcast_A_inv_group),
                 comm.backend.broadcast(self.G_inv, src=self.compute_G_inv_rank,
