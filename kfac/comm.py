@@ -14,15 +14,11 @@ except:
 backend = None
 
 
-class Ops(enum.Enum):
-    Average = "average"
-    Sum = "sum"
-
-
 def init_comm_backend():
     global backend
     if backend is None:
         backend = _get_comm_backend()
+
 
 def _get_comm_backend():
     if _horovod_is_initialized():
@@ -48,6 +44,24 @@ def _horovod_is_initialized():
 def _torch_distributed_is_initialized():
     return dist.is_initialized()
 
+
+class Ops(enum.Enum):
+    Average = "average"
+    Sum = "sum"
+
+
+class BroadcastGroup(object):
+    def __init__(self, ranks):
+        self.ranks = ranks
+        if (_torch_distributed_is_initialized() and 
+                self.size > 1 and self.size < backend.size()):
+            self.group = dist.new_group(ranks)
+        else:
+            self.group = None
+
+    @property
+    def size(self):
+        return len(self.ranks)
 
 class CommBackend(object):
     """Distributed training communication abstraction."""
@@ -80,13 +94,13 @@ class CommBackend(object):
         """
         return
 
-    def broadcast(self, tensor, src, group=None, async=True):
+    def broadcast(self, tensor, src, group, async=True):
         """Broadcast tensor.
 
         Args:
           tensor (torch.Tensor)
           src (int): source rank for tensor.
-          group (BroadcastGroup, optional): BroadcastGroup for collective
+          group (BroadcastGroup): BroadcastGroup for collective
               communication. If None, uses default group (default: None).
           async (bool, optional): whether this op should be asynchronous
 
@@ -206,7 +220,10 @@ class TorchBackend(CommBackend):
 
     def broadcast(self, tensor, src, group=None, async=True):
         if group is not None:
-            return dist.broadcast(tensor, src=src, async_op=async, group=group)
+            if group.size <= 1:
+                return
+            kwargs = {'group': group.group} if group.group is not None else {}
+            return dist.broadcast(tensor, src=src, async_op=async, **kwargs)
         return dist.broadcast(tensor, src=src, async_op=async)
 
     def reduce(self, tensor, dst, op=Ops.Average, async=True):

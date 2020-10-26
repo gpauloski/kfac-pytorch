@@ -93,13 +93,16 @@ class KFAC(optim.Optimizer):
           fp16 so KFAC will store data in fp16, saving memory. The grad scaler
           is needed by KFAC to correctly unscale the gradients from the
           backward pass. (default: None)
-      grad_worker_fraction (float): Fraction of workers to compute the
-          preconditioned gradient. If `comm_method=COMM_OPT`, this fraction is
-          overridden to 1.0, i.e. all workers compute the gradient. If 
-          `comm_method=MEM_OPT`, this fraction is overridden to 1/world_size,
-          i.e. only one worker computes the gradient. If
-          `comm_method=HYBRID_OPT`, this fraction can be between 1/world_size
-          and 1.0 (default: 0.25).
+      grad_worker_fraction (float): Fraction of workers in each gradient
+          broadcast group. If `comm_method=COMM_OPT`, this fraction is
+          overridden to 1/world_size, i.e. each gradient broadcast group is
+          size 1 because each rank independently computes the gradient and it
+          does not need to be broadcast. If `comm_method=MEM_OPT`, this 
+          fraction is overridden to be 1, the broadcast group has size == 
+          world_size because one worker in the group will compute the gradient
+          and then have to broadcast it to the rest of the world. If
+          `comm_method=HYBRID_OPT`, this fraction can be between 0 and 1.0
+          (default: 0.25).
       use_eigen_decomp (bool, optional): use the eigendecomposition method for
           the KFAC update, otherwise use normal inv method (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
@@ -193,14 +196,21 @@ class KFAC(optim.Optimizer):
 
         comm.init_comm_backend()
         if self.comm_method == CommMethod.COMM_OPT:
-            self.grad_worker_fraction = 1
+            self.grad_worker_fraction = 0
         elif self.comm_method == CommMethod.MEM_OPT:
-            self.grad_worker_fraction = 1 / comm.backend.size()
+            self.grad_worker_fraction = 1.0
         elif self.comm_method == CommMethod.HYBRID_OPT:
             if 'Horovod' in self.comm_method.__class__.__name__:
                 raise ValueError('HYBRID_OPT does not support Horovod backend')
-            if 0 >= grad_worker_fraction or 1 < grad_worker_fraction:
-                raise ValueError('grad_worker_fraction must in (0, 1]')
+            if 0 > grad_worker_fraction or 1 < grad_worker_fraction:
+                raise ValueError('grad_worker_fraction must in (0, 1) when '
+                                 'using HYBRID_OPT')
+            if 0 == grad_worker_fraction:
+                warnings.warn('grad_worker_fraction == 0, for best '
+                                 'performance, use COMM_OPT')
+            if 1.0 == grad_worker_fraction:
+                warnings.warn('grad_worker_fraction == 1.0, for best '
+                                 'performance, use COMM_OPT')
             if 0.5 < grad_worker_fraction:
                 warnings.warn('grad_worker_fraction={}, for best performance '
                               'use a value in (0, 0.5] when using '
@@ -564,39 +574,19 @@ class KFAC(optim.Optimizer):
             locs = utils.load_balance(comm.backend.size(), times)
             a_locs, g_locs = locs, locs
 
-        ranks = list(range(comm.backend.size()))
-
-        if self.comm_method == CommMethod.COMM_OPT:
-            # The inv process groups are the default group so we set as None
-            broadcast_A_inv_group = None 
-            broadcast_G_inv_group = None 
-        elif self.comm_method == CommMethod.MEM_OPT:
-            # COMM_OPT does not require inv broadcasting so we set as None
-            broadcast_A_inv_group = None 
-            broadcast_G_inv_group = None 
-        elif self.comm_method == CommMethod.HYBRID_OPT:
-            grad_workers = int(comm.backend.size() * self.grad_worker_fraction)
-            grad_workers = max(1, grad_workers)
-            assert False, 'HYBRID_OPT is temporarily disabled'
+        allocator = utils.WorkerAllocator(comm.backend.size(),
+                self.grad_worker_fraction)
 
         for i, layer in enumerate(self.layers):
-            layer.assign_inverse_workers(a_locs[i], g_locs[i],
-                    broadcast_A_inv_group, broadcast_G_inv_group)
-
-            if self.comm_method == CommMethod.COMM_OPT:
-                grad_ranks = [rank for rank in ranks]
-                # COMM_OPT does not require grad broadcasting so set as None
-                broadcast_grad_groups = [(rank, None) for rank in ranks]
-            elif self.comm_method == CommMethod.MEM_OPT:
-                grad_ranks = [ranks[i % len(ranks)]]
-                # MEM_OPT has a single process group (the default) so we can 
-                # leave as None.
-                broadcast_grad_groups = [(grad_ranks[0], None)
-                                         for rank in ranks]
-            elif self.comm_method == CommMethod.HYBRID_OPT:
-                pass
-            
-            layer.assign_gradient_workers(grad_ranks, broadcast_grad_groups)
+            layer.assign_inverse_workers(
+                a_locs[i],
+                g_locs[i],
+                allocator.get_inv_group(a_locs[i]),
+                allocator.get_inv_group(g_locs[i])
+            )
+            src_ranks = allocator.get_inv_ranks(a_locs[i])
+            layer.assign_gradient_workers(src_ranks, 
+                    allocator.get_grad_groups(src_ranks))
 
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients
