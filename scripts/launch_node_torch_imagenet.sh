@@ -13,22 +13,22 @@ while [ "$1" != "" ]; do
         VALUE=$1
     fi
     case $PARAM in
-        -h|--help)
+        --help)
             echo "USAGE: ./launch_node_torch_imagenet.sh"
-            echo "  -h,--help           Display this help message"
-            echo "  -N,--ngpus [count]  Number of GPUs per node (default: 1)"
-            echo "  -n,--nnodes [count] Number of nodes this script is launched on (default: 1)"
-            echo "  -m,--master [addr]  Address of master node (default: \"\")"
+            echo "  --help           Display this help message"
+            echo "  --ngpus [count]  Number of GPUs per node (default: 1)"
+            echo "  --nnodes [count] Number of nodes this script is launched on (default: 1)"
+            echo "  --master [addr]  Address of master node (default: \"\")"
             echo "  --mvapich           Use MVAPICH env variables for initialization (default: false)"
             exit 0
         ;;
-        -N|--ngpus)
+        --ngpus)
             NGPUS=$VALUE
         ;;
-        -n|--nnodes)
+        --nnodes)
             NNODES=$VALUE
         ;;
-        -m|--master)
+        --master)
             MASTER=$VALUE
         ;;      
         --mvapich)
@@ -57,6 +57,9 @@ KWARGS+="--damping 0.001 "
 KWARGS+="--epochs 55 "
 KWARGS+="--lr-decay 25 35 40 45 50 "
 KWARGS+="--model resnet50 "
+KWARGS+="--checkpoint-freq 5 "
+KWARGS+="--kfac-comm-method comm-opt "
+KWARGS+="--kfac-grad-worker-fraction 0.25 "
 
 if [ $NNODES -eq 1 ]; then
   python -m torch.distributed.launch \
