@@ -1,11 +1,14 @@
 import enum
 import math
 import warnings
+
 import torch
 import torch.optim as optim
 
 from . import layers as kfac_layers
 from . import utils
+from . import comm
+
 
 class CommMethod(enum.Enum):
     """KFAC Communication Method
@@ -17,9 +20,15 @@ class CommMethod(enum.Enum):
         calculations and preconditioned gradient for a single layer on one
         worker and broadcasting the gradient to all workers. This method is 
         referred to as 'KFAC_lw' in https://arxiv.org/abs/2007.00784.
+    - HYBRID_OPT: A hybrid between COMM_OPT and MEM_OPT. A user defined
+        fraction of the workers will receive the inverses and precondition
+        the gradients, while the remaining workers will wait for the 
+        preconditioned gradient to be sent for them.
     """
     COMM_OPT = 1
     MEM_OPT = 2
+    HYBRID_OPT = 3
+
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
@@ -84,6 +93,14 @@ class KFAC(optim.Optimizer):
           fp16 so KFAC will store data in fp16, saving memory. The grad scaler
           is needed by KFAC to correctly unscale the gradients from the
           backward pass. (default: None)
+      grad_worker_fraction (float): fraction of workers to compute the
+          preconditioned gradient for a layer. Remaining workers will wait for
+          the gradient to be sent to them. In COMM_OPT, this fraction is 1.0,
+          and in MEM_OPT, this fraction is 1/world_size such that this
+          parameter is only used in HYBRID_OPT where the user defines the
+          fraction. Note: this fraction should produce evenly sized groups.
+          E.g. world_size=8 and fraction=0.33 would produce groups of size
+          3, 3, and 2 which would not be valid. (default: 0.25).
       use_eigen_decomp (bool, optional): use the eigendecomposition method for
           the KFAC update, otherwise use normal inv method (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
@@ -108,6 +125,7 @@ class KFAC(optim.Optimizer):
                  compute_factor_in_hook=False,
                  distribute_layer_factors=True,
                  grad_scaler=None,
+                 grad_worker_fraction=0.25,
                  use_eigen_decomp=True,
                  skip_layers=[],
                  verbose=False):
@@ -115,22 +133,32 @@ class KFAC(optim.Optimizer):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 < factor_decay <= 1:
-            raise ValueError("Invalid factor decay rate: {}".format(factor_decay))
+            raise ValueError("Invalid factor decay rate: {}".format(
+                             factor_decay))
         if not 0.0 < damping:
             raise ValueError("Invalid damping: {}".format(damping))
         if kl_clip is not None and not 0.0 < kl_clip:
             raise ValueError("Invalid clipping value: {}".format(kl_clip))
         if not 0 < factor_update_freq:
-            raise ValueError("Invalid factor update frequency: {}".format(factor_update_freq))
+            raise ValueError("Invalid factor update frequency: {}".format(
+                             factor_update_freq))
         if not 0 < inv_update_freq:
-            raise ValueError("Invalid K-FAC update frequency: {}".format(inv_update_freq))
+            raise ValueError("Invalid K-FAC update frequency: {}".format(
+                             inv_update_freq))
         if not 0 == inv_update_freq % factor_update_freq:
-            warnings.warn('It is suggested that inv_update_freq be a multiple of factor_update_freq')
-        if comm_method is CommMethod.MEM_OPT and distribute_layer_factors is True:
-            warnings.warn('CommMethod.MEM_OPT and distribute_layer_factors=True '
-                          'cannot be used at the same time. Defaulting to '
-                          'distribute_layer_factors=False')
-            distribute_layer_factors = False 
+            warnings.warn('It is suggested that inv_update_freq be a multiple '
+                          'of factor_update_freq')
+        # TODO(gpauloski): asserting distribute_layer_factors if HYBRID_OPT is
+        # not actually necessary because we will have to communicate the
+        # inverses anyways, but we would need to constrain the device placement
+        # for the two inverses of a layer to be in the same inverse
+        # communication group
+        if comm_method in [CommMethod.MEM_OPT, CommMethod.HYBRID_OPT] \
+                and distribute_layer_factors is True:
+            warnings.warn('MEM_OPT or HYBRID_OPT and distribute_layer_factors='
+                          'True cannot be used at the same time. Defaulting '
+                          'to distribute_layer_factors=False')
+            distribute_layer_factors = False
 
         known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
         if skip_layers is not None:
@@ -169,8 +197,37 @@ class KFAC(optim.Optimizer):
         self.skip_layers = skip_layers
         self.known_modules = known_modules
         self.verbose = verbose
-        self.backend = utils.get_comm_backend()
         self.workers_assigned = False
+
+        comm.init_comm_backend()
+        if self.comm_method == CommMethod.COMM_OPT:
+            self.grad_worker_fraction = 0
+        elif self.comm_method == CommMethod.MEM_OPT:
+            self.grad_worker_fraction = 1.0
+        elif self.comm_method == CommMethod.HYBRID_OPT:
+            size = comm.backend.size()
+            if 'Horovod' in self.comm_method.__class__.__name__:
+                raise ValueError('HYBRID_OPT does not support Horovod backend')
+            if 0 > grad_worker_fraction or 1 < grad_worker_fraction:
+                raise ValueError('grad_worker_fraction must in (0, 1) when '
+                                 'using HYBRID_OPT')
+            if size % min(1, round(size * grad_worker_fraction)) != 0:
+                raise ValueError('grad_worker_fraction must produce groups of '
+                                 'equal size')
+            if 0 == grad_worker_fraction:
+                warnings.warn('grad_worker_fraction == 0, for best '
+                                 'performance, use COMM_OPT')
+            if 1.0 == grad_worker_fraction:
+                warnings.warn('grad_worker_fraction == 1.0, for best '
+                                 'performance, use COMM_OPT')
+            if 0.5 < grad_worker_fraction:
+                warnings.warn('grad_worker_fraction={}, for best performance '
+                              'use a value in (0, 0.5] when using '
+                              'HYBRID_OPT.'.format(grad_worker_fraction))
+            if 1 - (1 / size) <= grad_worker_fraction:
+                warnings.warn('The grad_worker_fraction is larger than 1 - '
+                              '(1 / world_size). COMM_OPT is recommended.')
+            self.grad_worker_fraction = grad_worker_fraction
 
         self.layers = []
         self.hook_layers = {}  # key: nn.Module, value: KFACLayer
@@ -214,7 +271,8 @@ class KFAC(optim.Optimizer):
         state_dict = super(KFAC, self).state_dict()
         layers = None
         if include_layer_factors:
-            if self.comm_method is CommMethod.MEM_OPT and include_layer_inverses:
+            if (self.comm_method is CommMethod.MEM_OPT 
+                    and include_layer_inverses):
                 warnings.warn('Layer inverses cannot be saved to the state '
                               'dict when using CommMethod.MEM_OPT. Skipping '
                               'saving inverses.')
@@ -250,10 +308,11 @@ class KFAC(optim.Optimizer):
             compute_inverses = False  # Cannot be computed if no layers
         super(KFAC, self).load_state_dict(state_dict)
         if compute_inverses:
-            self._assign_layers_to_workers()
+            self._assign_workers()
             self.workers_assigned = True
             self.compute_inverses(damping=self.param_groups[0]['damping'])
-            if self.comm_method is CommMethod.COMM_OPT:
+            if self.comm_method in [CommMethod.COMM_OPT, 
+                                    CommMethod.HYBRID_OPT]:
                 self.broadcast_inverses()
 
     def register_module(self, module, name=None):
@@ -269,11 +328,10 @@ class KFAC(optim.Optimizer):
             accumulate_data = self.accumulate_data,
             batch_first = self.batch_first,
             grad_scaler = self.grad_scaler,
-            keep_inv_copy = self.comm_method is CommMethod.COMM_OPT,
             use_eigen_decomp = self.use_eigen_decomp,
         )
         for module, kfac_layer in layer_list:
-            if self.backend.rank() == 0 and self.verbose:
+            if comm.backend.rank() == 0 and self.verbose:
                 print('Registered {}: {}'.format(
                         name if name is not None else '', kfac_layer))
             self.hook_layers[module] = kfac_layer
@@ -296,31 +354,34 @@ class KFAC(optim.Optimizer):
 
     def register_model(self, model):
         """Registers a model to KFAC."""
-        if len(list(model.children())) == 0:  # Handle case if model is just a module
+        if len(list(model.children())) == 0:  # Handle if model is a module
             if (model.__class__.__name__.lower() in self.known_modules and
                 model.__class__.__name__.lower() not in self.skip_layers):
                 self.register_module(model)
         else:
             self.register_submodules(model)
 
-    def register_shared_module(self, main_module, second_module, reverse_hooks=False):
+    def register_shared_module(self, main_module, second_module,
+                               reverse_hooks=False):
         """Create and register a KFAC layer for modules that share a weight
 
-        Useful for the case where two modules share a weight matrix and you want to
-        incorporate the input and grad_output for both modules. E.g. in a language
-        model it is common to tie the embedding and decoding (a linear module) weights
-        but if only the embedding module is registered with KFAC, the forward and
-        backward pass information will be lost for the linear module.
+        Useful for the case where two modules share a weight matrix and you 
+        want to incorporate the input and grad_output for both modules. E.g. in
+        a language model it is common to tie the embedding and decoding (a 
+        linear module) weights but if only the embedding module is registered 
+        with KFAC, the forward and backward pass information will be lost for 
+        the linear module.
 
         Args:
-          main_module (nn.Module): main module to register, a pointer to this module
-              will be saved with the KFACLayer instance.
-          second_module (nn.Module): the secondary module that shares its weight matrix
-              with `main_module`. Only the forward/backward hooks will be registered
-              for this module.
+          main_module (nn.Module): main module to register, a pointer to this 
+             module  will be saved with the KFACLayer instance.
+          second_module (nn.Module): the secondary module that shares its 
+              weight matrix with `main_module`. Only the forward/backward hooks
+              will be registered for this module.
           reverse_hooks (bool, optional): if True, reverse the hooks for the
-              `second_module`. Useful in cases such as tied embeddings where the input
-              to the embedding is related to the output of the decoding.
+              `second_module`. Useful in cases such as tied embeddings where 
+              the input to the embedding is related to the output of the 
+              decoding.
         """
         warnings.warn('Registering shared weight modules with KFAC is '
                       'experimental and may produce poor results')
@@ -331,7 +392,8 @@ class KFAC(optim.Optimizer):
             raise ValueError('second_module must be of type torch.nn.Module')
         # Note: this is because the second module hook that gets called will
         # overwrite the saved data from the first module hook call so we need
-        # the hook calls to accumulate the data and not just save the most recent
+        # the hook calls to accumulate the data and not just save the most 
+        # recent
         if not self.accumulate_data:
             raise ValueError('shared weight module registration will not work '
                              'is self.accumulate_data=False')
@@ -343,12 +405,13 @@ class KFAC(optim.Optimizer):
         )
         
         if len(layer_list) > 1:
-            raise ValueError('KFAC registering for shared weight modules does not work '
-                             'for modules with multiple KFACLayers (e.g. LSTMCells)')
+            raise ValueError('KFAC registering for shared weight modules does '
+                             'not work for modules with multiple KFACLayers '
+                             '(e.g. LSTMCells)')
         else:
             _, kfac_layer = layer_list[0]
 
-        if self.backend.rank() == 0 and self.verbose:
+        if comm.backend.rank() == 0 and self.verbose:
             print('Registered: {} (shared weight)'.format(kfac_layer))
         self.hook_layers[main_module] = kfac_layer
         self.hook_layers[second_module] = kfac_layer
@@ -358,8 +421,10 @@ class KFAC(optim.Optimizer):
         # TODO(gpauloski): this will not work with compute_factor_in_hook=True
         # because the factors may be computed before _save_*_as_*() is called.
         if reverse_hooks:
-            second_module.register_forward_pre_hook(self._save_input_as_grad_output)
-            second_module.register_backward_hook(self._save_grad_output_as_input)
+            second_module.register_forward_pre_hook(
+                    self._save_input_as_grad_output)
+            second_module.register_backward_hook(
+                    self._save_grad_output_as_input)
         else:
             second_module.register_forward_pre_hook(self._save_input)
             second_module.register_backward_hook(self._save_grad_output)
@@ -395,19 +460,21 @@ class KFAC(optim.Optimizer):
         # are not instantiated until this point and we use the size of the
         # buffers to approximate the time each layer will take to compute.
         if not self.workers_assigned:
-            self._assign_layers_to_workers()
+            self._assign_workers()
             self.workers_assigned = True
 
         if params['step'] % params['inv_update_freq'] == 0:
             self.compute_inverses(damping=params['damping'])
-            if self.comm_method is CommMethod.COMM_OPT:
+            if self.comm_method in \
+                    [CommMethod.COMM_OPT, CommMethod.HYBRID_OPT]:
                 self.broadcast_inverses()
 
         self.compute_preconditioned_gradients(damping=params['damping'])
-        if self.comm_method is CommMethod.MEM_OPT:
+        if self.comm_method in [CommMethod.MEM_OPT, CommMethod.HYBRID_OPT]:
             self.broadcast_gradients()
 
-        scale = None if params['kl_clip'] is None else self._compute_grad_scale()
+        scale = None if params['kl_clip'] is None \
+                     else self._compute_grad_scale()
 
         for layer in self.layers:
             layer.update_gradient(scale=scale)
@@ -418,42 +485,33 @@ class KFAC(optim.Optimizer):
 
     def allreduce_factors(self):
         """Allreduce the factors for all layers"""
-        if self.backend.size() == 1:
+        if comm.backend.size() == 1:
             return
 
-        tensors = []
+        handles = []
         for layer in self.layers:
-            tensors.extend(layer.get_factors())
-
-        self.backend.allreduce(tensors, op=self.backend.Average)
+            handles.extend(layer.allreduce_factors())
+        comm.backend.sync(handles)
 
     def broadcast_inverses(self):
         """Broadcast the eigendecomp/invs for all layers"""
-        if self.backend.size() == 1:
+        if comm.backend.size() == 1:
             return
-
-        tensors = []
-        ranks = []
+        
+        handles = []
         for layer in self.layers:
-            tensor_list, rank_list = layer.get_inverses(return_ranks=True)
-            tensors.extend(tensor_list)
-            ranks.extend(rank_list)
-
-        self.backend.broadcast(tensors, ranks)
+            handles.extend(layer.broadcast_inverses())
+        comm.backend.sync(handles)
 
     def broadcast_gradients(self):
         """Broadcast the preconditioned gradients for all layers"""
-        if self.backend.size() == 1:
+        if comm.backend.size() == 1:
             return
-
-        tensors = []
-        ranks = []
+        
+        handles = []
         for layer in self.layers:
-            tensor_list, rank_list = layer.get_preconditioned_gradient(return_rank=True)
-            tensors.extend(tensor_list)
-            ranks.extend(rank_list)
-
-        self.backend.broadcast(tensors, ranks)
+            handles.extend(layer.broadcast_gradient())
+        comm.backend.sync(handles)
 
     @torch.no_grad()
     def compute_inverses(self, damping=0.001):
@@ -462,10 +520,9 @@ class KFAC(optim.Optimizer):
         Args:
           damping (float, optional): inverse damping value (default: 0.001)
         """
-        rank = self.backend.rank()
         for layer in self.layers:
-            layer.compute_A_inv(rank, damping=damping)
-            layer.compute_G_inv(rank, damping=damping)
+            layer.compute_A_inv(damping=damping)
+            layer.compute_G_inv(damping=damping)
     
     @torch.no_grad()
     def compute_factors(self, alpha=0.95):
@@ -485,9 +542,8 @@ class KFAC(optim.Optimizer):
         Args:
           damping (float, optional): damping value (default: 0.001)
         """
-        rank = self.backend.rank() if self.comm_method is CommMethod.MEM_OPT else None
         for layer in self.layers:
-            layer.compute_preconditioned_gradient(rank=rank, damping=damping)
+            layer.compute_preconditioned_gradient(damping=damping)
 
     def memory_usage(self):
         """Returns current approximate memory usage for KFAC
@@ -501,7 +557,8 @@ class KFAC(optim.Optimizer):
         b = 0
 
         def sizeof_tensor(tensor):
-            return tensor.nelement() * tensor.element_size() if tensor is not None else 0
+            return (tensor.nelement() * tensor.element_size() 
+                    if tensor is not None else 0)
 
         for layer in self.layers:
             b += sizeof_tensor(layer.A_factor)
@@ -512,8 +569,8 @@ class KFAC(optim.Optimizer):
             b += sum(map(sizeof_tensor, layer.g_outputs))
         return b
 
-    def _assign_layers_to_workers(self):
-        """Assigns layers to workers to minimize max load on any worker.
+    def _assign_workers(self):
+        """Assigns workers to minimize max load on any worker.
 
         Approximates load by estimating inverse computation time as O(n^3)
         for each n x n factor.
@@ -529,16 +586,26 @@ class KFAC(optim.Optimizer):
             
         if self.distribute_layer_factors:
             times = a_times + g_times
-            locs = utils.load_balance(self.backend.size(), times)
+            locs = utils.load_balance(comm.backend.size(), times)
             a_locs, g_locs = locs[0:len(a_times)], locs[len(a_times):]
         else:
             times = [sum(x) for x in zip(a_times, g_times)]
-            locs = utils.load_balance(self.backend.size(), times)
+            locs = utils.load_balance(comm.backend.size(), times)
             a_locs, g_locs = locs, locs
 
+        allocator = utils.WorkerAllocator(comm.backend.size(),
+                self.grad_worker_fraction)
+
         for i, layer in enumerate(self.layers):
-            layer.A_rank = a_locs[i]
-            layer.G_rank = g_locs[i]
+            layer.assign_inverse_workers(
+                a_locs[i],
+                g_locs[i],
+                allocator.get_inv_group(a_locs[i]),
+                allocator.get_inv_group(g_locs[i])
+            )
+            src_ranks = allocator.get_inv_ranks(a_locs[i])
+            layer.assign_gradient_workers(src_ranks, 
+                    allocator.get_grad_groups(src_ranks))
 
     def _compute_grad_scale(self):
         """Computes scale factor for preconditioned gradients
@@ -552,9 +619,13 @@ class KFAC(optim.Optimizer):
         kl_clip = group['kl_clip']
         for layer in self.layers:
             v = layer.preconditioned_gradient
-            vg_sum += (v[0] * layer._get_weight_grad().data * lr ** 2).sum().item()
+            vg_sum += (
+                v[0] * layer._get_weight_grad().data * lr ** 2
+            ).sum().item()
             if layer.has_bias:
-                vg_sum += (v[1] * layer._get_bias_grad().data * lr ** 2).sum().item()
+                vg_sum += (
+                    v[1] * layer._get_bias_grad().data * lr ** 2
+                ).sum().item()
         if vg_sum == 0.0:
             return None
         return min(1.0, math.sqrt(kl_clip / abs(vg_sum)))

@@ -1,7 +1,10 @@
 import os
 import kfac
 import torch
+import torch.distributed as dist
+
 from torchvision import datasets, transforms
+
 
 def get_cifar(args):
     transform_train = transforms.Compose([
@@ -16,12 +19,12 @@ def get_cifar(args):
     os.makedirs(args.data_dir, exist_ok=True)
 
     download = True if args.local_rank == 0 else False
-    if not download: args.backend.barrier()
+    if not download: dist.barrier()
     train_dataset = datasets.CIFAR10(root=args.data_dir, train=True, 
                                      download=download, transform=transform_train)
     test_dataset = datasets.CIFAR10(root=args.data_dir, train=False,
                                     download=download, transform=transform_test)
-    if download: args.backend.barrier()
+    if download: dist.barrier()
     
     return make_sampler_and_loader(args, train_dataset, test_dataset)
 
