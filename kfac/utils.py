@@ -5,14 +5,48 @@ from kfac import comm
 
 
 class WorkerAllocator(object):
+    """Worker Allocator Abstraction
+
+    Handles dividing up ranks into equal sized groups for sharing inverses
+    and preconditioned gradients using Broadcast Groups. This class is only
+    currently used by KFAC._assign_workers() to simplify the code in that
+    function.
+
+    Args:
+      size (int): world size
+      compute_grad_fraction (float): fraction of the workers in the world that
+          should be responsible for computing the gradient for a given layer.
+
+    Attributes:
+      grad_workers (int): number of workers that will compute the gradient
+          for a given layer.
+      size (int): world size
+      bcast_grad_ranks (list(list(int))): Each sublist represents a unique
+          subset of ranks that can be used as a broadcast group for the
+          gradients. I.e. in each sublist, one of the ranks will compute
+          the gradient and the other ranks will receive the gradient.
+      bcst_inv_ranks (list(list(int))): Each sublist represents a unqiue
+          group of ranks that will compute the gradient for a given layer.
+          All of the ranks computing a gradient for a given layer must have
+          the inverses sent to them so each sublist is the list of ranks
+          that need the inverse from the worker that will compute the inverse.
+      bcast_grad_groups (list(BroadcastGroup)): list of broadcast groups for
+          each sublist in bcast_grad_ranks.
+      bcast_inv_groups (list(BroadcastGroup)): list of broadcast groups for
+          each sublist in bcast_inv_ranks.
+      grad_groups (int): number of unique gradient broadcast groups
+      inv_groups (int): number of unique inverse broadcast groups
+    """
     def __init__(self, size, compute_grad_fraction):
+        grad_workers = max(1, round(size * compute_grad_fraction))
+        if size % grad_workers != 0:
+            raise ValueError('compute_grad_fraction must produce equally '
+                             'size groups')
         self.size = size
         self.compute_grad_fraction = compute_grad_fraction
-        # fraction is fraction of ranks in grad group
-        self.bcast_grad_ranks = self.partition_grad_ranks(size,
-                compute_grad_fraction)
-        self.bcast_inv_ranks = self.partition_inv_ranks(size,
-                compute_grad_fraction)
+        # fraction is # of workers that will compute the gradient for a layer
+        self.bcast_grad_ranks = partition_grad_ranks(size, grad_workers)
+        self.bcast_inv_ranks = partition_inv_ranks(size, grad_workers)
         self.bcast_inv_groups = [self.make_group(ranks) 
                 for ranks in self.bcast_inv_ranks]
         self.bcast_grad_groups = [self.make_group(ranks)
@@ -25,21 +59,6 @@ class WorkerAllocator(object):
     @property
     def inv_groups(self):
         return len(self.bcast_inv_groups)
-
-    # TODO(gpauloski): make not static
-    @staticmethod
-    def partition_grad_ranks(size, compute_grad_fraction):
-        grad_count = max(1, round(size * compute_grad_fraction))
-        inv_count = math.ceil(size / grad_count)
-        return [[j for j in range(i*grad_count, min((i+1)*grad_count, size))]
-                for i in range(0, inv_count)]
-
-    @staticmethod
-    def partition_inv_ranks(size, compute_grad_fraction):
-        grad_count = max(1, round(size * compute_grad_fraction))
-        inv_count = math.ceil(size / grad_count)
-        return [[j for j in range(i, size, grad_count)]
-                for i in range(0, grad_count)]
 
     def make_group(self, ranks):
         return comm.BroadcastGroup(ranks)
@@ -74,6 +93,18 @@ class WorkerAllocator(object):
     def _get_list_index(self, item, nested_list):
         return [i for i, sub_list in enumerate(nested_list)
                 if item in sub_list][0]
+
+
+def partition_inv_ranks(size, grad_workers):
+    # see test/worker_allocator.py for examples
+    return [[j for j in range(i, size, grad_workers)]
+            for i in range(0, grad_workers)]
+
+
+def partition_grad_ranks(size, grad_workers):
+    # see test/worker_allocator.py for examples
+    return [list(range(i, min(i+grad_workers, size)))
+            for i in range(0, size, grad_workers)] 
 
 
 def try_contiguous(x):
