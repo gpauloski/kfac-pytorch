@@ -90,8 +90,11 @@ def parse_args():
     parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
                         help='Compute A and G for a single layer on the same worker. ')
     parser.add_argument('--kfac-comm-method', type=str, default='comm-opt',
-                        help='KFAC communication optimization strategy. One of comm-opt '
-                             'or mem-opt. (default: comm-opt)')
+                        help='KFAC communication optimization strategy. One of comm-opt, '
+                             'mem-opt, or hybrid_opt. (default: comm-opt)')
+    parser.add_argument('--kfac-grad-worker-fraction', type=float, default=0.25,
+                        help='Fraction of workers to compute the gradients '
+                             'when using HYBRID_OPT (default: 0.25)')
     
     parser.add_argument('--backend', type=str, default='nccl',
                         help='backend for distribute training (default: nccl)')
@@ -108,6 +111,7 @@ def main():
     args = parse_args()
 
     torch.distributed.init_process_group(backend=args.backend, init_method='env://')
+    kfac.comm.init_comm_backend() 
 
     if args.cuda:
         torch.cuda.set_device(args.local_rank)
@@ -119,9 +123,9 @@ def main():
             torch.distributed.get_rank(), torch.distributed.get_world_size(),
             args.local_rank))
 
-    args.backend = kfac.utils.get_comm_backend()
-    args.base_lr = args.base_lr * args.backend.size() * args.batches_per_allreduce
-    args.verbose = True if args.backend.rank() == 0 else False
+    args.backend = kfac.comm.backend
+    args.base_lr = args.base_lr * dist.get_world_size() * args.batches_per_allreduce
+    args.verbose = True if dist.get_rank() == 0 else False
     args.horovod = False
 
     train_sampler, train_loader, _, val_loader = datasets.get_cifar(args)
@@ -179,7 +183,7 @@ def main():
         for scheduler in lr_schedules:
             scheduler.step()
         if (epoch > 0 and epoch % args.checkpoint_freq == 0 and 
-                args.backend.rank() == 0):
+                dist.get_rank() == 0):
             # Note: save model.module b/c model may be Distributed wrapper so saving
             # the underlying model is more generic
             save_checkpoint(model.module, optimizer, preconditioner, lr_schedules,
