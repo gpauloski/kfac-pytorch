@@ -104,11 +104,15 @@ for i, (data, target) in enumerate(train_loader):
 
 ### Communication Strategies
 
-KFAC has support for two communication strategies: `COMM_OPT` and `MEM_OPT` that can be selected when initializing KFAC.
+KFAC has support for three communication strategies: `COMM_OPT`, `MEM_OPT`, and `HYBRID_OPT` that can be selected when initializing KFAC.
 E.g. `kfac.KFAC(model, comm_method=kfac.CommMethod.COMM_OPT)`.
 `COMM_OPT` is the default communication method and the design introduced in the paper.
 `COMM_OPT` is designed to reduce communication frequency in non-KFAC update steps and increase maximum worker utilization.
 `MEM_OPT` is based on the communication strategy of [Osawa et al. (2019)](https://arxiv.org/pdf/1811.12019.pdf) and is designed to reduce memory usage at the cost of increased communication frequency.
+`HYBRID_OPT` combines features of `COMM_OPT` and `MEM_OPT` such that some fraction of workers will simultaneously compute the preconditioned gradients for a layer and broadcast the results to a subset of the remaining workers that are not responsible for computing the gradient.
+This results in memory usage that is more that `COMM_OPT` but less than `HYBRID_OPT`.
+KFAC will use the parameter `grad_worker_fraction` to determine how many workers should simultaneously compute the preconditioned gradient for a layer.
+Note that `COMM_OPT` is just `HYBRID_OPT` with `grad_worker_fraction=1` because all workers compute the preconditioned gradient while `MEM_OPT` is just `HYBRID_OPT` with `grad_worker_fraction=1/world_size` because only one worker compute the preconditioned gradient and broadcasts it to other workers.
 
 ### Gradient Accumulation
 
