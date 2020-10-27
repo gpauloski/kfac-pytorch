@@ -9,6 +9,24 @@ The KFAC code was originally forked from Chaoqi Wang's [KFAC-PyTorch](https://gi
 The ResNet models for Cifar10 are from Yerlan Idelbayev's [pytorch_resnet_cifar10](https://github.com/akamaster/pytorch_resnet_cifar10).
 The CIFAR-10 and ImageNet-1k training scripts are modeled after Horovod's example PyTorch training scripts.
 
+## Table of Contents
+
+- [Install](#install)
+- [Example Scripts](#example-scripts)
+  - [Horovod](#horovod)
+  - [Torch Distributed](#torch-distributed)
+- [Usage](#usage)
+  - [PyTorch](#pytorch-standard-and-distributed)
+  - [Horovod](#horovod)
+  - [Communication Strategies](#communication-strategies)
+  - [Gradient Accumulation](#gradient-accumulation)
+  - [Mixed-Precision Training](#mixed-precision-training)
+  - [Model Parallel](#model-parallel)
+  - [Module Support](#module-support)
+  - [KFAC Parameter Scheduling](#kfac-parameter-scheduling)
+  - [State Dict](#state-dict)
+- [Citation](#citation)
+
 ## Install
 
 ### Requirements
@@ -26,7 +44,7 @@ $ cd kfac_pytorch
 $ pip install .
 ```
 
-## Examples
+## Example Scripts
 
 Example scripts for K-FAC + SGD training on CIFAR-10 and ImageNet-1k are provided.
 For a full list of training parameters, use `--help`, e.g. `python examples/horovod_cifar10_resnet.py --help`.
@@ -39,7 +57,7 @@ The code used to produce the results from the paper is frozen in the [kfac-lw](h
 $ mpiexec -hostfile /path/to/hostfile -N $NGPU_PER_NODE python examples/horovod_{cifar10,imagenet}_resnet.py
 ```
 
-### torch.distributed
+### Torch Distributed
 
 #### Single Node, Multi-GPU
 ```
@@ -61,7 +79,7 @@ KFAC requires minimial code to add to existing training scripts.
 KFAC will automatically determine if distributed training is being used and what backend to use.
 See the [KFAC docstring](kfac/preconditioner.py) for a detailed list of KFAC parameters.
 
-### PyTorch (standard and distributed)
+### PyTorch Standard and Distributed
 
 ```Python
 from kfac import KFAC
@@ -106,9 +124,12 @@ for i, (data, target) in enumerate(train_loader):
 
 KFAC has support for three communication strategies: `COMM_OPT`, `MEM_OPT`, and `HYBRID_OPT` that can be selected when initializing KFAC.
 E.g. `kfac.KFAC(model, comm_method=kfac.CommMethod.COMM_OPT)`.
+
 `COMM_OPT` is the default communication method and the design introduced in the paper.
 `COMM_OPT` is designed to reduce communication frequency in non-KFAC update steps and increase maximum worker utilization.
+
 `MEM_OPT` is based on the communication strategy of [Osawa et al. (2019)](https://arxiv.org/pdf/1811.12019.pdf) and is designed to reduce memory usage at the cost of increased communication frequency.
+
 `HYBRID_OPT` combines features of `COMM_OPT` and `MEM_OPT` such that some fraction of workers will simultaneously compute the preconditioned gradients for a layer and broadcast the results to a subset of the remaining workers that are not responsible for computing the gradient.
 This results in memory usage that is more that `COMM_OPT` but less than `HYBRID_OPT`.
 KFAC will use the parameter `grad_worker_fraction` to determine how many workers should simultaneously compute the preconditioned gradient for a layer.
@@ -195,7 +216,7 @@ E.g. because the model changed or KFAC was initialized to skip different modules
 ## Citation
 
 ```
-@article{pauloski2020convolutional,
+@article{pauloski2020kfac,
     title={Convolutional Neural Network Training with Distributed K-FAC},
     author={J. Gregory Pauloski and Zhao Zhang and Lei Huang and Weijia Xu and Ian T. Foster},
     year={2020},
