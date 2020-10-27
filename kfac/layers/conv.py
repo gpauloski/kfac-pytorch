@@ -47,7 +47,6 @@ class Conv2dLayer(KFACLayer):
         g = utils.reshape_data(reshaped_g, batch_first=self.batch_first)
         return utils.get_cov(g)
     
-    # TODO: refactor extract_params to not reuire x arg
     def _extract_patches(self, x):
         """Extract patches from convolutional layer
         Args:
