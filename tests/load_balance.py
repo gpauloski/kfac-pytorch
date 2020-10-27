@@ -1,8 +1,7 @@
 import unittest
-import sys
 
-sys.path.append('../')
-from utils import load_balance
+from kfac.utils import load_balance
+
 
 class TestLoadBalance(unittest.TestCase):
 

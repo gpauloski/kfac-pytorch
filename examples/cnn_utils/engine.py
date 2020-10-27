@@ -17,8 +17,8 @@ def train(epoch,
 
     model.train()
     train_sampler.set_epoch(epoch)
-    train_loss = Metric('train_loss', args.backend) 
-    train_accuracy = Metric('train_accuracy', args.backend)
+    train_loss = Metric('train_loss') 
+    train_accuracy = Metric('train_accuracy')
     scaler = args.grad_scaler if 'grad_scaler' in args else None
 
     with tqdm(total=len(train_loader),
@@ -99,8 +99,8 @@ def test(epoch,
          val_loader, 
          args):
     model.eval()
-    val_loss = Metric('val_loss', args.backend)
-    val_accuracy = Metric('val_accuracy', args.backend)
+    val_loss = Metric('val_loss')
+    val_accuracy = Metric('val_accuracy')
 
     with tqdm(total=len(val_loader),
               bar_format='{l_bar}{bar:10}|{postfix}',
