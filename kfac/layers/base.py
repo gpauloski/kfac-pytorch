@@ -23,6 +23,16 @@ class KFACLayer(object):
         self.use_eigen_decomp=use_eigen_decomp
         self.eps = 1e-10
 
+        if self.factor_dtype is None and self.grad_scaler is not None:
+            self.factor_dtype = torch.float16
+        else:
+            self.factor_dtype = torch.float32
+
+        if self.inv_dtype is None and self.grad_scaler is not None:
+            self.inv_dtype = torch.float16
+        else:
+            self.inv_dtype = torch.float32
+
         # Should be overridden by implementing class
         self.has_bias = False
         self.factors_are_symmetric = True
@@ -270,13 +280,13 @@ class KFACLayer(object):
     def save_inputs(self, input):
         """Save inputs locally"""
         if self.accumulate_data:
-            self.a_inputs.append(input[0].data)
+            self.a_inputs.append(input[0].data.to(self.factor_dtype))
         else:
-            self.a_inputs = [input[0].data]
+            self.a_inputs = [input[0].data.to(self.factor_dtype)]
 
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
-        g = grad_output[0].data
+        g = grad_output[0].data.to(self.factor_dtype)
         if self.grad_scaler is not None:
             g = (g, self.grad_scaler.get_scale())
         if self.accumulate_data:
@@ -287,8 +297,8 @@ class KFACLayer(object):
     def update_A_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
         A_new = self._get_A_factor(self.a_inputs)
-        if self.factor_dtype is not None:
-            A_new = A_new.to(self.factor_dtype)
+        #if self.factor_dtype is not None:
+        #    A_new = A_new.to(self.factor_dtype)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self.A_factor = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
@@ -311,8 +321,8 @@ class KFACLayer(object):
                               'many gradients are discarded.')
 
         G_new = self._get_G_factor(self.g_outputs)
-        if self.factor_dtype is not None:
-            G_new = G_new.to(self.factor_dtype)
+        #if self.factor_dtype is not None:
+        #    G_new = G_new.to(self.factor_dtype)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self.G_factor = torch.diag(G_new.new(G_new.shape[0]).fill_(1))
@@ -357,15 +367,14 @@ class KFACLayer(object):
     
     def _get_precondition_gradient_eigen(self, damping=0.001):
         """Compute preconditioned gradient for eigendecomp method"""
-        grad = self.get_gradient()
-        QA, QG = self.A_inv[:,:-1].float(), self.G_inv[:,:-1].float()
-        dA, dG = self.A_inv[:,-1].float(), self.G_inv[:,-1].float()
+        QA, QG = self.A_inv[:,:-1], self.G_inv[:,:-1]
+        dA, dG = self.A_inv[:,-1], self.G_inv[:,-1]
+        grad = self.get_gradient().to(self.A_inv.dtype)
         v1 = QG.t() @ grad @ QA
         v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + damping)
-        return QG @ v2 @ QA.t()
+        return (QG @ v2 @ QA.t()).float()
 
     def _get_precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method"""
-        grad = self.get_gradient() 
-        return self.G_inv.float() @ grad @ self.A_inv.float()
-
+        grad = self.get_gradient().to(self.A_inv.dtype)
+        return (self.G_inv @ grad @ self.A_inv).float()
