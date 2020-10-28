@@ -86,6 +86,12 @@ class KFAC(optim.Optimizer):
           factors on the same device can yeild improvements. When using 
           `MEM_OPT`, distribute_layer_factors is forced to False. 
           (default: True)
+      factor_dtype (torch.dtype, optional): Force KFAC to store factors as
+          specified dtype. If None, infer type based on training method. E.g.
+          if torch.cuda.amp is enabled, factors will be stored in FP16.
+          This may be helpful if there are errors when casting from FP32 to 
+          FP16. (default: None)
+      inverse_dtype (bool, optional): See factor_dtype. (default: None)
       grad_scaler (torch.cuda.amp.GradScaler, optional): Gradient scaler used
           if using torch.cuda.amp for fp16 training. KFAC will use the same
           data type for storing the factors as the data in the forward/backward
@@ -124,8 +130,10 @@ class KFAC(optim.Optimizer):
                  comm_method=CommMethod.COMM_OPT,
                  compute_factor_in_hook=False,
                  distribute_layer_factors=True,
+                 factor_dtype=None,
                  grad_scaler=None,
                  grad_worker_fraction=0.25,
+                 inverse_dtype=None,
                  use_eigen_decomp=True,
                  skip_layers=[],
                  verbose=False):
@@ -192,6 +200,8 @@ class KFAC(optim.Optimizer):
         self.comm_method = comm_method
         self.compute_factor_in_hook = compute_factor_in_hook
         self.distribute_layer_factors = distribute_layer_factors
+        self.factor_dtype = factor_dtype
+        self.inverse_dtype = inverse_dtype
         self.grad_scaler = grad_scaler
         self.use_eigen_decomp = use_eigen_decomp
         self.skip_layers = skip_layers
@@ -327,7 +337,9 @@ class KFAC(optim.Optimizer):
             module,
             accumulate_data = self.accumulate_data,
             batch_first = self.batch_first,
+            factor_dtype = self.factor_dtype,
             grad_scaler = self.grad_scaler,
+            inv_dtype = self.inverse_dtype,
             use_eigen_decomp = self.use_eigen_decomp,
         )
         for module, kfac_layer in layer_list:

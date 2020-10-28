@@ -10,12 +10,16 @@ class KFACLayer(object):
                  module,
                  accumulate_data=True,
                  batch_first=True,
+                 factor_dtype=None,
                  grad_scaler=None,
+                 inv_dtype=None,
                  use_eigen_decomp=True):
         self.module = module
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
+        self.factor_dtype = factor_dtype
         self.grad_scaler = grad_scaler
+        self.inv_dtype = inv_dtype
         self.use_eigen_decomp=use_eigen_decomp
         self.eps = 1e-10
 
@@ -173,6 +177,7 @@ class KFACLayer(object):
         if self.keep_inv_copy is None:
             raise ValueError('Grad workers have not been assigned to layer yet.')
 
+        # Init inv buffer for ranks that will receive the inverse
         if self.A_inv is None and self.keep_inv_copy:
             if self.A_factor is None:
                 raise RuntimeError('update_A_factor() must be called at least '
@@ -182,11 +187,14 @@ class KFACLayer(object):
                 shape = (self.A_factor.shape[0], self.A_factor.shape[0] + 1) 
             else:
                 shape = self.A_factor.shape
-            self.A_inv = self.A_factor.new_zeros(shape).to(torch.float32)
+            self.A_inv = self.A_factor.new_zeros(shape)
+            if self.inv_dtype is not None:
+                self.A_inv = self.A_inv.to(self.inv_dtype)
 
         if ignore_rank or comm.backend.rank() == self.compute_A_inv_rank:
             self.A_inv = self._compute_factor_inverse(
-                    self.A_factor.float(), damping)
+                    self.A_factor.float(), damping).to(self.A_factor.dtype
+                    if self.inv_dtype is None else self.inv_dtype)
 
     def compute_G_inv(self, damping=0.001, ignore_rank=False):
         """Compute G inverse on specified ranks
@@ -207,11 +215,14 @@ class KFACLayer(object):
                 shape = (self.G_factor.shape[0], self.G_factor.shape[0] + 1) 
             else:
                 shape = self.G_factor.shape
-            self.G_inv = self.G_factor.new_zeros(shape).to(torch.float32)
+            self.G_inv = self.G_factor.new_zeros(shape)
+            if self.inv_dtype is not None:
+                self.G_inv = self.G_inv.to(self.inv_dtype)
 
         if ignore_rank or comm.backend.rank() == self.compute_G_inv_rank:
             self.G_inv = self._compute_factor_inverse(
-                    self.G_factor.float(), damping)
+                    self.G_factor.float(), damping).to(self.G_factor.dtype
+                    if self.inv_dtype is None else self.inv_dtype)
 
     def get_gradient(self):
         """Get formated gradients (weight and bias) of module
@@ -276,6 +287,8 @@ class KFACLayer(object):
     def update_A_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
         A_new = self._get_A_factor(self.a_inputs)
+        if self.factor_dtype is not None:
+            A_new = A_new.to(self.factor_dtype)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self.A_factor = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
@@ -298,6 +311,8 @@ class KFACLayer(object):
                               'many gradients are discarded.')
 
         G_new = self._get_G_factor(self.g_outputs)
+        if self.factor_dtype is not None:
+            G_new = G_new.to(self.factor_dtype)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self.G_factor = torch.diag(G_new.new(G_new.shape[0]).fill_(1))
@@ -343,8 +358,8 @@ class KFACLayer(object):
     def _get_precondition_gradient_eigen(self, damping=0.001):
         """Compute preconditioned gradient for eigendecomp method"""
         grad = self.get_gradient()
-        QA, QG = self.A_inv[:,:-1], self.G_inv[:,:-1]
-        dA, dG = self.A_inv[:,-1], self.G_inv[:,-1]
+        QA, QG = self.A_inv[:,:-1].float(), self.G_inv[:,:-1].float()
+        dA, dG = self.A_inv[:,-1].float(), self.G_inv[:,-1].float()
         v1 = QG.t() @ grad @ QA
         v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + damping)
         return QG @ v2 @ QA.t()
@@ -352,5 +367,5 @@ class KFACLayer(object):
     def _get_precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method"""
         grad = self.get_gradient() 
-        return self.G_inv @ grad @ self.A_inv
+        return self.G_inv.float() @ grad @ self.A_inv.float()
 
