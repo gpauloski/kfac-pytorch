@@ -91,7 +91,7 @@ class KFAC(optim.Optimizer):
           if torch.cuda.amp is enabled, factors will be stored in FP16.
           This may be helpful if there are errors when casting from FP32 to 
           FP16. (default: None)
-      inverse_dtype (bool, optional): See factor_dtype. (default: None)
+      inverse_dtype (bool, optional): See factor_dtype. (default: torch.float32)
       grad_scaler (torch.cuda.amp.GradScaler, optional): Gradient scaler used
           if using torch.cuda.amp for fp16 training. KFAC will use the same
           data type for storing the factors as the data in the forward/backward
@@ -133,7 +133,7 @@ class KFAC(optim.Optimizer):
                  factor_dtype=None,
                  grad_scaler=None,
                  grad_worker_fraction=0.25,
-                 inverse_dtype=None,
+                 inverse_dtype=torch.float32,
                  use_eigen_decomp=True,
                  skip_layers=[],
                  verbose=False):
