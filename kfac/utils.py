@@ -95,13 +95,13 @@ class WorkerAllocator(object):
                 if item in sub_list][0]
 
 
-def partition_inv_ranks(size, grad_workers):
+def partition_grad_ranks(size, grad_workers):
     # see test/worker_allocator.py for examples
     return [[j for j in range(i, size, grad_workers)]
             for i in range(0, grad_workers)]
 
 
-def partition_grad_ranks(size, grad_workers):
+def partition_inv_ranks(size, grad_workers):
     # see test/worker_allocator.py for examples
     return [list(range(i, min(i+grad_workers, size)))
             for i in range(0, size, grad_workers)] 
