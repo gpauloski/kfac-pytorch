@@ -42,7 +42,6 @@ def train(epoch,
                     output = model(data_batch)
                     loss = loss_func(output, target_batch)
                 
-                loss_ = loss.detach().clone() 
                 loss = loss / args.batches_per_allreduce
 
                 if args.horovod:
@@ -61,7 +60,7 @@ def train(epoch,
                             loss.backward()
 
                 with torch.no_grad():            
-                    train_loss.update(loss_)
+                    train_loss.update(loss)
                     train_accuracy.update(accuracy(output, target_batch))
 
             if args.horovod:
