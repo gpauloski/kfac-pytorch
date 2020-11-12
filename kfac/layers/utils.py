@@ -123,6 +123,44 @@ def reshape_data(data_list, batch_first=True, collapse_dims=False):
         d = d.view(-1, d.shape[-1])
     return d
 
+def get_triu(tensor):
+    """Returns flattened upper triangle of 2D tensor"""
+    if len(tensor.shape) != 2:
+        raise ValueError('triu(tensor) requires tensor to be 2 dimensional')
+    if tensor.shape[0] > tensor.shape[1]:
+        raise ValueError('tensor cannot have more rows than columns')
+    idxs = torch.triu_indices(tensor.shape[0], tensor.shape[1],
+                              device=tensor.device)
+    return tensor[idxs[0], idxs[1]]
+
+def fill_triu(shape, triu_tensor):
+    """Reconstruct symmetric 2D tensor from flattened upper triangle
+
+    Usage:
+      >>> x = tensor.new_empty([10, 10])
+      >>> triu_x = get_triu(x)
+      >>> x_new = fill_triu([10, 10], triu_tensor)
+      >>> assert torch.equal(x, x_new)  # true
+
+    Args:
+      shape (tuple): tuple(rows, cols) of size of output tensor
+      triu_tensor (tensor): flattened upper triangle of the tensor returned by
+          get_triu()
+
+    Returns:
+      Symmetric tensor with `shape` where the upper/lower triangles are filled
+          with the data in `triu_tensor`
+    """
+    if len(shape) != 2:
+        raise ValueError('shape must be 2 dimensional') 
+    rows, cols = shape
+    dst_tensor = triu_tensor.new_empty(shape)
+    idxs = torch.triu_indices(rows, cols, device=triu_tensor.device)
+    dst_tensor[idxs[0], idxs[1]] = triu_tensor
+    idxs = torch.triu_indices(rows, rows, 1, device=dst_tensor.device)
+    dst_tensor.transpose(0, 1)[idxs[0], idxs[1]] = dst_tensor[idxs[0], idxs[1]]
+    return dst_tensor
+
 def update_running_avg(new, current, alpha=1.0):
     """Computes in-place running average
 
