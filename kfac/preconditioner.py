@@ -70,7 +70,7 @@ class KFAC(optim.Optimizer):
           LSTMCells) or if you are accumulating gradients over multiple batches
           and you want KFAC to use the input/output for all batches when
           computing the factors. Note: if accumulating the data, memory usage
-          can increase substantially. (default: True)
+          can increase substantially. (default: False)
       batch_first (bool, optional): True if the batch dimension is dim 0
           (default: True)
       comm_method (CommMethod, optional): Communication optimization
@@ -125,7 +125,7 @@ class KFAC(optim.Optimizer):
                  inv_update_freq=100,
                  kl_clip=0.001,
                  lr=0.1,
-                 accumulate_data=True,
+                 accumulate_data=False,
                  batch_first=True,
                  comm_method=CommMethod.COMM_OPT,
                  compute_factor_in_hook=False,
