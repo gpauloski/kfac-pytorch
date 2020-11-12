@@ -125,8 +125,8 @@ if __name__ == '__main__':
     if args.cuda:
         torch.cuda.set_device(args.local_rank)
         torch.cuda.manual_seed(args.seed)
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
+        #torch.backends.cudnn.benchmark = False
+        #torch.backends.cudnn.deterministic = True
 
     print('rank = {}, world_size = {}, device_ids = {}'.format(
             torch.distributed.get_rank(), torch.distributed.get_world_size(),
