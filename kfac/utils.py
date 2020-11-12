@@ -61,7 +61,7 @@ class WorkerAllocator(object):
         return len(self.bcast_inv_groups)
 
     def make_group(self, ranks):
-        return comm.BroadcastGroup(ranks)
+        return comm.CommGroup(ranks)
 
     def get_grad_groups(self, src_ranks):
         pairs = []

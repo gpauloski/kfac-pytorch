@@ -13,7 +13,8 @@ class KFACLayer(object):
                  factor_dtype=None,
                  grad_scaler=None,
                  inv_dtype=None,
-                 use_eigen_decomp=True):
+                 use_eigen_decomp=True,
+                 symmetry_aware_comm=False):
         self.module = module
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
@@ -21,6 +22,7 @@ class KFACLayer(object):
         self.grad_scaler = grad_scaler
         self.inv_dtype = inv_dtype
         self.use_eigen_decomp=use_eigen_decomp
+        self.symmetry_aware_comm=symmetry_aware_comm
         self.eps = 1e-10
 
         if self.factor_dtype is None and self.grad_scaler is not None:
@@ -117,6 +119,10 @@ class KFACLayer(object):
         Returns:
           list of async work handles
         """
+        if self.factors_are_symmetric and self.symmetry_aware_comm:
+            # Only broadcast upper triangle
+            self.A_factor_flat = utils.get_triu(self.A_factor)
+            self.G_factor_flat = utils.get_triu(self.G_factor)
         return [comm.backend.allreduce(self.A_factor),
                 comm.backend.allreduce(self.G_factor)]
 
@@ -132,6 +138,10 @@ class KFACLayer(object):
         """
         if not self.keep_inv_copy:
             return []
+        if self.factors_are_symmetric and self.symmetry_aware_comm:
+            # Only broadcast upper triangle
+            self.A_inv = utils.get_triu(self.A_inv)
+            self.G_inv = utils.get_triu(self.G_inv)
         return [comm.backend.broadcast(self.A_inv, src=self.compute_A_inv_rank,
                         group=self.broadcast_A_inv_group),
                 comm.backend.broadcast(self.G_inv, src=self.compute_G_inv_rank,
@@ -186,6 +196,12 @@ class KFACLayer(object):
             raise ValueError('Workers have not been assigned to layer yet.')
         if self.keep_inv_copy is None:
             raise ValueError('Grad workers have not been assigned to layer yet.')
+        
+        if self.factors_are_symmetric and self.symmetry_aware_comm:
+            # Reconstruct factor if it was flattened for communication
+            if hasattr(self, 'A_factor_flat'):
+                self.A_factor = utils.fill_triu(self.A_factor.shape, self.A_factor_flat)
+                del self.A_factor_flat
 
         # Init inv buffer for ranks that will receive the inverse
         if self.A_inv is None and self.keep_inv_copy:
@@ -215,6 +231,12 @@ class KFACLayer(object):
             raise ValueError('Workers have not been assigned to layer yet.')
         if self.keep_inv_copy is None:
             raise ValueError('Grad workers have not been assigned to layer yet.')
+        
+        if self.factors_are_symmetric and self.symmetry_aware_comm:
+            # Reconstruct factor if it was flattened for communication
+            if hasattr(self, 'G_factor_flat'):
+                self.G_factor = utils.fill_triu(self.G_factor.shape, self.G_factor_flat)
+                del self.G_factor_flat
 
         if self.G_inv is None and self.keep_inv_copy:
             if self.G_factor is None:
@@ -263,6 +285,19 @@ class KFACLayer(object):
         if comm.backend.rank() not in self.compute_grad_ranks:
             return
 
+        if self.factors_are_symmetric and self.symmetry_aware_comm:
+            # Reconstruct inv if it was flattened for communication
+            if len(self.A_inv.shape) == 1:
+                rows, cols = self.A_factor.shape
+                if self.use_eigen_decomp:
+                    cols += 1
+                self.A_inv = utils.fill_triu([rows, cols], self.A_inv)
+            if len(self.G_inv.shape) == 1:
+                rows, cols = self.G_factor.shape
+                if self.use_eigen_decomp:
+                    cols += 1
+                self.G_inv = utils.fill_triu([rows, cols], self.G_inv)
+
         # Compute preconditioned gradient using specified inverse method
         if self.use_eigen_decomp:
             grad = self._get_precondition_gradient_eigen(damping)
@@ -297,8 +332,8 @@ class KFACLayer(object):
     def update_A_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
         A_new = self._get_A_factor(self.a_inputs)
-        #if self.factor_dtype is not None:
-        #    A_new = A_new.to(self.factor_dtype)
+        if self.factor_dtype is not None:
+            A_new = A_new.to(self.factor_dtype)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self.A_factor = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
@@ -321,8 +356,8 @@ class KFACLayer(object):
                               'many gradients are discarded.')
 
         G_new = self._get_G_factor(self.g_outputs)
-        #if self.factor_dtype is not None:
-        #    G_new = G_new.to(self.factor_dtype)
+        if self.factor_dtype is not None:
+            G_new = G_new.to(self.factor_dtype)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self.G_factor = torch.diag(G_new.new(G_new.shape[0]).fill_(1))

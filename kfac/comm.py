@@ -50,7 +50,7 @@ class Ops(enum.Enum):
     Sum = "sum"
 
 
-class BroadcastGroup(object):
+class CommGroup(object):
     def __init__(self, ranks):
         self.ranks = ranks
         if (_torch_distributed_is_initialized() and 
@@ -81,12 +81,14 @@ class CommBackend(object):
         """Get unique worker rank"""
         return 0
     
-    def allreduce(self, tensor, op=Ops.Average, async=True):
+    def allreduce(self, tensor, op=Ops.Average, group=None, async=True):
         """Allreduce tensor inplace.
 
         Args:
           tensor (torch.Tensor)
           op (Op): reduction operation to apply (default: Ops.Average)
+          group (CommGroup): CommGroup for collective
+              communication. If None, uses default group (default: None).
           async (bool): whether this op should be asynchronous (default: True)
 
         Returns:
@@ -94,13 +96,13 @@ class CommBackend(object):
         """
         return
 
-    def broadcast(self, tensor, src, group, async=True):
+    def broadcast(self, tensor, src, group=None, async=True):
         """Broadcast tensor.
 
         Args:
           tensor (torch.Tensor)
           src (int): source rank for tensor.
-          group (BroadcastGroup): BroadcastGroup for collective
+          group (CommGroup): CommGroup for collective
               communication. If None, uses default group (default: None).
           async (bool, optional): whether this op should be asynchronous
 
@@ -148,7 +150,7 @@ class HorovodBackend(CommBackend):
     def rank(self):
         return hvd.rank()
 
-    def allreduce(self, tensor, op=Ops.Average, async=True):
+    def allreduce(self, tensor, op=Ops.Average, group=None, async=True):
         op = self._get_op(op)
         if async:
             return hvd.allreduce_async_(tensor, op=op)
@@ -203,11 +205,17 @@ class TorchBackend(CommBackend):
     def rank(self):
         return dist.get_rank()
     
-    def allreduce(self, tensor, op=Ops.Average, async=True):
+    def allreduce(self, tensor, op=Ops.Average, group=None, async=True):
+        if group is not None:
+            if group.size <= 1:
+                return
+            kwargs = {'group': group.group} if group.group is not None else {}
+        else:
+            kwargs = {}
         # Note: actually returns tuple(handle, tensor)
         # because there is no average op in Torch distribted so
         # we need to pass the tensor to sync() to be averages
-        handle = dist.all_reduce(tensor, async_op=async)
+        handle = dist.all_reduce(tensor, async_op=async, **kwargs)
  
         if not async:
             if op == Ops.Average:
