@@ -40,7 +40,7 @@ class Metric(object):
 
     def update(self, val, n=1):
         comm.backend.allreduce(val, async=False)
-        self.total += float(val.cpu())
+        self.total += val.cpu()
         self.n += n
 
     @property
