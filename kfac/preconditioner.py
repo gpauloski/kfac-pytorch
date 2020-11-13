@@ -211,9 +211,9 @@ class KFAC(optim.Optimizer):
 
         comm.init_comm_backend()
         if self.comm_method == CommMethod.COMM_OPT:
-            self.grad_worker_fraction = 0
+            self.grad_worker_fraction = 1
         elif self.comm_method == CommMethod.MEM_OPT:
-            self.grad_worker_fraction = 1.0
+            self.grad_worker_fraction = 0
         elif self.comm_method == CommMethod.HYBRID_OPT:
             size = comm.backend.size()
             if 'Horovod' in self.comm_method.__class__.__name__:
