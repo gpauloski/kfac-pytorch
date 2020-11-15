@@ -123,6 +123,8 @@ class KFACLayer(object):
             # Only broadcast upper triangle
             self.A_factor_flat = utils.get_triu(self.A_factor)
             self.G_factor_flat = utils.get_triu(self.G_factor)
+            return [comm.backend.allreduce(self.A_factor_flat),
+                    comm.backend.allreduce(self.G_factor_flat)]
         return [comm.backend.allreduce(self.A_factor),
                 comm.backend.allreduce(self.G_factor)]
 
@@ -138,7 +140,8 @@ class KFACLayer(object):
         """
         if not self.keep_inv_copy:
             return []
-        if self.factors_are_symmetric and self.symmetry_aware_comm:
+        if (self.factors_are_symmetric and self.symmetry_aware_comm and
+                not self.use_eigen_decomp):
             # Only broadcast upper triangle
             self.A_inv = utils.get_triu(self.A_inv)
             self.G_inv = utils.get_triu(self.G_inv)
@@ -285,7 +288,8 @@ class KFACLayer(object):
         if comm.backend.rank() not in self.compute_grad_ranks:
             return
 
-        if self.factors_are_symmetric and self.symmetry_aware_comm:
+        if (self.factors_are_symmetric and self.symmetry_aware_comm and
+                not self.use_eigen_decomp):
             # Reconstruct inv if it was flattened for communication
             if len(self.A_inv.shape) == 1:
                 rows, cols = self.A_factor.shape
@@ -408,6 +412,7 @@ class KFACLayer(object):
         v1 = QG.t() @ grad @ QA
         v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + damping)
         return (QG @ v2 @ QA.t()).float()
+        
 
     def _get_precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method"""
