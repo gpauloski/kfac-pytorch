@@ -180,7 +180,8 @@ if __name__ == '__main__':
     # Restore from a previous checkpoint, if initial_epoch is specified.
     if args.resume_from_epoch > 0:
         filepath = args.checkpoint_format.format(epoch=args.resume_from_epoch)
-        checkpoint = torch.load(filepath)
+        map_location = {'cuda:0': 'cuda:{}'.format(args.local_rank)}
+        checkpoint = torch.load(filepath, map_location=map_location)
         model.module.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         if isinstance(checkpoint['schedulers'], list):
