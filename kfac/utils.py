@@ -1,7 +1,36 @@
-import torch
 import math
+import time
+import torch
 
 from kfac import comm
+
+
+FUNC_TRACES = {}
+
+
+def print_trace():
+    """Print function execution times recorded with @trace
+
+    To trace function execution times, use the @kfac.utils.trace
+    decorator on all functions to be traced. Then to get the average
+    execution times, call kfac.utils.print_trace().
+    """
+    for fname, times in FUNC_TRACES.items():
+        print('{}: {}'.format(fname, sum(times)/len(times)))
+
+
+def trace(func):
+    def func_timer(*args, **kwargs):
+        t = time.time()
+        out = func(*args, **kwargs)
+        t = time.time() - t
+
+        if func.__name__ not in FUNC_TRACES:
+            FUNC_TRACES[func.__name__] = [t]
+        else:
+            FUNC_TRACES[func.__name__].append(t)
+        return out
+    return func_timer
 
 
 class WorkerAllocator(object):
