@@ -574,6 +574,8 @@ class KFAC(optim.Optimizer):
         b = 0
 
         def sizeof_tensor(tensor):
+            if isinstance(tensor, list) or isinstance(tensor, tuple):
+                return sum([sizeof_tensor(t) for t in tensor])
             return (tensor.nelement() * tensor.element_size() 
                     if tensor is not None else 0)
 

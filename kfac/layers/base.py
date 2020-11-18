@@ -25,15 +25,12 @@ class KFACLayer(object):
         self.symmetry_aware_comm=symmetry_aware_comm
         self.eps = 1e-10
 
-        if self.factor_dtype is None and self.grad_scaler is not None:
-            self.factor_dtype = torch.float16
-        else:
-            self.factor_dtype = torch.float32
-
-        if self.inv_dtype is None and self.grad_scaler is not None:
-            self.inv_dtype = torch.float16
-        else:
-            self.inv_dtype = torch.float32
+        if self.factor_dtype is None:
+            self.factor_dtype = (torch.float32 if self.grad_scaler is None 
+                                            else torch.float16)
+        if self.inv_dtype is None: 
+            self.inv_dtype = (torch.float32 if self.grad_scaler is None 
+                                            else torch.float16)
 
         # Should be overridden by implementing class
         self.has_bias = False
@@ -140,8 +137,16 @@ class KFACLayer(object):
         """
         if not self.keep_inv_copy:
             return []
-        if (self.factors_are_symmetric and self.symmetry_aware_comm and
-                not self.use_eigen_decomp):
+        if self.use_eigen_decomp:
+            return [comm.backend.broadcast(self.A_inv[0], src=self.compute_A_inv_rank,
+                            group=self.broadcast_A_inv_group),
+                    comm.backend.broadcast(self.A_inv[1], src=self.compute_A_inv_rank,
+                            group=self.broadcast_A_inv_group),
+                    comm.backend.broadcast(self.G_inv[0], src=self.compute_G_inv_rank,
+                            group=self.broadcast_G_inv_group),
+                    comm.backend.broadcast(self.G_inv[1], src=self.compute_G_inv_rank,
+                            group=self.broadcast_G_inv_group)]
+        if self.factors_are_symmetric and self.symmetry_aware_comm:
             # Only broadcast upper triangle
             self.A_inv = utils.get_triu(self.A_inv)
             self.G_inv = utils.get_triu(self.G_inv)
@@ -211,19 +216,10 @@ class KFACLayer(object):
             if self.A_factor is None:
                 raise RuntimeError('update_A_factor() must be called at least '
                                    'once before calling compute_A_inv().')
-            if self.use_eigen_decomp:
-                # add one axtra column for eigenvalues
-                shape = (self.A_factor.shape[0], self.A_factor.shape[0] + 1) 
-            else:
-                shape = self.A_factor.shape
-            self.A_inv = self.A_factor.new_zeros(shape)
-            if self.inv_dtype is not None:
-                self.A_inv = self.A_inv.to(self.inv_dtype)
+            self.A_inv = self._get_empty_inv(self.A_factor)
 
         if ignore_rank or comm.backend.rank() == self.compute_A_inv_rank:
-            self.A_inv = self._compute_factor_inverse(
-                    self.A_factor.float(), damping).to(self.A_factor.dtype
-                    if self.inv_dtype is None else self.inv_dtype)
+            self.A_inv = self._compute_factor_inverse(self.A_factor, damping)
 
     def compute_G_inv(self, damping=0.001, ignore_rank=False):
         """Compute G inverse on specified ranks
@@ -241,23 +237,15 @@ class KFACLayer(object):
                 self.G_factor = utils.fill_triu(self.G_factor.shape, self.G_factor_flat)
                 del self.G_factor_flat
 
+        # Init inv buffer for ranks that will receive the inverse
         if self.G_inv is None and self.keep_inv_copy:
             if self.G_factor is None:
                 raise RuntimeError('update_G_factor() must be called at least '
                                    'once before calling compute_G_inv().')
-            if self.use_eigen_decomp:
-                # add one axtra column for eigenvalues
-                shape = (self.G_factor.shape[0], self.G_factor.shape[0] + 1) 
-            else:
-                shape = self.G_factor.shape
-            self.G_inv = self.G_factor.new_zeros(shape)
-            if self.inv_dtype is not None:
-                self.G_inv = self.G_inv.to(self.inv_dtype)
+            self.G_inv = self._get_empty_inv(self.G_factor)
 
         if ignore_rank or comm.backend.rank() == self.compute_G_inv_rank:
-            self.G_inv = self._compute_factor_inverse(
-                    self.G_factor.float(), damping).to(self.G_factor.dtype
-                    if self.inv_dtype is None else self.inv_dtype)
+            self.G_inv = self._compute_factor_inverse(self.G_factor, damping)
 
     def get_gradient(self):
         """Get formated gradients (weight and bias) of module
@@ -288,25 +276,24 @@ class KFACLayer(object):
         if comm.backend.rank() not in self.compute_grad_ranks:
             return
 
-        if (self.factors_are_symmetric and self.symmetry_aware_comm and
-                not self.use_eigen_decomp):
-            # Reconstruct inv if it was flattened for communication
-            if len(self.A_inv.shape) == 1:
-                rows, cols = self.A_factor.shape
-                if self.use_eigen_decomp:
-                    cols += 1
-                self.A_inv = utils.fill_triu([rows, cols], self.A_inv)
-            if len(self.G_inv.shape) == 1:
-                rows, cols = self.G_factor.shape
-                if self.use_eigen_decomp:
-                    cols += 1
-                self.G_inv = utils.fill_triu([rows, cols], self.G_inv)
-
         # Compute preconditioned gradient using specified inverse method
         if self.use_eigen_decomp:
             grad = self._get_precondition_gradient_eigen(damping)
         else:
+            if self.factors_are_symmetric and self.symmetry_aware_comm:
+                # Reconstruct inv if it was flattened for communication
+                if len(self.A_inv.shape) == 1:
+                    rows, cols = self.A_factor.shape
+                    if self.use_eigen_decomp:
+                        cols += 1
+                    self.A_inv = utils.fill_triu([rows, cols], self.A_inv)
+                if len(self.G_inv.shape) == 1:
+                    rows, cols = self.G_factor.shape
+                    if self.use_eigen_decomp:
+                        cols += 1
+                    self.G_inv = utils.fill_triu([rows, cols], self.G_inv)
             grad = self._get_precondition_gradient_inv()
+
         # Reshape appropriately
         if self.has_bias:
             grad = [grad[:, :-1], grad[:, -1:]]
@@ -335,9 +322,9 @@ class KFACLayer(object):
 
     def update_A_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
-        A_new = self._get_A_factor(self.a_inputs)
-        if self.factor_dtype is not None:
-            A_new = A_new.to(self.factor_dtype)
+        if len(self.a_inputs) == 0 and self.A_factor is not None:
+            return
+        A_new = self._get_A_factor(self.a_inputs).to(self.factor_dtype)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self.A_factor = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
@@ -359,9 +346,9 @@ class KFACLayer(object):
                               'Note this can degrade KFAC performance if too '
                               'many gradients are discarded.')
 
-        G_new = self._get_G_factor(self.g_outputs)
-        if self.factor_dtype is not None:
-            G_new = G_new.to(self.factor_dtype)
+        if len(self.g_outputs) == 0 and self.G_factor is not None:
+            return
+        G_new = self._get_G_factor(self.g_outputs).to(self.factor_dtype)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self.G_factor = torch.diag(G_new.new(G_new.shape[0]).fill_(1))
@@ -383,11 +370,26 @@ class KFACLayer(object):
     def _compute_factor_inverse(self, factor, damping=0.001):
         """Computes inverse/eigendecomp of factor and saves result to inverse"""
         if self.use_eigen_decomp:
-            return utils.get_eigendecomp(factor, symmetric=self.factors_are_symmetric)
+            Q, d = utils.get_eigendecomp(factor.float(), concat=False, 
+                                         symmetric=self.factors_are_symmetric)
+            # This is a small trick to save computation. We can compute QQ^T
+            # here on a single worker and communicate QQ^T instead of just Q.
+            # compute_preconditioned_gradient only needs QQ^T.
+            Q = Q @ Q.t()
+            return Q.to(self.inv_dtype), d.to(self.inv_dtype)
         else:
-            return utils.get_inverse(factor, damping=damping, 
+            inv = utils.get_inverse(factor.float(), damping=damping, 
                         symmetric=self.factors_are_symmetric)
+            return inv.to(self.inv_dtype)
  
+    def _get_empty_inv(self, factor):
+        """Return empty tensor(s) for storing inverse"""
+        inv = torch.empty_like(factor, dtype=self.inv_dtype)
+        if self.use_eigen_decomp:
+            eigen = factor.new_empty(factor.shape[0], dtype=self.inv_dtype)
+            inv = [inv, eigen]
+        return inv
+
     def _get_A_factor(self, a_inputs):
         """Compute A factor. Returns A."""
         raise NotImplementedError
@@ -406,15 +408,14 @@ class KFACLayer(object):
     
     def _get_precondition_gradient_eigen(self, damping=0.001):
         """Compute preconditioned gradient for eigendecomp method"""
-        QA, QG = self.A_inv[:,:-1], self.G_inv[:,:-1]
-        dA, dG = self.A_inv[:,-1], self.G_inv[:,-1]
-        grad = self.get_gradient().to(self.A_inv.dtype)
-        v1 = QG.t() @ grad @ QA
-        v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + damping)
-        return (QG @ v2 @ QA.t()).float()
-        
+        QA, dA = self.A_inv
+        QG, dG = self.G_inv
+        grad = self.get_gradient().to(QA.dtype)
+        grad = (QG @ grad @ QA) / (dG.unsqueeze(1) * dA.unsqueeze(0) + damping)
+        return grad.float()
 
     def _get_precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method"""
         grad = self.get_gradient().to(self.A_inv.dtype)
         return (self.G_inv @ grad @ self.A_inv).float()
+
