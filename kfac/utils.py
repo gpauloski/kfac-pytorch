@@ -5,32 +5,55 @@ import torch
 from kfac import comm
 
 
-FUNC_TRACES = {}
+_FUNC_TRACES = {}
 
 
-def print_trace():
+def clear_trace():
+    _FUNC_TRACES = {}
+
+
+def get_trace(max_history=None):
+    out = {}
+    for fname, times in _FUNC_TRACES.items():
+        if max_history is not None and len(times) > max_times:
+            times = times[-max_times:]
+        out[fname] = sum(times) / len(times)
+    return out
+
+
+def print_trace(max_history=None):
     """Print function execution times recorded with @trace
 
-    To trace function execution times, use the @kfac.utils.trace
+    To trace function execution times, use the @kfac.utils.trace()
     decorator on all functions to be traced. Then to get the average
     execution times, call kfac.utils.print_trace().
+
+    Args:
+        max_history (int, optional): most recent `max_histroy` times to use
+            for average. If None, all are used.
     """
-    for fname, times in FUNC_TRACES.items():
-        print('{}: {}'.format(fname, sum(times)/len(times)))
+    if len(_FUNC_TRACES) == 0:
+        return
+    for fname, time in get_trace(max_history).items():
+        print('{}: {}'.format(fname, time))
 
 
-def trace(func):
-    def func_timer(*args, **kwargs):
-        t = time.time()
-        out = func(*args, **kwargs)
-        t = time.time() - t
-
-        if func.__name__ not in FUNC_TRACES:
-            FUNC_TRACES[func.__name__] = [t]
-        else:
-            FUNC_TRACES[func.__name__].append(t)
-        return out
-    return func_timer
+def trace(sync=False):
+    def decorator(func):
+        def func_timer(*args, **kwargs):
+            if sync: comm.backend.barrier()
+            t = time.time()
+            out = func(*args, **kwargs)
+            if sync: comm.backend.barrier()
+            t = time.time() - t
+ 
+            if func.__name__ not in _FUNC_TRACES:
+                _FUNC_TRACES[func.__name__] = [t]
+            else:
+                _FUNC_TRACES[func.__name__].append(t)
+            return out
+        return func_timer
+    return decorator
 
 
 class WorkerAllocator(object):
