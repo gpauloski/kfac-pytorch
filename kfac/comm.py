@@ -81,7 +81,7 @@ class CommBackend(object):
         """Get unique worker rank"""
         return 0
     
-    def allreduce(self, tensor, op=Ops.Average, group=None, async=True):
+    def allreduce(self, tensor, op=Ops.Average, group=None, async_op=True):
         """Allreduce tensor inplace.
 
         Args:
@@ -89,14 +89,14 @@ class CommBackend(object):
           op (Op): reduction operation to apply (default: Ops.Average)
           group (CommGroup): CommGroup for collective
               communication. If None, uses default group (default: None).
-          async (bool): whether this op should be asynchronous (default: True)
+          async_op (bool): whether this op should be asynchronous (default: True)
 
         Returns:
           Async work handle, if async_op is True, else None
         """
         return
 
-    def broadcast(self, tensor, src, group=None, async=True):
+    def broadcast(self, tensor, src, group=None, async_op=True):
         """Broadcast tensor.
 
         Args:
@@ -104,21 +104,21 @@ class CommBackend(object):
           src (int): source rank for tensor.
           group (CommGroup): CommGroup for collective
               communication. If None, uses default group (default: None).
-          async (bool, optional): whether this op should be asynchronous
+          async_op (bool, optional): whether this op should be asynchronous
 
         Returns:
           Async work handle, if async_op is True, else None
         """
         return
     
-    def reduce(self, tensor, dst, op=Ops.Average, async=True):
+    def reduce(self, tensor, dst, op=Ops.Average, async_op=True):
         """Reduce tensor inplace.
 
         Args:
           tensor (torch.Tensor)
           dst (int): dest rank for reduction
           op (Op): reduction operation to apply (default: Ops.Average)
-          async (bool): whether this op should be asynchrous (default: True)
+          async_op (bool): whether this op should be asynchrous (default: True)
 
         Returns:
           Async work handle, if async_op is True, else None
@@ -150,23 +150,23 @@ class HorovodBackend(CommBackend):
     def rank(self):
         return hvd.rank()
 
-    def allreduce(self, tensor, op=Ops.Average, group=None, async=True):
+    def allreduce(self, tensor, op=Ops.Average, group=None, async_op=True):
         op = self._get_op(op)
-        if async:
+        if async_op:
             return hvd.allreduce_async_(tensor, op=op)
         else:
             hvd.allreduce_(tensor, op=op)
 
-    def broadcast(self, tensor, src, group=None, async=True):
+    def broadcast(self, tensor, src, group=None, async_op=True):
         # HVD does not have broadcast groups so we ignore
-        if async:
+        if async_op:
             return hvd.broadcast_async_(tensor, root_rank=src)
         else:
             hvd.broadcast_(tensor, root_rank=rank)
 
-    def reduce(self, tensor, dst, op=Ops.Average, async=True):
+    def reduce(self, tensor, dst, op=Ops.Average, async_op=True):
         # Horovod only support allreduce
-        self.allreduce(tensor, op=op, async=async)
+        self.allreduce(tensor, op=op, async_op=async_op)
 
     def barrier(self):
         hvd.allreduce(torch.tensor(1), name='barrier')
@@ -205,7 +205,7 @@ class TorchBackend(CommBackend):
     def rank(self):
         return dist.get_rank()
     
-    def allreduce(self, tensor, op=Ops.Average, group=None, async=True):
+    def allreduce(self, tensor, op=Ops.Average, group=None, async_op=True):
         if group is not None:
             if group.size <= 1:
                 return
@@ -215,9 +215,9 @@ class TorchBackend(CommBackend):
         # Note: actually returns tuple(handle, tensor)
         # because there is no average op in Torch distribted so
         # we need to pass the tensor to sync() to be averages
-        handle = dist.all_reduce(tensor, async_op=async, **kwargs)
+        handle = dist.all_reduce(tensor, async_op=async_op, **kwargs)
  
-        if not async:
+        if not async_op:
             if op == Ops.Average:
                 tensor /= self.size()
             return
@@ -226,20 +226,20 @@ class TorchBackend(CommBackend):
                 return (handle, tensor)
             return handle
 
-    def broadcast(self, tensor, src, group=None, async=True):
+    def broadcast(self, tensor, src, group=None, async_op=True):
         if group is not None:
             if group.size <= 1:
                 return
             kwargs = {'group': group.group} if group.group is not None else {}
-            return dist.broadcast(tensor, src=src, async_op=async, **kwargs)
-        return dist.broadcast(tensor, src=src, async_op=async)
+            return dist.broadcast(tensor, src=src, async_op=async_op, **kwargs)
+        return dist.broadcast(tensor, src=src, async_op=async_op)
 
-    def reduce(self, tensor, dst, op=Ops.Average, async=True):
+    def reduce(self, tensor, dst, op=Ops.Average, async_op=True):
         # Note: actually returns tuple(handle, should_average)
         # because there is no average op in Torch distribted
-        handle = dist.reduce(tensor, dst=dst, async_op=async)
+        handle = dist.reduce(tensor, dst=dst, async_op=async_op)
         
-        if not async:
+        if not async_op:
             if op == Ops.Average:
                 tensor /= self.size()
             return
