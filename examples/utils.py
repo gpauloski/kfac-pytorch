@@ -39,7 +39,7 @@ class Metric(object):
         self.n = torch.tensor(0.0)
 
     def update(self, val, n=1):
-        comm.backend.allreduce(val, async=False)
+        comm.backend.allreduce(val, async_op=False)
         self.total += val.cpu()
         self.n += n
 
