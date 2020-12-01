@@ -363,9 +363,9 @@ class KFACLayer(object):
             v = [scale * x for x in self.preconditioned_gradient]
         else:
             v = self.preconditioned_gradient
-        self._get_weight_grad().data = v[0].data
+        self._get_weight_grad().copy_(v[0])
         if self.has_bias:
-            self._get_bias_grad().data = v[1].data
+            self._get_bias_grad().copy_(v[1])
 
     def _compute_factor_inverse(self, factor, damping=0.001):
         """Computes inverse/eigendecomp of factor and saves result to inverse"""
