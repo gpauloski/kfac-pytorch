@@ -30,7 +30,8 @@ def train(epoch,
                 data, target = data.cuda(), target.cuda()
             optimizer.zero_grad()
 
-            for i in range(0, len(data), args.batch_size):
+            batch_idx = range(0, len(data), args.batch_size)
+            for i in batch_idx:
                 data_batch = data[i:i + args.batch_size]
                 target_batch = target[i:i + args.batch_size]
 
@@ -47,7 +48,7 @@ def train(epoch,
                 if args.horovod:
                     loss.backward()
                 else:
-                    if i < args.batches_per_allreduce:
+                    if i < batch_idx[-1]:
                         with model.no_sync():
                             if scaler is not None:
                                 scaler.scale(loss).backward()
