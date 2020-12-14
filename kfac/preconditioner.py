@@ -71,6 +71,10 @@ class KFAC(optim.Optimizer):
           and you want KFAC to use the input/output for all batches when
           computing the factors. Note: if accumulating the data, memory usage
           can increase substantially. (default: False)
+      assignment_strategy (str, optional): One of ['compute', 'memory'].
+          Controls if the eigen decomposition placement strategy should 
+          optimize for balancing the compute time or memory usage across
+          workers. (default: compute)
       batch_first (bool, optional): True if the batch dimension is dim 0
           (default: True)
       comm_method (CommMethod, optional): Communication optimization
@@ -126,6 +130,7 @@ class KFAC(optim.Optimizer):
                  kl_clip=0.001,
                  lr=0.1,
                  accumulate_data=False,
+                 assignment_strategy='compute',
                  batch_first=True,
                  comm_method=CommMethod.COMM_OPT,
                  compute_factor_in_hook=False,
@@ -156,6 +161,9 @@ class KFAC(optim.Optimizer):
         if not 0 == inv_update_freq % factor_update_freq:
             warnings.warn('It is suggested that inv_update_freq be a multiple '
                           'of factor_update_freq')
+        if not assignment_strategy in ['compute', 'memory']:
+            raise ValueError(
+                    'assignment_strategy must be "compute" or "memory"')
         # TODO(gpauloski): asserting distribute_layer_factors if HYBRID_OPT is
         # not actually necessary because we will have to communicate the
         # inverses anyways, but we would need to constrain the device placement
@@ -196,6 +204,7 @@ class KFAC(optim.Optimizer):
         # We do not need to save the params to the default group because
         # they are not dependent on the current state of training
         self.accumulate_data = accumulate_data
+        self.assignment_strategy = assignment_strategy
         self.batch_first = batch_first
         self.comm_method = comm_method
         self.compute_factor_in_hook = compute_factor_in_hook
@@ -224,19 +233,16 @@ class KFAC(optim.Optimizer):
             if size % min(1, round(size * grad_worker_fraction)) != 0:
                 raise ValueError('grad_worker_fraction must produce groups of '
                                  'equal size')
-            if 0 == grad_worker_fraction:
-                warnings.warn('grad_worker_fraction == 0, for best '
-                                 'performance, use COMM_OPT')
-            if 1.0 == grad_worker_fraction:
-                warnings.warn('grad_worker_fraction == 1.0, for best '
-                                 'performance, use COMM_OPT')
-            if 0.5 < grad_worker_fraction:
+            if 1 / size >= grad_worker_fraction:
+                warnings.warn('grad_worker_fraction <= 1/world_size, for best '
+                              'performance, use COMM_OPT')
+            elif 1 - (1 / size) <= grad_worker_fraction:
+                warnings.warn('grad_worker_fraction >= 1-1/world_size, for '
+                              'best performance, use COMM_OPT')
+            elif 0.5 < grad_worker_fraction:
                 warnings.warn('grad_worker_fraction={}, for best performance '
-                              'use a value in (0, 0.5] when using '
+                              'use a value in [0, 0.5] when using '
                               'HYBRID_OPT.'.format(grad_worker_fraction))
-            if 1 - (1 / size) <= grad_worker_fraction:
-                warnings.warn('The grad_worker_fraction is larger than 1 - '
-                              '(1 / world_size). COMM_OPT is recommended.')
             self.grad_worker_fraction = grad_worker_fraction
 
         self.layers = []
@@ -246,6 +252,7 @@ class KFAC(optim.Optimizer):
     def __repr__(self):
         extra_params = {
             'accumulate_data': self.accumulate_data,
+            'assignment_strategy': self.assignment_strategy,
             'batch_first': self.batch_first,
             'comm_method': self.comm_method,
             'compute_factor_in_hook': self.compute_factor_in_hook,
@@ -258,6 +265,7 @@ class KFAC(optim.Optimizer):
             'use_eigen_decomp': self.use_eigen_decomp,
             'skip_layers': self.skip_layers,
             'verbose': self.verbose,
+            'registered_layers': len(self.layers),
         }
         format_string = self.__class__.__name__ + ' ('
         for i, group in enumerate(self.param_groups + [extra_params]):
@@ -493,8 +501,7 @@ class KFAC(optim.Optimizer):
         scale = None if params['kl_clip'] is None \
                      else self._compute_grad_scale()
 
-        for layer in self.layers:
-            layer.update_gradient(scale=scale)
+        self.update_gradients(scale)
 
         params['step'] += 1
 
@@ -562,6 +569,11 @@ class KFAC(optim.Optimizer):
         for layer in self.layers:
             layer.compute_preconditioned_gradient(damping=damping)
 
+    @torch.no_grad()
+    def update_gradients(self, scale=None):
+        for layer in self.layers:
+            layer.update_gradient(scale=scale)
+
     def memory_usage(self):
         """Returns current approximate memory usage for KFAC
 
@@ -597,7 +609,14 @@ class KFAC(optim.Optimizer):
         if len(self.layers) == 0:
             return
 
-        func = lambda n: n**3  # approx inverse complexity
+        if self.assignment_strategy == 'compute':
+            func = lambda n: n**3  # approx inverse complexity
+        elif self.assignment_strategy == 'memory':
+            func = lambda n: n**2
+        else:
+            raise ValueError(
+                    'assignment_strategy must be "compute" or "memory"')
+
         a_sizes = [l.A_factor.shape[0] for l in self.layers]
         g_sizes = [l.G_factor.shape[0] for l in self.layers]
         a_times = list(map(func, a_sizes))
