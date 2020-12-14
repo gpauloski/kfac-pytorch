@@ -15,12 +15,11 @@
 #SBATCH -p v100                         # Queue
 #SBATCH -A XXX                          # Allocation
 
-# Note this is using mvapich, you may need to change the mpiexec calls
-# for other MPI implementations.
+# Note mpiexec calls may need to be changed depending on MPI type
 
 HOSTFILE=/tmp/hostfile
 
-scontrol show hostnames $SLURM_NODELIST > $HOSTFILE
+#scontrol show hostnames $SLURM_NODELIST > $HOSTFILE
 cat $HOSTFILE
 
 GPU_PER_NODE=4
@@ -29,9 +28,8 @@ MASTER_NODE=$(head -n 1 $HOSTFILE)
 
 mpiexec -hostfile $HOSTFILE -N $NODES ./scripts/cp_imagenet_to_temp.sh
 
-
 # We use mpiexec to launch one python -m torch.distributed.launch per node
-mpiexec -hostfile $HOSTFILE -N $NODES \
+mpirun_rsh -hostfile $HOSTFILE -np $NODES \
   ./scripts/launch_node_torch_imagenet.sh \
     --ngpus $GPU_PER_NODE --nnodes $NODES --master $MASTER_NODE --mvapich
 
