@@ -45,6 +45,10 @@ def train(epoch,
                 
                 loss = loss / args.batches_per_allreduce
 
+                with torch.no_grad():
+                    train_loss.update(loss)
+                    train_accuracy.update(accuracy(output, target_batch))
+
                 if args.horovod:
                     loss.backward()
                 else:
@@ -59,10 +63,6 @@ def train(epoch,
                             scaler.scale(loss).backward()
                         else:
                             loss.backward()
-
-                with torch.no_grad():            
-                    train_loss.update(loss)
-                    train_accuracy.update(accuracy(output, target_batch))
 
             if args.horovod:
                 optimizer.synchronize()
