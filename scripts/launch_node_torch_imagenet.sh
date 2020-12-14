@@ -48,18 +48,46 @@ else
   LOCAL_RANK=$OMPI_COMM_WORLD_RANK
 fi
 
+module load conda
+conda deactivate
+conda activate pytorch
+module unload spectrum_mpi
+module use /home/01255/siliu/mvapich2-gdr/modulefiles/
+module load gcc/7.3.0 
+module load mvapich2-gdr/2.3.4
+
+export MV2_USE_CUDA=1
+export MV2_ENABLE_AFFINITY=1
+export MV2_THREADS_PER_PROCESS=2
+export MV2_SHOW_CPU_BINDING=1
+export MV2_CPU_BINDING_POLICY=hybrid
+export MV2_HYBRID_BINDING_POLICY=spread
+export MV2_USE_RDMA_CM=0
+export MV2_SUPPORT_DL=1
+
+export OMP_NUM_THREADS=4
+which python
+
 echo Launching torch.distributed: nproc_per_node=$NGPUS, nnodes=$NNODES, master_addr=$MASTER, local_rank=$LOCAL_RANK, using_mvapich=$MVAPICH
 
 KWARGS=""
-KWARGS+="--kfac-update-freq 100 "
-KWARGS+="--kfac-cov-update-freq 10 "
-KWARGS+="--damping 0.001 "
+KWARGS+="--base-lr 0.0125 "
+KWARGS+="--kfac-update-freq 500 "
+KWARGS+="--kfac-cov-update-freq 50 "
+KWARGS+="--damping 0.003 "
+KWARGS+="--model resnet50 "
+KWARGS+="--checkpoint-freq 10 "
+KWARGS+="--kfac-comm-method comm-opt "
+KWARGS+="--kfac-grad-worker-fraction 0.0 "
+KWARGS+="--log-dir logs/kfac_comm_opt_500 "
+KWARGS+="--fp16 "
+
+# KFAC Schedule
 KWARGS+="--epochs 55 "
 KWARGS+="--lr-decay 25 35 40 45 50 "
-KWARGS+="--model resnet50 "
-KWARGS+="--checkpoint-freq 5 "
-KWARGS+="--kfac-comm-method comm-opt "
-KWARGS+="--kfac-grad-worker-fraction 0.25 "
+# SGD Schedule
+#KWARGS+="--epochs 90 "
+#KWARGS+="--lr-decay 30 40 80 "
 
 if [ $NNODES -eq 1 ]; then
   python -m torch.distributed.launch \
