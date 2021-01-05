@@ -150,9 +150,13 @@ K-FAC does **not** support NVIDIA AMP because some operations used in K-FAC (`to
 
 K-FAC suports training with `torch.cuda.amp` and `torch.nn.parallel.DistributedDataParallel`
 Torch AMP was added in PyTorch 1.6.
-K-FAC will store data in the dtype used during the forward/backward pass.
+Factors for a given layer will be stored in the data type used during the forward/backward pass.
+For most PyTorch layers, this will be float16.
+However, there are exceptions such as layers that take integer inputs (often embeddings).
+Inverses of the factors are stored in float32, but this can be overridden to float16 to save memory at the cost of potential numerical instability.
 The `GradScaler` object can be passed to K-FAC such that K-FAC can appropriately unscale the backward pass data.
-Optionally, the dtypes used by K-FAC can be manually overridden.
+If the `GradScaler` is provided, G factors will be cast to float32 to prevent underflow when unscaling the gradients.
+.
 When using `torch.cuda.amp` for mixed precision training, be sure to call `KFAC.step()` outside of an `autocast()` region. E.g.
 
 ```Python

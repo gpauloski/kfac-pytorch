@@ -9,6 +9,12 @@ from . import layers as kfac_layers
 from . import utils
 from . import comm
 
+try:
+    from torch.cuda.amp import autocast
+    TORCH_FP16 = True
+except ImportError:
+    TORCH_FP16 = False
+
 
 class CommMethod(enum.Enum):
     """KFAC Communication Method
@@ -90,17 +96,14 @@ class KFAC(optim.Optimizer):
           factors on the same device can yeild improvements. When using 
           `MEM_OPT`, distribute_layer_factors is forced to False. 
           (default: True)
-      factor_dtype (torch.dtype, optional): Force KFAC to store factors as
-          specified dtype. If None, infer type based on training method. E.g.
-          if torch.cuda.amp is enabled, factors will be stored in FP16.
-          This may be helpful if there are errors when casting from FP32 to 
-          FP16. (default: None)
-      inverse_dtype (bool, optional): See factor_dtype. (default: torch.float32)
+      fp16_inv (bool, optional): Store inverses in FP16 to save memory.
+          Note this can incorporate numerical instability. (default: False)
       grad_scaler (torch.cuda.amp.GradScaler, optional): Gradient scaler used
           if using torch.cuda.amp for fp16 training. KFAC will use the same
           data type for storing the factors as the data in the forward/backward
-          pass. E.g. with torch.cuda.amp, the forward/backward pass data is 
-          fp16 so KFAC will store data in fp16, saving memory. The grad scaler
+          pass. E.g. with torch.cuda.amp, the forward/backward pass data is
+          autocast to the lowest precision possible so KFAC will store the
+          factors in that precision, saving memory. The grad scaler
           is needed by KFAC to correctly unscale the gradients from the
           backward pass. (default: None)
       grad_worker_fraction (float): fraction of workers to compute the
@@ -135,10 +138,9 @@ class KFAC(optim.Optimizer):
                  comm_method=CommMethod.COMM_OPT,
                  compute_factor_in_hook=False,
                  distribute_layer_factors=True,
-                 factor_dtype=None,
+                 fp16_inv=False,
                  grad_scaler=None,
                  grad_worker_fraction=0.25,
-                 inverse_dtype=torch.float32,
                  use_eigen_decomp=True,
                  skip_layers=[],
                  verbose=False):
@@ -209,8 +211,7 @@ class KFAC(optim.Optimizer):
         self.comm_method = comm_method
         self.compute_factor_in_hook = compute_factor_in_hook
         self.distribute_layer_factors = distribute_layer_factors
-        self.factor_dtype = factor_dtype
-        self.inverse_dtype = inverse_dtype
+        self.fp16_inv = fp16_inv
         self.grad_scaler = grad_scaler
         self.use_eigen_decomp = use_eigen_decomp
         self.skip_layers = skip_layers
@@ -257,8 +258,7 @@ class KFAC(optim.Optimizer):
             'comm_method': self.comm_method,
             'compute_factor_in_hook': self.compute_factor_in_hook,
             'distribute_layer_factors': self.distribute_layer_factors,
-            'factor_dtype': self.factor_dtype,
-            'inverse_dtype': self.inverse_dtype,
+            'fp16_inv': self.fp16_inv,
             'grad_scaler': True if self.grad_scaler is not None else False,
             'grad_worker_fraction': self.grad_worker_fraction,
             'known_modules': self.known_modules,
@@ -350,9 +350,8 @@ class KFAC(optim.Optimizer):
             module,
             accumulate_data = self.accumulate_data,
             batch_first = self.batch_first,
-            factor_dtype = self.factor_dtype,
+            fp16_inv = self.fp16_inv,
             grad_scaler = self.grad_scaler,
-            inv_dtype = self.inverse_dtype,
             use_eigen_decomp = self.use_eigen_decomp,
         )
         for module, kfac_layer in layer_list:
@@ -689,15 +688,29 @@ class KFAC(optim.Optimizer):
     def _save_input(self, module, input):
         self.hook_layers[module].save_inputs(input)
         if self.compute_factor_in_hook:
-            self.hook_layers[module].update_A_factor(
-                    alpha=self.param_groups[0]['factor_decay'])
+            # We are inside the forward pass which could be in an autocast
+            # region so temporarily disable autocast
+            if TORCH_FP16:
+                with autocast(enabled=False):
+                    self.hook_layers[module].update_A_factor(
+                            alpha=self.param_groups[0]['factor_decay'])
+            else:
+                self.hook_layers[module].update_A_factor(
+                        alpha=self.param_groups[0]['factor_decay'])
 
     @_periodic_hook(grad_enabled=False)
     def _save_grad_output(self, module, grad_input, grad_output):
         self.hook_layers[module].save_grad_outputs(grad_output)
         if self.compute_factor_in_hook:
-            self.hook_layers[module].update_G_factor(
-                    alpha=self.param_groups[0]['factor_decay'])
+            # We are inside the backward pass which should never be in an
+            # autocast region but just in case temporarily disable autocast
+            if TORCH_FP16:
+                with autocast(enabled=False):
+                    self.hook_layers[module].update_G_factor(
+                            alpha=self.param_groups[0]['factor_decay'])
+            else:
+                self.hook_layers[module].update_G_factor(
+                        alpha=self.param_groups[0]['factor_decay'])
 
     @_periodic_hook(grad_enabled=True)
     def _save_input_as_grad_output(self, module, input):
