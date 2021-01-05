@@ -221,13 +221,17 @@ E.g. because the model changed or K-FAC was initialized to skip different module
 ## Citation
 
 ```
-@article{pauloski2020kfac,
-    title={Convolutional Neural Network Training with Distributed K-FAC},
-    author={J. Gregory Pauloski and Zhao Zhang and Lei Huang and Weijia Xu and Ian T. Foster},
-    year={2020},
-    pages={to appear in the proceedings of SC20},
-    eprint={2007.00784},
-    archivePrefix={arXiv},
-    primaryClass={cs.LG}
+@inproceedings{pauloski2020kfac,
+	author = {Pauloski, J. Gregory and Zhang, Zhao and Huang, Lei and Xu, Weijia and Foster, Ian T.},
+	title = {Convolutional {N}eural {N}etwork {T}raining with {D}istributed {K}-{FAC}},
+	year = {2020},
+	isbn = {9781728199986},
+	publisher = {IEEE Press},
+	booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+	articleno = {94},
+	numpages = {14},
+	location = {Atlanta, Georgia},
+	series = {SC '20},
+	doi = {10.5555/3433701.3433826}
 }
 ```
