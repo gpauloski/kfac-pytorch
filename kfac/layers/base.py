@@ -10,27 +10,18 @@ class KFACLayer(object):
                  module,
                  accumulate_data=True,
                  batch_first=True,
-                 factor_dtype=None,
+                 fp16_inv=False,
                  grad_scaler=None,
-                 inv_dtype=None,
                  use_eigen_decomp=True,
                  symmetry_aware_comm=False):
         self.module = module
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
-        self.factor_dtype = factor_dtype
         self.grad_scaler = grad_scaler
-        self.inv_dtype = inv_dtype
+        self.inv_dtype = torch.float16 if fp16_inv else torch.float32
         self.use_eigen_decomp=use_eigen_decomp
         self.symmetry_aware_comm=symmetry_aware_comm
         self.eps = 1e-10
-
-        if self.factor_dtype is None:
-            self.factor_dtype = (torch.float32 if self.grad_scaler is None 
-                                            else torch.float16)
-        if self.inv_dtype is None: 
-            self.inv_dtype = (torch.float32 if self.grad_scaler is None 
-                                            else torch.float16)
 
         # Should be overridden by implementing class
         self.has_bias = False
@@ -306,15 +297,15 @@ class KFACLayer(object):
     def save_inputs(self, input):
         """Save inputs locally"""
         if self.accumulate_data:
-            self.a_inputs.append(input[0].data.to(self.factor_dtype))
+            self.a_inputs.append(input[0].data)
         else:
-            self.a_inputs = [input[0].data.to(self.factor_dtype)]
+            self.a_inputs = [input[0].data]
 
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
-        g = grad_output[0].data.to(self.factor_dtype)
+        g = grad_output[0].data
         if self.grad_scaler is not None:
-            g = (g, self.grad_scaler.get_scale())
+            g = (g.to(torch.float32), self.grad_scaler.get_scale())
         if self.accumulate_data:
             self.g_outputs.append(g)
         else:
@@ -322,9 +313,9 @@ class KFACLayer(object):
 
     def update_A_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
-        if len(self.a_inputs) == 0 and self.A_factor is not None:
+        if len(self.a_inputs) == 0:
             return
-        A_new = self._get_A_factor(self.a_inputs).to(self.factor_dtype)
+        A_new = self._get_A_factor(self.a_inputs)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
             self.A_factor = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
@@ -346,9 +337,9 @@ class KFACLayer(object):
                               'Note this can degrade KFAC performance if too '
                               'many gradients are discarded.')
 
-        if len(self.g_outputs) == 0 and self.G_factor is not None:
+        if len(self.g_outputs) == 0:
             return
-        G_new = self._get_G_factor(self.g_outputs).to(self.factor_dtype)
+        G_new = self._get_G_factor(self.g_outputs)
         del self.g_outputs[:]  # clear accumulated outputs
         if self.G_factor is None:
             self.G_factor = torch.diag(G_new.new(G_new.shape[0]).fill_(1))
@@ -363,30 +354,26 @@ class KFACLayer(object):
             v = [scale * x for x in self.preconditioned_gradient]
         else:
             v = self.preconditioned_gradient
-        self._get_weight_grad().copy_(v[0])
+        self._set_weight_grad(v[0])
         if self.has_bias:
-            self._get_bias_grad().copy_(v[1])
+            self._set_bias_grad(v[1])
 
     def _compute_factor_inverse(self, factor, damping=0.001):
         """Computes inverse/eigendecomp of factor and saves result to inverse"""
         if self.use_eigen_decomp:
-            Q, d = utils.get_eigendecomp(factor.float(), concat=False, 
+            Q, d = utils.get_eigendecomp(factor.to(torch.float32), concat=False, 
                                          symmetric=self.factors_are_symmetric)
-            # This is a small trick to save computation. We can compute QQ^T
-            # here on a single worker and communicate QQ^T instead of just Q.
-            # compute_preconditioned_gradient only needs QQ^T.
-            Q = Q @ Q.t()
             return Q.to(self.inv_dtype), d.to(self.inv_dtype)
         else:
-            inv = utils.get_inverse(factor.float(), damping=damping, 
+            inv = utils.get_inverse(factor.to(torch.float32), damping=damping, 
                         symmetric=self.factors_are_symmetric)
             return inv.to(self.inv_dtype)
  
     def _get_empty_inv(self, factor):
         """Return empty tensor(s) for storing inverse"""
-        inv = torch.empty_like(factor, dtype=self.inv_dtype)
+        inv = torch.empty_like(factor).to(self.inv_dtype)
         if self.use_eigen_decomp:
-            eigen = factor.new_empty(factor.shape[0], dtype=self.inv_dtype)
+            eigen = factor.new_empty(factor.shape[0]).to(self.inv_dtype)
             inv = [inv, eigen]
         return inv
 
@@ -410,12 +397,21 @@ class KFACLayer(object):
         """Compute preconditioned gradient for eigendecomp method"""
         QA, dA = self.A_inv
         QG, dG = self.G_inv
-        grad = self.get_gradient().to(QA.dtype)
-        grad = (QG @ grad @ QA) / (dG.unsqueeze(1) * dA.unsqueeze(0) + damping)
-        return grad.float()
+        grad = self.get_gradient().to(self.inv_dtype)
+        v1 = QG.t() @ grad @ QA
+        v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + damping)
+        return QG @ v2 @ QA.t()
 
     def _get_precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method"""
-        grad = self.get_gradient().to(self.A_inv.dtype)
-        return (self.G_inv @ grad @ self.A_inv).float()
+        grad = self.get_gradient().to(self.inv_dtype)
+        return (self.G_inv @ grad @ self.A_inv).to(torch.float32)
+
+    def _set_bias_grad(self, grad):
+        """Set bias.grad tensor of module"""
+        self.module.bias.grad = grad
+
+    def _set_weight_grad(self, grad):
+        """Set weight.grad tensor of module"""
+        self.module.weight.grad = grad
 
