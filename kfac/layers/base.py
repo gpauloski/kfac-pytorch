@@ -303,7 +303,7 @@ class KFACLayer(object):
 
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
-        g = grad_output[0].data
+        g = grad_output[0].data.to(torch.float32)
         if self.grad_scaler is not None:
             g = (g.to(torch.float32), self.grad_scaler.get_scale())
         if self.accumulate_data:
