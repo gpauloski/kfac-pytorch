@@ -10,15 +10,17 @@ class KFACLayer(object):
                  module,
                  accumulate_data=True,
                  batch_first=True,
-                 fp16_inv=False,
+                 inv_dtype=None,
                  grad_scaler=None,
+                 factor_dtype=None,
                  use_eigen_decomp=True,
                  symmetry_aware_comm=False):
         self.module = module
         self.accumulate_data = accumulate_data
         self.batch_first = batch_first
         self.grad_scaler = grad_scaler
-        self.inv_dtype = torch.float16 if fp16_inv else torch.float32
+        self.inv_dtype = inv_dtype
+        self.factor_dtype = factor_dtype
         self.use_eigen_decomp=use_eigen_decomp
         self.symmetry_aware_comm=symmetry_aware_comm
         self.eps = 1e-10
@@ -303,9 +305,9 @@ class KFACLayer(object):
 
     def save_grad_outputs(self, grad_output):
         """Save grad w.r.t outputs locally"""
-        g = grad_output[0].data.to(torch.float32)
+        g = grad_output[0].data
         if self.grad_scaler is not None:
-            g = (g.to(torch.float32), self.grad_scaler.get_scale())
+            g = (g, self.grad_scaler.get_scale())
         if self.accumulate_data:
             self.g_outputs.append(g)
         else:
@@ -315,6 +317,7 @@ class KFACLayer(object):
         """Compute factor A and add to running averages"""
         if len(self.a_inputs) == 0:
             return
+        self.a_inputs = [x.to(self.factor_dtype) for x in self.a_inputs]
         A_new = self._get_A_factor(self.a_inputs)
         del self.a_inputs[:]  # clear accumulated inputs
         if self.A_factor is None:
@@ -327,7 +330,8 @@ class KFACLayer(object):
         # any with inf/NaN because of round-off errors. We need to unscale
         # to correctly compute G.
         if self.grad_scaler is not None:
-            self.g_outputs = [g / scale for g, scale in self.g_outputs]
+            self.g_outputs = [g.to(self.factor_dtype) / scale 
+                              for g, scale in self.g_outputs]
             length = len(self.g_outputs)
             self.g_outputs = [g for g in self.g_outputs 
                     if not (torch.isinf(g).any() or torch.isnan(g).any())]
@@ -336,6 +340,8 @@ class KFACLayer(object):
                               'G because they were unable to be unscaled. '
                               'Note this can degrade KFAC performance if too '
                               'many gradients are discarded.')
+        else:
+            self.g_outputs = [x.to(self.factor_dtype) for x in self.g_outputs]
 
         if len(self.g_outputs) == 0:
             return
@@ -400,7 +406,7 @@ class KFACLayer(object):
         grad = self.get_gradient().to(self.inv_dtype)
         v1 = QG.t() @ grad @ QA
         v2 = v1 / (dG.unsqueeze(1) * dA.unsqueeze(0) + damping)
-        return QG @ v2 @ QA.t()
+        return (QG @ v2 @ QA.t()).to(torch.float32)
 
     def _get_precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method"""

@@ -96,8 +96,8 @@ class KFAC(optim.Optimizer):
           factors on the same device can yeild improvements. When using 
           `MEM_OPT`, distribute_layer_factors is forced to False. 
           (default: True)
-      fp16_inv (bool, optional): Store inverses in FP16 to save memory.
-          Note this can incorporate numerical instability. (default: False)
+      inv_dtype (torch.dtype, optional): Data type to store inverses in. FP32
+          is recommended. (default: torch.float32)
       grad_scaler (torch.cuda.amp.GradScaler, optional): Gradient scaler used
           if using torch.cuda.amp for fp16 training. KFAC will use the same
           data type for storing the factors as the data in the forward/backward
@@ -106,6 +106,8 @@ class KFAC(optim.Optimizer):
           factors in that precision, saving memory. The grad scaler
           is needed by KFAC to correctly unscale the gradients from the
           backward pass. (default: None)
+      factor_dtype (torch.dtype, optional): Data type to store factors in.
+          None keeps factors in their exisiting datatype (default: None)
       grad_worker_fraction (float): fraction of workers to compute the
           preconditioned gradient for a layer. Remaining workers will wait for
           the gradient to be sent to them. In COMM_OPT, this fraction is 1.0,
@@ -138,9 +140,10 @@ class KFAC(optim.Optimizer):
                  comm_method=CommMethod.COMM_OPT,
                  compute_factor_in_hook=False,
                  distribute_layer_factors=True,
-                 fp16_inv=False,
+                 inv_dtype=torch.float32,
                  grad_scaler=None,
                  grad_worker_fraction=0.25,
+                 factor_dtype=None,
                  use_eigen_decomp=True,
                  skip_layers=[],
                  verbose=False):
@@ -211,8 +214,9 @@ class KFAC(optim.Optimizer):
         self.comm_method = comm_method
         self.compute_factor_in_hook = compute_factor_in_hook
         self.distribute_layer_factors = distribute_layer_factors
-        self.fp16_inv = fp16_inv
+        self.inv_dtype = inv_dtype
         self.grad_scaler = grad_scaler
+        self.factor_dtype = factor_dtype
         self.use_eigen_decomp = use_eigen_decomp
         self.skip_layers = skip_layers
         self.known_modules = known_modules
@@ -258,9 +262,10 @@ class KFAC(optim.Optimizer):
             'comm_method': self.comm_method,
             'compute_factor_in_hook': self.compute_factor_in_hook,
             'distribute_layer_factors': self.distribute_layer_factors,
-            'fp16_inv': self.fp16_inv,
+            'inv_dtype': self.inv_dtype,
             'grad_scaler': True if self.grad_scaler is not None else False,
             'grad_worker_fraction': self.grad_worker_fraction,
+            'factor_dtype': self.factor_dtype,
             'known_modules': self.known_modules,
             'use_eigen_decomp': self.use_eigen_decomp,
             'skip_layers': self.skip_layers,
@@ -350,8 +355,9 @@ class KFAC(optim.Optimizer):
             module,
             accumulate_data = self.accumulate_data,
             batch_first = self.batch_first,
-            fp16_inv = self.fp16_inv,
+            inv_dtype = self.inv_dtype,
             grad_scaler = self.grad_scaler,
+            factor_dtype = self.factor_dtype,
             use_eigen_decomp = self.use_eigen_decomp,
         )
         for module, kfac_layer in layer_list:
