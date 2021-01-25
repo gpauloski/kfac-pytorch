@@ -94,7 +94,7 @@ def parse_args():
                         help='KL clip (default: 0.001)')
     parser.add_argument('--skip-layers', nargs='+', type=str, default=[],
                         help='Layer types to ignore registering with KFAC (default: [])')
-    parser.add_argument('--coallocate-layer-factors', action='store_true', default=False,
+    parser.add_argument('--coallocate-layer-factors', action='store_true', default=True,
                         help='Compute A and G for a single layer on the same worker. ')
     parser.add_argument('--kfac-comm-method', type=str, default='comm-opt',
                         help='KFAC communication optimization strategy. One of comm-opt, '
