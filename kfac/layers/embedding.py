@@ -16,6 +16,8 @@ class EmbeddingLayer(KFACLayer):
     """
     def __init__(self, *args, **kwargs):
         super(EmbeddingLayer, self).__init__(*args, **kwargs)
+        # TODO(gpauloski): update embedding class to support recent KFAC changes
+        raise ValueError('Embedding layer does not currently work')
         self.has_bias = False
         self.use_eigen_decomp = False
  
