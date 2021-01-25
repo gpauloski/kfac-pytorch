@@ -116,6 +116,12 @@ class KFAC(optim.Optimizer):
           fraction. Note: this fraction should produce evenly sized groups.
           E.g. world_size=8 and fraction=0.33 would produce groups of size
           3, 3, and 2 which would not be valid. (default: 0.25).
+      precompute_outer_eigen (bool, optional): If True, 
+          1 / (dG * dG.T + damping) will be computed on the inverse worker and
+          broadcast to remaining gradient workers. This value is redundantly
+          computed every non-KFAC update step on every worker so precomputing
+          on a single worker can reduce computation at the cost of slightly
+          more memory (default: False).
       use_eigen_decomp (bool, optional): use the eigendecomposition method for
           the KFAC update, otherwise use normal inv method (default: True)
       skip_layers (str or list, optional): name or list of names of modules to
@@ -144,6 +150,7 @@ class KFAC(optim.Optimizer):
                  grad_scaler=None,
                  grad_worker_fraction=0.25,
                  factor_dtype=None,
+                 precompute_outer_eigen=True,
                  use_eigen_decomp=True,
                  skip_layers=[],
                  verbose=False):
@@ -217,6 +224,7 @@ class KFAC(optim.Optimizer):
         self.inv_dtype = inv_dtype
         self.grad_scaler = grad_scaler
         self.factor_dtype = factor_dtype
+        self.precompute_outer_eigen = precompute_outer_eigen
         self.use_eigen_decomp = use_eigen_decomp
         self.skip_layers = skip_layers
         self.known_modules = known_modules
@@ -267,6 +275,7 @@ class KFAC(optim.Optimizer):
             'grad_worker_fraction': self.grad_worker_fraction,
             'factor_dtype': self.factor_dtype,
             'known_modules': self.known_modules,
+            'precompute_outer_eigen': self.precompute_outer_eigen,
             'use_eigen_decomp': self.use_eigen_decomp,
             'skip_layers': self.skip_layers,
             'verbose': self.verbose,
@@ -358,6 +367,7 @@ class KFAC(optim.Optimizer):
             inv_dtype = self.inv_dtype,
             grad_scaler = self.grad_scaler,
             factor_dtype = self.factor_dtype,
+            prediv_eigenvalues = self.precompute_outer_eigen,
             use_eigen_decomp = self.use_eigen_decomp,
         )
         for module, kfac_layer in layer_list:
@@ -597,12 +607,10 @@ class KFAC(optim.Optimizer):
                     if tensor is not None else 0)
 
         for layer in self.layers:
-            b += sizeof_tensor(layer.A_factor)
-            b += sizeof_tensor(layer.G_factor)
-            b += sizeof_tensor(layer.A_inv)
-            b += sizeof_tensor(layer.G_inv)
+            b += sum(sizeof_tensor(value) for key, value in layer.state.items())
             b += sum(map(sizeof_tensor, layer.a_inputs))
             b += sum(map(sizeof_tensor, layer.g_outputs))
+            b += sizeof_tensor(layer.preconditioned_gradient)
         return b
 
     def _assign_workers(self):
@@ -622,8 +630,8 @@ class KFAC(optim.Optimizer):
             raise ValueError(
                     'assignment_strategy must be "compute" or "memory"')
 
-        a_sizes = [l.A_factor.shape[0] for l in self.layers]
-        g_sizes = [l.G_factor.shape[0] for l in self.layers]
+        a_sizes = [l.state['A'].shape[0] for l in self.layers]
+        g_sizes = [l.state['G'].shape[0] for l in self.layers]
         a_times = list(map(func, a_sizes))
         g_times = list(map(func, g_sizes))
             
