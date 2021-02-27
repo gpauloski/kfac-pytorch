@@ -62,11 +62,17 @@ class KFACLayer(object):
     def load_state_dict(self, state_dict):
         """Loads the KFACLayer state."""
         if 'A' not in state_dict or 'G' not in state_dict:
-            raise KeyError('KFACLayer state_dict must contain keys \"A\" and \"G\"')
+            # Backwards compatibility for old state dict keys
+            if 'A_factor' in state_dict and 'G_factor' in state_dict:
+                state_dict['A'] = state_dict.pop('A_factor')
+                state_dict['G'] = state_dict.pop('G_factor')
+            else:
+                raise KeyError('KFACLayer state_dict must contain keys '
+                               '"A" and "G"')
         device = next(self.module.parameters()).device
         self.state = state_dict
         for key in self.state:
-            self.state[key].to(device)
+            self.state[key] = self.state[key].to(device)
 
     def assign_inverse_workers(self, compute_A_inv_rank, compute_G_inv_rank,
         broadcast_A_inv_group, broadcast_G_inv_group):
