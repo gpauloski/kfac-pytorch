@@ -1,2 +1,6 @@
-from kfac.kfac_preconditioner import KFAC
-from kfac.kfac_preconditioner import KFACParamScheduler
+from .preconditioner import CommMethod, KFAC
+from .scheduler import KFACParamScheduler
+from . import modules
+from . import utils
+from . import comm
+
