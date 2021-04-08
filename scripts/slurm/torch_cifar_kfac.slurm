@@ -23,8 +23,8 @@ scontrol show hostnames $SLURM_NODELIST > /tmp/hostfile
 
 cat /tmp/hostfile
 
-mpiexec -hostfile /tmp/hostfile -N 4 \
-   python examples/pytorch_cifar10_resnet.py \
+python -m torch.distributed.launch --nproc_per_node=4 \
+   examples/torch_cifar10_resnet.py \
      --base-lr 0.1 \
      --epochs 100 \
      --kfac-update-freq 10 \
