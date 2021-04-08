@@ -1,8 +1,7 @@
 import unittest
-import sys
 
-sys.path.append('../')
-from kfac_utils import get_block_boundary
+from kfac.utils import get_block_boundary
+
 
 class TestBlockDivide(unittest.TestCase):
 
