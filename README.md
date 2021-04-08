@@ -26,6 +26,7 @@ The CIFAR-10 and ImageNet-1k training scripts are modeled after Horovod's exampl
   - [Module Support](#module-support)
   - [Parameter Scheduling](#parameter-scheduling)
   - [State Dict](#state-dict)
+- [Related Code](#related-code)
 - [Citation](#citation)
 
 ## Install
@@ -221,6 +222,12 @@ Note by default the state dict will contain the running average of the K-FAC fac
 The inverse factors are not saved by default and will be recomputed from the saved factors when loading the state dict.
 Loading the state dict will fail if the number of registered K-FAC modules changes.
 E.g. because the model changed or K-FAC was initialized to skip different modules.
+
+## Related Code
+
+- [BERT Pretraining with K-FAC](https://github.com/gpauloski/BERT-PyTorch)
+- [Mask R-CNN Training with K-FAC](https://github.com/gpauloski/DeepLearningExamples/tree/master/PyTorch/Segmentation/MaskRCNN)
+- [U-Net with K-FAC Example](https://github.com/HQ01/kfac_pytorch/blob/unet/examples/torch_brain_unet.py)
 
 ## Citation
 
