@@ -476,9 +476,9 @@ class KFACLayer(object):
 
     def _set_bias_grad(self, grad):
         """Set bias.grad tensor of module"""
-        self.module.bias.grad = grad
+        self.module.bias.grad = grad.contiguous()
 
     def _set_weight_grad(self, grad):
         """Set weight.grad tensor of module"""
-        self.module.weight.grad = grad
+        self.module.weight.grad = grad.contiguous()
 
