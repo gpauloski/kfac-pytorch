@@ -2,8 +2,10 @@
 
 [![DOI](https://zenodo.org/badge/240976400.svg)](https://zenodo.org/badge/latestdoi/240976400)
 
-Code for the paper "[Convolutional Neural Network Training with Distributed K-FAC](https://arxiv.org/abs/2007.00784)."
-This K-FAC implementation is designed to be scalable and efficiently distributed K-FAC computations to reduce training times.
+Code for the papers "[Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826)" and [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks
+](https://arxiv.org/abs/2107.01739)."
+
+This K-FAC implementation is designed to be scalable and efficiently distribute K-FAC computations to reduce training times in distributed environments.
 The K-FAC distributed preconditioner supports [Horovod](https://github.com/horovod/horovod) and [torch.distributed](https://pytorch.org/tutorials/intermediate/ddp_tutorial.html) for data-parallel training.
 
 The K-FAC code was originally forked from Chaoqi Wang's [KFAC-PyTorch](https://github.com/alecwangcq/KFAC-Pytorch).
@@ -233,16 +235,25 @@ E.g. because the model changed or K-FAC was initialized to skip different module
 
 ```
 @inproceedings{pauloski2020kfac,
-	author = {Pauloski, J. Gregory and Zhang, Zhao and Huang, Lei and Xu, Weijia and Foster, Ian T.},
-	title = {Convolutional {N}eural {N}etwork {T}raining with {D}istributed {K}-{FAC}},
-	year = {2020},
-	isbn = {9781728199986},
-	publisher = {IEEE Press},
-	booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
-	articleno = {94},
-	numpages = {14},
-	location = {Atlanta, Georgia},
-	series = {SC '20},
-	doi = {10.5555/3433701.3433826}
+    author = {Pauloski, J. Gregory and Zhang, Zhao and Huang, Lei and Xu, Weijia and Foster, Ian T.},
+    title = {Convolutional {N}eural {N}etwork {T}raining with {D}istributed {K}-{FAC}},
+    year = {2020},
+    isbn = {9781728199986},
+    publisher = {IEEE Press},
+    booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+    articleno = {94},
+    numpages = {14},
+    location = {Atlanta, Georgia},
+    series = {SC '20},
+    doi = {10.5555/3433701.3433826}
+}
+
+@misc{pauloski2021kaisa,
+      title={KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks}, 
+      author={J. Gregory Pauloski and Qi Huang and Lei Huang and Shivaram Venkataraman and Kyle Chard and Ian Foster and Zhao Zhang},
+      year={2021},
+      eprint={2107.01739},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
 }
 ```
