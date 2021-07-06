@@ -2,8 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/240976400.svg)](https://zenodo.org/badge/latestdoi/240976400)
 
-Code for the papers "[Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826)" and [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks
-](https://arxiv.org/abs/2107.01739)."
+Code for the papers "[Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826)" and "[KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://arxiv.org/abs/2107.01739)."
 
 This K-FAC implementation is designed to be scalable and efficiently distribute K-FAC computations to reduce training times in distributed environments.
 The K-FAC distributed preconditioner supports [Horovod](https://github.com/horovod/horovod) and [torch.distributed](https://pytorch.org/tutorials/intermediate/ddp_tutorial.html) for data-parallel training.
