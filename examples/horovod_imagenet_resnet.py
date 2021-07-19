@@ -13,7 +13,6 @@ import cnn_utils.datasets as datasets
 import cnn_utils.engine as engine
 import cnn_utils.optimizers as optimizers
 
-from torchsummary import summary
 from torch.utils.tensorboard import SummaryWriter
 from utils import LabelSmoothLoss, save_checkpoint
 

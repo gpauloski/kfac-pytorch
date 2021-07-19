@@ -12,7 +12,7 @@ import cnn_utils.datasets as datasets
 import cnn_utils.engine as engine
 import cnn_utils.optimizers as optimizers
 
-from torchsummary import summary
+from torchinfo import summary
 from torch.utils.tensorboard import SummaryWriter
 from utils import save_checkpoint
 
@@ -121,11 +121,11 @@ def main():
     train_sampler, train_loader, _, val_loader = datasets.get_cifar(args)
     model = models.get_model(args.model)
 
-    if args.verbose:
-        summary(model, (3, 32, 32))
-
     device = 'cpu' if not args.cuda else 'cuda'
     model.to(device)
+    
+    if args.verbose:
+        summary(model, (args.batch_size, 3, 32, 32), device=device)
 
     os.makedirs(args.log_dir, exist_ok=True)
     args.checkpoint_format = os.path.join(args.log_dir, args.checkpoint_format)
