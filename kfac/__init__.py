@@ -1,6 +1,8 @@
-from .preconditioner import CommMethod, KFAC
+from .allocator import WorkerAllocator
+from .preconditioner import AssignmentStrategy
+from .preconditioner import ComputeMethod
+from .preconditioner import DistributedStrategy
+from .preconditioner import KFAC
 from .scheduler import KFACParamScheduler
-from . import modules
-from . import utils
+from . import tracing
 from . import comm
-

@@ -1,39 +1,46 @@
 import torch.nn as nn
 
-import kfac.modules as km
-from kfac.layers.conv import Conv2dLayer
-from kfac.layers.embedding import EmbeddingLayer
-from kfac.layers.linear import LinearLayer
-from kfac.layers.linear import LinearMultiLayer
+from enum import Enum
 
-__all__ = ['KNOWN_MODULES', 'get_kfac_layers', 'module_requires_grad']
+import kfac
+from kfac.layers.eigen import KFACEigenLayer
+from kfac.layers.inverse import KFACInverseLayer
+from kfac.layers.modules import LinearModuleHelper, Conv2dModuleHelper
 
-KNOWN_MODULES = {'linear', 'conv2d', 'embedding', 'lstmcell'}
+__all__ = ["KNOWN_MODULES", "get_kfac_layers", "module_requires_grad"]
 
-def get_kfac_layers(module, **kwargs):
+KNOWN_MODULES = {"linear", "conv2d"}
+
+
+def get_kfac_layers(module, method, **kwargs):
     """Instantiates KFACLayer(s) for module
 
     Args:
       module: module to register
+      method: type of KFAC layer to use
       **kwargs: parameters to pass to KFACLayer
 
     Returns:
       list of tuples where each tuple is (module, KFACLayer)
     """
     if isinstance(module, nn.Linear):
-        return [(module, LinearLayer(module, **kwargs))]
+        Helper = LinearModuleHelper
     elif isinstance(module, nn.Conv2d):
-        return [(module, Conv2dLayer(module, **kwargs))]
-    elif isinstance(module, nn.Embedding):
-        return [(module, EmbeddingLayer(module, **kwargs))]
-    elif isinstance(module, km.LSTMCellBase):
-        return [(m, LinearMultiLayer(m, **kwargs)) for m in module.children()]
-    elif isinstance(module, nn.RNNCellBase):
-        raise TypeError('KFAC does not support torch.nn.{RNN,LSTM}Cell. Use '
-                        'kfac.modules.{RNN,LSTM}Cell instead for KFAC support.')
+        Helper = Conv2dModuleHelper
     else:
-        raise NotImplementedError('KFAC does not support layer {}'.format(
-                                  module.__class__.__name__))
+        raise NotImplementedError(
+            "KFAC does not support layer {}".format(module.__class__.__name__)
+        )
+
+    if method == kfac.ComputeMethod.EIGEN:
+        layer = KFACEigenLayer(module, Helper(module), **kwargs)
+    elif method == kfac.ComputeMethod.INVERSE:
+        layer = KFACInverseLayer(module, Helper(module), **kwargs)
+    else:
+        raise ValueError(f"Unknown KFAC method type: {method}")
+
+    return [(module, layer)]
+
 
 def module_requires_grad(module):
     """Returns False if any module param has .requires_grad=False"""

@@ -1,275 +1,190 @@
-import enum
-import os
+from typing import Union
+
 import torch
 import torch.distributed as dist
 
-try:
-    import horovod.torch as hvd
-    HVD_EXISTS = True
-except:
-    HVD_EXISTS = False
+Future = (torch._C.Future, torch.futures.Future)
 
 
-# The global var containing the current initialized backend object
-backend = None
+class TorchDistributedCommunicator:
+    __slots__ = [
+        "allreduce_bucketing",
+        "bucket_cap_mb",
+        "_allreduce_futures",
+        "_allreduce_buffer",
+    ]
 
+    def __init__(
+        self,
+        allreduce_bucketing: bool = False,
+        bucket_cap_mb: int = 25,
+    ) -> None:
+        self.allreduce_bucketing = allreduce_bucketing
+        self.bucket_cap_mb = bucket_cap_mb
+        self._allreduce_buffer = None
+        self._allreduce_futures = []
 
-def init_comm_backend():
-    global backend
-    if backend is None:
-        backend = _get_comm_backend()
-
-
-def _get_comm_backend():
-    if _horovod_is_initialized():
-        return HorovodBackend()
-    elif _torch_distributed_is_initialized():
-        return TorchBackend()
-    else:
-        return CommBackend()
-
-
-def _horovod_is_initialized():
-    if not HVD_EXISTS:
-        return False
-    try:
-        # If hvd.init() has not been called, this will fail
-        world_size = hvd.size()
-    except:
-        return False
-    else:
-        return True
-
-
-def _torch_distributed_is_initialized():
-    return dist.is_initialized()
-
-
-class Ops(enum.Enum):
-    Average = "average"
-    Sum = "sum"
-
-
-class CommGroup(object):
-    def __init__(self, ranks):
-        self.ranks = ranks
-        if (_torch_distributed_is_initialized() and 
-                self.size > 1 and self.size < backend.size()):
-            self.group = dist.new_group(ranks)
-        else:
-            self.group = None
-
-    @property
-    def size(self):
-        return len(self.ranks)
-
-class CommBackend(object):
-    """Distributed training communication abstraction."""
-    def __init__(self):
-        self.Average = Ops.Average
-        self.Sum = Ops.Sum
-
-    def size(self):
-        """Get worker count"""
-        return 1
-
-    def local_rank(self):
-        """Get workers local rank"""
-        return 0
-
-    def rank(self):
-        """Get unique worker rank"""
-        return 0
-    
-    def allreduce(self, tensor, op=Ops.Average, group=None, async_op=True):
-        """Allreduce tensor inplace.
+    def allreduce(
+        self,
+        tensor: torch.Tensor,
+        group: dist.ProcessGroup = None,
+        upper_tri=False,
+    ) -> Union[torch._C.Future, torch.futures.Future, torch.Tensor]:
+        """Allreduce tensor asynchronously
 
         Args:
-          tensor (torch.Tensor)
-          op (Op): reduction operation to apply (default: Ops.Average)
-          group (CommGroup): CommGroup for collective
-              communication. If None, uses default group (default: None).
-          async_op (bool): whether this op should be asynchronous (default: True)
+            tensor (torch.Tensor): tensor to allreduce
+            group (torch.distributed.ProcessGroup): optional process group
+                to perform communication within
+            upper_tri (bool): communicate only upper triangle
 
         Returns:
-          Async work handle, if async_op is True, else None
+            Future to tensor. Tensor can be retrieved with `future.wait()`.
+            The returned tensor buffer may be different from the input buffer
+            depending on the bucketing configuration.
+
+            If group size is 1, no communication is performed and the tensor
+            is returned.
         """
-        return
-
-    def broadcast(self, tensor, src, group=None, async_op=True):
-        """Broadcast tensor.
-
-        Args:
-          tensor (torch.Tensor)
-          src (int): source rank for tensor.
-          group (CommGroup): CommGroup for collective
-              communication. If None, uses default group (default: None).
-          async_op (bool, optional): whether this op should be asynchronous
-
-        Returns:
-          Async work handle, if async_op is True, else None
-        """
-        return
-    
-    def reduce(self, tensor, dst, op=Ops.Average, async_op=True):
-        """Reduce tensor inplace.
-
-        Args:
-          tensor (torch.Tensor)
-          dst (int): dest rank for reduction
-          op (Op): reduction operation to apply (default: Ops.Average)
-          async_op (bool): whether this op should be asynchrous (default: True)
-
-        Returns:
-          Async work handle, if async_op is True, else None
-        """
-        return
-    
-    def barrier(self):
-        return
-
-    def sync(self, handles):
-        """Executes asynchonous handles.
-
-        Args:
-          handles (handle or list(handles): handles returns by async functions
-        """
-        return
-
-    def wait(self, handle):
-        """Execute handle and block until finished"""
-        return
-
-class HorovodBackend(CommBackend):
-    def size(self):
-        return hvd.size()
-    
-    def local_rank(self):
-        return hvd.local_rank()
-
-    def rank(self):
-        return hvd.rank()
-
-    def allreduce(self, tensor, op=Ops.Average, group=None, async_op=True):
-        op = self._get_op(op)
-        if async_op:
-            return hvd.allreduce_async_(tensor, op=op)
-        else:
-            hvd.allreduce_(tensor, op=op)
-
-    def broadcast(self, tensor, src, group=None, async_op=True):
-        # HVD does not have broadcast groups so we ignore
-        if async_op:
-            return hvd.broadcast_async_(tensor, root_rank=src)
-        else:
-            hvd.broadcast_(tensor, root_rank=rank)
-
-    def reduce(self, tensor, dst, op=Ops.Average, async_op=True):
-        # Horovod only support allreduce
-        self.allreduce(tensor, op=op, async_op=async_op)
-
-    def barrier(self):
-        hvd.allreduce(torch.tensor(1), name='barrier')
-
-    def _get_op(self, op):
-        if op == Ops.Average:
-            return hvd.Average
-        elif op == Ops.Sum:
-            return hvd.Sum
-        else:
-            raise ValueError('Unknown communication operation {}'.format(op))
-
-    def sync(self, handles):
-        if isinstance(handles, list):
-            for handle in handles:
-                self.wait(handle)
-        else:
-            self.wait(handles)
-
-    def wait(self, handle):
-        if handle is not None:
-            hvd.synchronize(handle)
-
-
-class TorchBackend(CommBackend):
-    def size(self):
-        return dist.get_world_size()
-
-    def local_rank(self):
-        try:
-            return os.environ['LOCAL_RANK']
-        except:
-            raise RuntimeError('LOCAL_RANK must be set in the environment'
-                               'when using torch.distributed')
-
-    def rank(self):
-        return dist.get_rank()
-    
-    def allreduce(self, tensor, op=Ops.Average, group=None, async_op=True):
-        if group is not None:
-            if group.size <= 1:
-                return
-            kwargs = {'group': group.group} if group.group is not None else {}
-        else:
-            kwargs = {}
-        # Note: actually returns tuple(handle, tensor)
-        # because there is no average op in Torch distribted so
-        # we need to pass the tensor to sync() to be averages
-        handle = dist.all_reduce(tensor, async_op=async_op, **kwargs)
- 
-        if not async_op:
-            if op == Ops.Average:
-                tensor /= self.size()
-            return
-        else:
-            if op == Ops.Average:
-                return (handle, tensor)
-            return handle
-
-    def broadcast(self, tensor, src, group=None, async_op=True):
-        if group is not None:
-            if group.size <= 1:
-                return
-            kwargs = {'group': group.group} if group.group is not None else {}
-            return dist.broadcast(tensor, src=src, async_op=async_op, **kwargs)
-        return dist.broadcast(tensor, src=src, async_op=async_op)
-
-    def reduce(self, tensor, dst, op=Ops.Average, async_op=True):
-        # Note: actually returns tuple(handle, should_average)
-        # because there is no average op in Torch distribted
-        handle = dist.reduce(tensor, dst=dst, async_op=async_op)
-        
-        if not async_op:
-            if op == Ops.Average:
-                tensor /= self.size()
-            return
-        else:
-            if op == Ops.Average:
-                return (handle, tensor)
-            return handle
-
-    def barrier(self):
-        dist.barrier()
-
-    def sync(self, handles):
-        if isinstance(handles, list):
-            if len(handles) == 0:
-               return
-            if isinstance(handles[0], tuple):
-                for handle, tensor in handles: 
-                    self.wait(handle)
-                    tensor /= self.size()
+        if dist.get_world_size(group) == 1:
+            return tensor
+        shape = tensor.size()
+        length = torch.numel(tensor)
+        if upper_tri:
+            tensor = get_triu(tensor)
+        if not self.allreduce_bucketing:
+            tensor = tensor.contiguous()
+            future = dist.all_reduce(
+                tensor, group=group, async_op=True
+            ).get_future()
+            if upper_tri:
+                future = future.then(
+                    lambda fut: fill_triu(shape, fut.value()[0])
+                )
             else:
-                for handle in handles:
-                    self.wait(handle)
+                future = future.then(lambda fut: fut.value()[0])
+            return future
         else:
-            if isinstance(handles, tuple):
-                handle, tensor = handles
-                self.wait(handle)
-                tensor /= self.size()
+            if self._allreduce_buffer is None:
+                index = 0
+                self._allreduce_buffer = tensor.flatten()
             else:
-                self.wait(handles)
+                index = torch.numel(self._allreduce_buffer)
+                self._allreduce_buffer = torch.cat(
+                    [self._allreduce_buffer, tensor.flatten()]
+                )
 
-    def wait(self, handle):
-        if handle is not None:
-            handle.wait() 
+            def extract_and_shape(fut):
+                t = fut.value()[0]
+                t = fut[index:index + length].view(shape)
+                if upper_tri:
+                    t = fill_triu(shape, t)
+                return t
+
+            future = torch.future.Future().then(extract_and_shape)
+            self._allreduce_futures.append(future)
+
+            mbs = torch.numel(self._allreduce_buffer) * torch.element_size(
+                self._allreduce_buffer
+            )
+            if mbs > self.bucket_cap_mb:
+                self._flush_allreduce_bucket()
+                self._allreduce_futures = None
+                self._allreduce_buffer = None
+
+            return future
+
+    def _flush_allreduce_bucket(self):
+        mini_futures = self._allreduce_futures
+
+        def set_all_futures(fut):
+            t = fut.value()[0]
+            for mini_fut in mini_futures:
+                mini_fut.set_result(t)
+
+        # TODO(gpauloski)
+        # big_future = (
+        #     dist.all_reduce(
+        #         self._allreduce_buffer, group=group, async_op=True
+        #      ).get_future().then(mini_futures)
+        # )
+
+    def broadcast(
+        self,
+        tensor: torch.Tensor,
+        src: int,
+        group: dist.ProcessGroup = None,
+        upper_tri=False,
+    ) -> Union[torch._C.Future, torch.futures.Future, torch.Tensor]:
+        """Broadcast tensor from src to all other workers asynchronously
+
+        Args:
+            tensor (torch.Tensor): tensor for broadcast
+            src (int): rank of worker with src tensor
+            group (torch.distributed.ProcessGroup): optional process group
+                to perform communication within
+            upper_tri (bool): communicate only upper triangle
+
+        Returns:
+            Future to tensor. Tensor can be retrieved with `future.wait()`.
+            The returned tensor buffer may be different from the input buffer
+            depending on the bucketing configuration.
+
+            If group size is 1, no communication is performed and the tensor
+            is returned.
+        """
+        if dist.get_world_size(group) == 1:
+            return tensor
+        shape = tensor.size()
+        if upper_tri:
+            tensor = tensor[torch.triu_indices(shape[0], shape[1])]
+        tensor = tensor.contiguous()
+        future = dist.broadcast(
+            tensor, src=src, group=group, async_op=True
+        ).get_future()
+        if upper_tri:
+            future = future.then(lambda fut: fill_triu(shape, fut.value()[0]))
+        else:
+            future = future.then(lambda fut: fut.value()[0])
+        return future
+
+
+def get_triu(tensor):
+    """Returns flattened upper triangle of 2D tensor"""
+    if len(tensor.shape) != 2:
+        raise ValueError("triu(tensor) requires tensor to be 2 dimensional")
+    if tensor.shape[0] > tensor.shape[1]:
+        raise ValueError("tensor cannot have more rows than columns")
+    idxs = torch.triu_indices(
+        tensor.shape[0], tensor.shape[1], device=tensor.device
+    )
+    return tensor[idxs[0], idxs[1]]
+
+
+def fill_triu(shape, triu_tensor):
+    """Reconstruct symmetric 2D tensor from flattened upper triangle
+
+    Usage:
+      >>> x = tensor.new_empty([10, 10])
+      >>> triu_x = get_triu(x)
+      >>> x_new = fill_triu([10, 10], triu_tensor)
+      >>> assert torch.equal(x, x_new)  # true
+
+    Args:
+      shape (tuple): tuple(rows, cols) of size of output tensor
+      triu_tensor (tensor): flattened upper triangle of the tensor returned by
+          get_triu()
+
+    Returns:
+      Symmetric tensor with `shape` where the upper/lower triangles are filled
+          with the data in `triu_tensor`
+    """
+    if len(shape) != 2:
+        raise ValueError("shape must be 2 dimensional")
+    rows, cols = shape
+    dst_tensor = triu_tensor.new_empty(shape)
+    idxs = torch.triu_indices(rows, cols, device=triu_tensor.device)
+    dst_tensor[idxs[0], idxs[1]] = triu_tensor
+    idxs = torch.triu_indices(rows, rows, 1, device=dst_tensor.device)
+    dst_tensor.transpose(0, 1)[idxs[0], idxs[1]] = dst_tensor[idxs[0], idxs[1]]
+    return dst_tensor

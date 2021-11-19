@@ -1,4 +1,4 @@
-class KFACParamScheduler():
+class KFACParamScheduler:
     """Updates KFAC parameters according to the epoch
 
     Similar to `torch.optim.lr_scheduler.StepLR()`
@@ -9,7 +9,7 @@ class KFACParamScheduler():
 
     Args:
       kfac (KFAC): wrapped KFAC preconditioner
-      damping_alpha (float, optional): multiplicative factor of the damping 
+      damping_alpha (float, optional): multiplicative factor of the damping
           (default: 1)
       damping_schedule (list, optional): list of steps to update the damping
           by `damping_alpha` (default: None)
@@ -20,38 +20,50 @@ class KFACParamScheduler():
       start_step (int, optional): starting step, for use if resuming training
           from checkpoint (default: 0)
     """
-    def __init__(self,
-                 kfac,
-                 damping_alpha=1,
-                 damping_schedule=None,
-                 update_freq_alpha=1,
-                 update_freq_schedule=None,
-                 start_step=0):
+
+    def __init__(
+        self,
+        kfac,
+        damping_alpha=1,
+        damping_schedule=None,
+        update_freq_alpha=1,
+        update_freq_schedule=None,
+        start_step=0,
+    ):
 
         self.kfac = kfac
         params = self.kfac.param_groups[0]
 
-        self.damping_base = params['damping']
+        if damping_schedule is not None and callable(params["damping"]):
+            raise ValueError(
+                "Cannot use a damping schedule when KFAC was passed a callable "
+                "for damping "
+            )
+
+        self.damping_base = params["damping"]
         self.damping_alpha = damping_alpha
         self.damping_schedule = damping_schedule
-        self.damping_factor_func = \
-                self._get_factor_func(self.damping_schedule,
-                                     self.damping_alpha)
+        self.damping_factor_func = self._get_factor_func(
+            self.damping_schedule, self.damping_alpha
+        )
 
-        self.factor_update_freq_base = params['factor_update_freq']
-        self.inv_update_freq_base = params['inv_update_freq']
+        self.factor_update_freq_base = params["factor_update_steps"]
+        self.inv_update_freq_base = params["inv_update_steps"]
         self.update_freq_alpha = update_freq_alpha
         self.update_freq_schedule = update_freq_schedule
-        self.update_freq_factor_func = \
-                self._get_factor_func(self.update_freq_schedule,
-                                     self.update_freq_alpha)
+        self.update_freq_factor_func = self._get_factor_func(
+            self.update_freq_schedule, self.update_freq_alpha
+        )
 
         self._step = start_step
 
     def state_dict(self):
         """Returns the state of the scheduler as a dict."""
-        return {key: value for key, value in self.__dict__.items() 
-                if key != 'kfac' and 'func' not in key}
+        return {
+            key: value
+            for key, value in self.__dict__.items()
+            if key != "kfac" and "func" not in key
+        }
 
     def load_state_dict(self, state_dict):
         """Loads the schedulers state.
@@ -70,7 +82,7 @@ class KFACParamScheduler():
             schedule = []
 
         def factor_func(step):
-            factor = 1.
+            factor = 1.0
             for t in schedule:
                 if step >= t:
                     factor *= alpha
@@ -87,8 +99,12 @@ class KFACParamScheduler():
 
         params = self.kfac.param_groups[0]
 
-        params['damping'] = self.damping_base * self.damping_factor_func(self._step)
+        params["damping"] = self.damping_base * self.damping_factor_func(
+            self._step
+        )
 
         factor = self.update_freq_factor_func(self._step)
-        params['factor_update_freq'] = int(self.factor_update_freq_base * factor)
-        params['inv_update_freq'] = int(self.inv_update_freq_base * factor)
+        params["factor_update_steps"] = int(
+            self.factor_update_freq_base * factor
+        )
+        params["inv_update_steps"] = int(self.inv_update_freq_base * factor)
