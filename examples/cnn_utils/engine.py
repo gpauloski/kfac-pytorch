@@ -36,8 +36,8 @@ def train(
 
             batch_idx = range(0, len(data), args.batch_size)
             for i in batch_idx:
-                data_batch = data[i:i + args.batch_size]
-                target_batch = target[i:i + args.batch_size]
+                data_batch = data[i : i + args.batch_size]
+                target_batch = target[i : i + args.batch_size]
 
                 if scaler is not None:
                     with torch.cuda.amp.autocast():
