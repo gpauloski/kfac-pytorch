@@ -76,7 +76,7 @@ class TorchDistributedCommunicator:
 
             def extract_and_shape(fut):
                 t = fut.value()[0]
-                t = fut[index:index + length].view(shape)
+                t = fut[index : index + length].view(shape)
                 if upper_tri:
                     t = fill_triu(shape, t)
                 return t

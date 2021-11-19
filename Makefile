@@ -5,6 +5,6 @@ flake8:
 	flake8 . --count --show-source --statistics
 
 pytest:
-	pytest --cache-clear --cov=kfac --cov-report term-missing kfac
+	pytest --cache-clear kfac
 
 test: black flake8 pytest

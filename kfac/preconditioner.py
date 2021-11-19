@@ -277,8 +277,7 @@ class KFAC(optim.Optimizer):
             "assignment_strategy": self.assignment_strategy,
             "colocate_factors": self.colocate_factors,
             "compute_method": self.compute_method,
-            "compute_eigenvalue_outer_product":
-                self.compute_eigenvalue_outer_product,
+            "compute_eigenvalue_outer_product": self.compute_eigenvalue_outer_product,  # noqa: E501
             "distributed_strategy": self.distributed_strategy,
             "grad_worker_fraction": self.grad_worker_fraction,
             "symmetry_aware": self.symmetry_aware,
@@ -584,7 +583,7 @@ class KFAC(optim.Optimizer):
                 sizes[module] = list(map(lambda n: n ** 2, x))
             else:
                 raise ValueError(
-                    'assignment_strategy must be COMPUTE or MEMORY'
+                    "assignment_strategy must be COMPUTE or MEMORY"
                 )
 
         if self.colocate_factors:

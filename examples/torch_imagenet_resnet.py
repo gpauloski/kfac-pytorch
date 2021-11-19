@@ -16,6 +16,7 @@ from utils import LabelSmoothLoss, save_checkpoint
 
 try:
     from torch.cuda.amp import GradScaler
+
     TORCH_FP16 = True
 except ImportError:
     TORCH_FP16 = False
