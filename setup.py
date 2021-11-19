@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="kfac-pytorch",
-    version="0.3.1",
+    version="0.4.0",
     author="Greg Pauloski",
     author_email="jgpauloski@uchicago.edu",
     description="Distributed K-FAC Preconditioner for PyTorch",
@@ -15,8 +15,8 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.7',
     install_requires=[
-        "torch >= 1.1",
+        "torch >= 1.8",
     ],
 )
