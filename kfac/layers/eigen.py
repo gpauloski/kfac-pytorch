@@ -1,7 +1,7 @@
 import torch
 
-from .base import KFACBaseLayer
-from ..comm import Future
+from kfac.distributed import Future
+from kfac.layers.base import KFACBaseLayer
 
 
 class KFACEigenLayer(KFACBaseLayer):
@@ -51,6 +51,9 @@ class KFACEigenLayer(KFACBaseLayer):
     def broadcast_a_inv(self):
         if not self.is_grad_worker:
             return
+        if len(self.grad_worker_ranks) == 1:
+            # MEM-OPT case -> no communication necessary
+            return
         self.QA = self.comm.broadcast(
             self.QA, src=self.a_inv_worker, group=self.grad_worker_group
         )
@@ -61,6 +64,9 @@ class KFACEigenLayer(KFACBaseLayer):
 
     def broadcast_g_inv(self):
         if not self.is_grad_worker:
+            return
+        if len(self.grad_worker_ranks) == 1:
+            # MEM-OPT case -> no communication necessary
             return
         self.QG = self.comm.broadcast(
             self.QG, src=self.g_inv_worker, group=self.grad_worker_group
@@ -96,6 +102,7 @@ class KFACEigenLayer(KFACBaseLayer):
                 torch.linalg.eig(
                     self.A.to(torch.float32), out=(self.dA, self.QA)
                 )
+            self.dA = torch.clamp(self.dA, min=0.0)
             self.QA = self.QA.to(self.inv_dtype)
             self.dA = self.dA.to(self.inv_dtype)
 
@@ -125,12 +132,11 @@ class KFACEigenLayer(KFACBaseLayer):
                 torch.linalg.eig(
                     self.G.to(torch.float32), out=(self.dG, self.QG)
                 )
+            self.dG = torch.clamp(self.dG, min=0.0)
             self.QG = self.QG.to(self.inv_dtype)
             self.dG = self.dG.to(self.inv_dtype)
             if self.prediv_eigenvalues:
-                self.dGdA = 1 / (
-                    self.dG.unsqueeze(1) * self.dA.unsqueeze(0) + damping
-                )
+                self.dGdA = 1 / (torch.outer(self.dG, self.dA) + damping)
 
     def preconditioned_grad(self, damping=0.001):
         if not self.is_grad_worker:
@@ -144,7 +150,7 @@ class KFACEigenLayer(KFACBaseLayer):
         if self.prediv_eigenvalues:
             v2 = v1 * self.dGdA
         else:
-            v2 = v1 / (self.dG.unsqueeze(1) * self.dA.unsqueeze(0) + damping)
+            v2 = v1 / (torch.outer(self.dG, self.dA) + damping)
         self.grad = (self.QG @ v2 @ self.QA.t()).to(grad_type)
 
     def sync_a_inv(self):

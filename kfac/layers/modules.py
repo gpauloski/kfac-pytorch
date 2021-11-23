@@ -1,6 +1,6 @@
 import torch
 
-from . import utils
+from kfac.layers import utils
 
 
 class ModuleHelper:
@@ -35,14 +35,12 @@ class ModuleHelper:
 class LinearModuleHelper(ModuleHelper):
     def get_a_factor(self, a):
         # a: batch_size * in_dim
-        a = a.view(-1, a.shape[-1])
         if self.has_bias():
             a = utils.append_bias_ones(a)
         return utils.get_cov(a)
 
     def get_g_factor(self, g):
         # g: batch_size * out_dim
-        g = g.reshape(-1, g.shape[-1])
         return utils.get_cov(g)
 
 

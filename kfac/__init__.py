@@ -1,8 +1,13 @@
-from .allocator import WorkerAllocator
-from .preconditioner import AssignmentStrategy
-from .preconditioner import ComputeMethod
-from .preconditioner import DistributedStrategy
-from .preconditioner import KFAC
-from .scheduler import KFACParamScheduler
-from . import tracing
-from . import comm
+import kfac.allocator as allocator
+import kfac.distributed as distributed
+import kfac.tracing as tracing
+
+from kfac import layers
+
+from kfac.preconditioner import AssignmentStrategy
+from kfac.preconditioner import ComputeMethod
+from kfac.preconditioner import DistributedStrategy
+from kfac.preconditioner import KFAC
+from kfac.scheduler import KFACParamScheduler
+
+__version__ = "0.4.0"

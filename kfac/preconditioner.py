@@ -8,8 +8,9 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 
-from . import layers as kfac_layers
-from . import comm, WorkerAllocator
+import kfac.layers as kfac_layers
+from kfac.distributed import TorchDistributedCommunicator
+from kfac.allocator import WorkerAllocator
 
 
 class AssignmentStrategy(enum.Enum):
@@ -210,8 +211,6 @@ class KFAC(optim.Optimizer):
             else:
                 distributed_strategy = DistributedStrategy.HYBRID_OPT
 
-        # TODO(gpauloski): modify worker allocated to allow for placing
-        # factors on same worker in the HYBRID-OPT case
         if (
             not colocate_factors
             and distributed_strategy is DistributedStrategy.MEM_OPT
@@ -265,7 +264,7 @@ class KFAC(optim.Optimizer):
         self.verbose = verbose
 
         self.workers_assigned = False
-        self.comm = comm.TorchDistributedCommunicator()
+        self.comm = TorchDistributedCommunicator()
 
         # key: nn.Module, value: KFACLayer
         self.layers = {}

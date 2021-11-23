@@ -1,7 +1,7 @@
 import torch
 
-from .base import KFACBaseLayer
-from ..comm import Future
+from kfac.distributed import Future
+from kfac.layers.base import KFACBaseLayer
 
 
 class KFACInverseLayer(KFACBaseLayer):
