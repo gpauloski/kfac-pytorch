@@ -2,7 +2,7 @@ import torch
 
 import torch.distributed as dist
 
-from ..comm import Future
+from kfac.distributed import Future
 
 
 class KFACBaseLayer(object):
@@ -52,7 +52,18 @@ class KFACBaseLayer(object):
         self.sync_g_inv()
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({repr(self.module)})"
+        return (
+            f"{self.__class__.__name__}({repr(self.module)}) {{\n"
+            f"    A_inv worker: {self.a_inv_worker},\n"
+            f"    G_inv worker: {self.g_inv_worker},\n"
+            f"    is A_inv worker: {self.is_a_inv_worker},\n"
+            f"    is G_inv worker: {self.is_g_inv_worker},\n"
+            f"    is grad worker: {self.is_grad_worker},\n"
+            f"    grad src worker: {self.grad_src_worker},\n"
+            f"    grad worker group: {self.grad_worker_ranks},\n"
+            f"    grad receiver group: {self.grad_receiver_ranks}\n"
+            f"}}"
+        )
 
     def state_dict(self):
         """Returns the state of the KFACLayer as a dictionary.
@@ -87,8 +98,8 @@ class KFACBaseLayer(object):
         grad_src_worker,
         grad_worker_ranks,
         grad_worker_group,
-        grad_comm_ranks,
-        grad_comm_group,
+        grad_receiver_ranks,
+        grad_receiver_group,
     ):
         """Assign ranks to compute inverses
 
@@ -101,10 +112,10 @@ class KFACBaseLayer(object):
               gradient.
           grad_worker_group (ProcessGroup): Torch ProcessGroup composed of
               grad_worker_ranks
-          grad_comm_ranks (List[int]): list of ranks for gradient communication
-              groups.
-          grad_comm_group (ProcessGroup): Torch ProcessGroup for communicating
-              the preconditioned gradients.
+          grad_receiver_ranks (List[int]): list of ranks for gradient
+              communication groups.
+          grad_receiver_group (ProcessGroup): Torch ProcessGroup for
+              communicating the preconditioned gradients.
         """
         if a_inv_worker != g_inv_worker and self.prediv_eigenvalues:
             raise ValueError(
@@ -129,8 +140,8 @@ class KFACBaseLayer(object):
         self.grad_src_worker = grad_src_worker
         self.grad_worker_ranks = grad_worker_ranks
         self.grad_worker_group = grad_worker_group
-        self.grad_comm_ranks = grad_comm_ranks
-        self.grad_comm_group = grad_comm_group
+        self.grad_receiver_ranks = grad_receiver_ranks
+        self.grad_receiver_group = grad_receiver_group
         self.is_a_inv_worker = dist.get_rank() == self.a_inv_worker
         self.is_g_inv_worker = dist.get_rank() == self.g_inv_worker
         self.is_grad_worker = dist.get_rank() in self.grad_worker_ranks
@@ -170,12 +181,15 @@ class KFACBaseLayer(object):
         Note:
             all ranks must enter this function
         """
+        if len(self.grad_receiver_ranks) == 1:
+            # COMM-OPT case -> no gradient communication
+            return
         if self.grad is None:
             g = self.module_helper.get_grad()
             self.grad = g.new_empty(g.shape)
 
         self.grad = self.comm.broadcast(
-            self.grad, src=self.grad_src_worker, group=self.grad_comm_group
+            self.grad, src=self.grad_src_worker, group=self.grad_receiver_group
         )
 
     def compute_a_inv(self, damping=0.001):
@@ -245,47 +259,47 @@ class KFACBaseLayer(object):
 
     def sync_a_factor(self):
         if isinstance(self.A, Future):
-            self.A = self.A.wait() / dist.get_world_size()
+            self.A = (1 / dist.get_world_size()) * self.A.wait()
 
     def sync_a_inv(self):
         raise NotImplementedError
 
     def sync_g_factor(self):
         if isinstance(self.G, Future):
-            self.G = self.G.wait() / dist.get_world_size()
+            self.G = (1 / dist.get_world_size()) * self.G.wait()
 
     def sync_g_inv(self):
         raise NotImplementedError
 
     def sync_grad(self):
         if isinstance(self.grad, Future):
-            self.grad = self.grad.value()
+            self.grad = self.grad.wait()
 
     def update_a_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
         if self.a is None:
             return
-        a = (1 / self.a_count) * self.a
-        A_new = self.module_helper.get_a_factor(a)
+        if self.a_count > 1:
+            self.a = (1 / self.a_count) * self.a
+        A_new = self.module_helper.get_a_factor(self.a)
         self.a = None
+        self.sync_a_factor()
         if self.A is None:
             self.A = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
-        else:
-            self.sync_a_factor()
-            self.A = (alpha * self.A) + ((1 - alpha) * A_new)
+        self.A = (alpha * self.A) + ((1 - alpha) * A_new)
 
     def update_g_factor(self, alpha=0.95):
         """Compute factor G and add to running averages"""
         if self.g is None:
             return
-        g = (1 / self.g_count) * self.g
-        G_new = self.module_helper.get_g_factor(g)
+        if self.g_count > 1:
+            self.g = (1 / self.g_count) * self.g
+        G_new = self.module_helper.get_g_factor(self.g)
         self.g = None
+        self.sync_g_factor()
         if self.G is None:
             self.G = torch.diag(G_new.new(G_new.shape[0]).fill_(1))
-        else:
-            self.sync_g_factor()
-            self.G = (alpha * self.G) + ((1 - alpha) * G_new)
+        self.G = (alpha * self.G) + ((1 - alpha) * G_new)
 
     def update_grad(self, scale=None):
         """Updates gradients of module with computed precondition gradients"""
@@ -302,7 +316,6 @@ class KFACBaseLayer(object):
             if scale is not None:
                 bias = scale * bias
             self._set_bias_grad(bias)
-        # TODO(gpauloski): is this okay?
         self.grad = None
 
     def _get_bias_grad(self):
@@ -315,7 +328,6 @@ class KFACBaseLayer(object):
 
     def _set_bias_grad(self, grad):
         """Set bias.grad tensor of module"""
-        # TODO(gpauloski): contiguous here?
         self.module.bias.grad = grad.contiguous()
 
     def _set_weight_grad(self, grad):

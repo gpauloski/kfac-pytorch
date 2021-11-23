@@ -1,32 +1,32 @@
 """Partition Workers Unit Tests"""
-import kfac
-
 from pytest import raises
+
+from kfac.allocator import WorkerAllocator
 
 
 def test_input_check() -> None:
     with raises(ValueError):
-        kfac.WorkerAllocator(2, 0, 1)
+        WorkerAllocator(2, 0, 1)
 
     with raises(ValueError):
-        kfac.WorkerAllocator(-1, 0, 1)
+        WorkerAllocator(-1, 0, 1)
 
     with raises(ValueError):
-        kfac.WorkerAllocator(0.25, 0, 2)
+        WorkerAllocator(0.25, 0, 2)
 
     with raises(ValueError):
-        kfac.WorkerAllocator(1, 1, 1)
+        WorkerAllocator(1, 1, 1)
 
     with raises(ValueError):
-        kfac.WorkerAllocator(1, -1, 2)
+        WorkerAllocator(1, -1, 2)
 
     with raises(ValueError):
-        kfac.WorkerAllocator(1, 1, -2)
+        WorkerAllocator(1, 1, -2)
 
 
 def test_initialize() -> None:
-    allocator1 = kfac.WorkerAllocator(1, 0, 2)
-    allocator2 = kfac.WorkerAllocator(1, 1, 2)
+    allocator1 = WorkerAllocator(1, 0, 2)
+    allocator2 = WorkerAllocator(1, 1, 2)
 
     # Check worker partitions are same regardless of rank
     assert allocator1.grad_worker_groups == allocator2.grad_worker_groups
@@ -40,12 +40,12 @@ def test_initialize() -> None:
 
 def test_unconstrained_assignment() -> None:
     def _check(world_size, work, assignment):
-        allocator1 = kfac.WorkerAllocator(1, 0, world_size)
+        allocator1 = WorkerAllocator(1, 0, world_size)
         assignment1 = allocator1.assign_layer_work(work)
         assert assignment == assignment1
         # Check ranks give identical assignments
         if world_size > 1:
-            allocator2 = kfac.WorkerAllocator(1, 1, world_size)
+            allocator2 = WorkerAllocator(1, 1, world_size)
             assignment2 = allocator2.assign_layer_work(work)
             assert assignment1 == assignment2
 
@@ -84,12 +84,12 @@ def test_unconstrained_assignment() -> None:
 
 def test_constrained_assignment() -> None:
     def _check(world_size, work, groups, assignment):
-        allocator1 = kfac.WorkerAllocator(1, 0, world_size)
+        allocator1 = WorkerAllocator(1, 0, world_size)
         assignment1 = allocator1.assign_layer_work(work, groups)
         assert assignment == assignment1
         # Check ranks give identical assignments
         if world_size > 1:
-            allocator2 = kfac.WorkerAllocator(1, 1, world_size)
+            allocator2 = WorkerAllocator(1, 1, world_size)
             assignment2 = allocator2.assign_layer_work(work, groups)
             assert assignment1 == assignment2
 
@@ -145,12 +145,8 @@ def test_get_groups_comm_opt() -> None:
     grad_worker_frac = 1
     # Pass lambda x: x so communication groups are just the sets of ranks
     # for easy checking
-    allocator1 = kfac.WorkerAllocator(
-        grad_worker_frac, 0, world_size, lambda x: x
-    )
-    allocator2 = kfac.WorkerAllocator(
-        grad_worker_frac, 1, world_size, lambda x: x
-    )
+    allocator1 = WorkerAllocator(grad_worker_frac, 0, world_size, lambda x: x)
+    allocator2 = WorkerAllocator(grad_worker_frac, 1, world_size, lambda x: x)
 
     for rank in range(world_size):
         assert allocator1.get_grad_worker_ranks(rank) == set(range(world_size))
@@ -172,12 +168,8 @@ def test_get_groups_mem_opt() -> None:
     grad_worker_frac = 0.25
     # Pass lambda x: x so communication groups are just the sets of ranks
     # for easy checking
-    allocator1 = kfac.WorkerAllocator(
-        grad_worker_frac, 0, world_size, lambda x: x
-    )
-    allocator2 = kfac.WorkerAllocator(
-        grad_worker_frac, 1, world_size, lambda x: x
-    )
+    allocator1 = WorkerAllocator(grad_worker_frac, 0, world_size, lambda x: x)
+    allocator2 = WorkerAllocator(grad_worker_frac, 1, world_size, lambda x: x)
 
     for rank in range(world_size):
         assert allocator1.get_grad_worker_ranks(rank) == set([rank])
@@ -199,18 +191,10 @@ def test_get_groups_hybrid_opt() -> None:
     grad_worker_frac = 0.5
     # Pass lambda x: x so communication groups are just the sets of ranks
     # for easy checking
-    allocator1 = kfac.WorkerAllocator(
-        grad_worker_frac, 0, world_size, lambda x: x
-    )
-    allocator2 = kfac.WorkerAllocator(
-        grad_worker_frac, 1, world_size, lambda x: x
-    )
-    allocator3 = kfac.WorkerAllocator(
-        grad_worker_frac, 2, world_size, lambda x: x
-    )
-    allocator4 = kfac.WorkerAllocator(
-        grad_worker_frac, 3, world_size, lambda x: x
-    )
+    allocator1 = WorkerAllocator(grad_worker_frac, 0, world_size, lambda x: x)
+    allocator2 = WorkerAllocator(grad_worker_frac, 1, world_size, lambda x: x)
+    allocator3 = WorkerAllocator(grad_worker_frac, 2, world_size, lambda x: x)
+    allocator4 = WorkerAllocator(grad_worker_frac, 3, world_size, lambda x: x)
 
     for rank in range(world_size):
         wg = [[0, 2], [1, 3]]

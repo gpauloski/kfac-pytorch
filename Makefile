@@ -1,4 +1,5 @@
 black:
+	black --line-length 80 --diff --color examples kfac && \
 	black --line-length 80 examples kfac
 
 flake8:

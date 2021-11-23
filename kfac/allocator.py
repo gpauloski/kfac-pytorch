@@ -168,7 +168,7 @@ class WorkerAllocator(object):
         return assignments
 
     def _constrained_assign(
-        self, work: Dict[Any, List[int]], worker_groups: Iterable[Iterable[int]]
+        self, work: Dict[Any, List[int]], worker_groups: List[List[int]]
     ) -> Dict[Any, List[int]]:
         """Helper for constrained layer work assignments"""
         summed_work = {k: sum(v) for k, v in work.items()}
@@ -227,6 +227,7 @@ class WorkerAllocator(object):
         """
         self._worker_load = [0] * self.world_size
         if worker_groups is not None:
+            worker_groups = list(list(s) for s in worker_groups)
             return self._constrained_assign(work, worker_groups)
         return self._unconstrained_assign(work)
 

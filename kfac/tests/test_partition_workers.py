@@ -1,10 +1,10 @@
 """Partition Workers Unit Tests"""
-import kfac
-
 from pytest import raises
 
-partition_grad_workers = kfac.WorkerAllocator.partition_grad_workers
-partition_grad_receivers = kfac.WorkerAllocator.partition_grad_receivers
+from kfac.allocator import WorkerAllocator
+
+partition_grad_workers = WorkerAllocator.partition_grad_workers
+partition_grad_receivers = WorkerAllocator.partition_grad_receivers
 
 
 def test_input_check() -> None:
