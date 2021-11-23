@@ -239,10 +239,10 @@ class KFACBaseLayer(object):
     def save_layer_input(self, input):
         """Save input for layer"""
         if self.a is None:
-            self.a = input[0]
+            self.a = input[0].data
             self.a_count = 1
         else:
-            self.a = self.a + input[0]
+            self.a = self.a + input[0].data
             self.a_count += 1
 
     def save_layer_grad_output(self, grad_output):
