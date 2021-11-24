@@ -141,79 +141,82 @@ def parse_args():
 
     # KFAC Parameters
     parser.add_argument(
-        "--kfac-update-freq",
+        "--kfac-inv-update-steps",
         type=int,
         default=10,
         help="iters between kfac inv ops (0 disables kfac) (default: 10)",
     )
     parser.add_argument(
-        "--kfac-cov-update-freq",
+        "--kfac-factor-update-steps",
         type=int,
         default=1,
         help="iters between kfac cov ops (default: 1)",
     )
     parser.add_argument(
-        "--kfac-update-freq-alpha",
+        "--kfac-update-steps-alpha",
         type=float,
         default=10,
-        help="KFAC update freq multiplier (default: 10)",
+        help="KFAC update step multiplier (default: 10)",
     )
     parser.add_argument(
-        "--kfac-update-freq-decay",
+        "--kfac-update-steps-decay",
         nargs="+",
         type=int,
         default=None,
-        help="KFAC update freq decay schedule (default None)",
+        help="KFAC update step decay schedule (default None)",
     )
     parser.add_argument(
-        "--use-inv-kfac",
+        "--kfac-inv-method",
         action="store_true",
         default=False,
         help="Use inverse KFAC update instead of eigen (default False)",
     )
     parser.add_argument(
-        "--stat-decay",
+        "--kfac-factor-decay",
         type=float,
         default=0.95,
         help="Alpha value for covariance accumulation (default: 0.95)",
     )
     parser.add_argument(
-        "--damping",
+        "--kfac-damping",
         type=float,
         default=0.003,
         help="KFAC damping factor (defaultL 0.003)",
     )
     parser.add_argument(
-        "--damping-alpha",
+        "--kfac-damping-alpha",
         type=float,
         default=0.5,
         help="KFAC damping decay factor (default: 0.5)",
     )
     parser.add_argument(
-        "--damping-decay",
+        "--kfac-damping-decay",
         nargs="+",
         type=int,
         default=None,
         help="KFAC damping decay schedule (default None)",
     )
     parser.add_argument(
-        "--kl-clip", type=float, default=0.001, help="KL clip (default: 0.001)"
+        "--kfac-kl-clip",
+        type=float,
+        default=0.001,
+        help="KL clip (default: 0.001)",
     )
     parser.add_argument(
-        "--skip-layers",
+        "--kfac-skip-layers",
         nargs="+",
         type=str,
         default=[],
         help="Layer types to ignore registering with KFAC (default: [])",
     )
     parser.add_argument(
-        "--coallocate-layer-factors",
+        "--kfac-colocate-factors",
         action="store_true",
         default=True,
         help="Compute A and G for a single layer on the same worker. ",
     )
     parser.add_argument(
-        "--kfac-comm-method",
+        "--kfac-strategy",
         type=str,
         default="comm-opt",
         help="KFAC communication optimization strategy. One of comm-opt, "
