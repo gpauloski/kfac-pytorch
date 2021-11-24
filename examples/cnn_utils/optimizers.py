@@ -8,7 +8,7 @@ from utils import create_lr_schedule  # noqa: E402
 
 
 def get_optimizer(model, args):
-    use_kfac = True if args.kfac_update_freq > 0 else False
+    use_kfac = True if args.kfac_inv_update_steps > 0 else False
 
     optimizer = optim.SGD(
         model.parameters(),
@@ -17,41 +17,41 @@ def get_optimizer(model, args):
         weight_decay=args.weight_decay,
     )
 
-    if args.kfac_comm_method == "comm-opt":
+    if args.kfac_strategy == "comm-opt":
         grad_worker_fraction = kfac.DistributedStrategy.COMM_OPT
-    elif args.kfac_comm_method == "mem-opt":
+    elif args.kfac_strategy == "mem-opt":
         grad_worker_fraction = kfac.DistributedStrategy.MEM_OPT
-    elif args.kfac_comm_method == "hybrid-opt":
+    elif args.kfac_strategy == "hybrid-opt":
         grad_worker_fraction = args.kfac_grad_worker_fraction
     else:
         raise ValueError(
-            "Unknwon KFAC Comm Method: {}".format(args.kfac_comm_method)
+            "Unknown KFAC Comm Method: {}".format(args.kfac_strategy)
         )
 
     if use_kfac:
         preconditioner = kfac.KFAC(
             model,
-            factor_update_steps=args.kfac_cov_update_freq,
-            inv_update_steps=args.kfac_update_freq,
-            damping=args.damping,
-            factor_decay=args.stat_decay,
-            kl_clip=args.kl_clip,
+            factor_update_steps=args.kfac_factor_update_steps,
+            inv_update_steps=args.kfac_inv_update_steps,
+            damping=args.kfac_damping,
+            factor_decay=args.kfac_factor_decay,
+            kl_clip=args.kfac_kl_clip,
             lr=args.base_lr,
             accumulation_steps=args.batches_per_allreduce,
-            colocate_factors=args.coallocate_layer_factors,
+            colocate_factors=args.kfac_colocate_factors,
             compute_method=kfac.ComputeMethod.INVERSE
-            if args.use_inv_kfac
+            if args.kfac_inv_method
             else kfac.ComputeMethod.EIGEN,
             grad_worker_fraction=grad_worker_fraction,
             grad_scaler=args.grad_scaler if "grad_scaler" in args else None,
-            skip_layers=args.skip_layers,
+            skip_layers=args.kfac_skip_layers,
         )
         kfac_param_scheduler = kfac.KFACParamScheduler(
             preconditioner,
-            damping_alpha=args.damping_alpha,
-            damping_schedule=args.damping_decay,
-            update_freq_alpha=args.kfac_update_freq_alpha,
-            update_freq_schedule=args.kfac_update_freq_decay,
+            damping_alpha=args.kfac_damping_alpha,
+            damping_schedule=args.kfac_damping_decay,
+            update_freq_alpha=args.kfac_update_steps_alpha,
+            update_freq_schedule=args.kfac_update_steps_decay,
         )
     else:
         preconditioner = None
