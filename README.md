@@ -31,9 +31,8 @@ KAISA enables efficient second-order optimization with K-FAC to reduce time-to-c
 
 ### Requirements
 
-K-FAC only requires PyTorch.
-This code is validated to run with PyTorch >=1.9.0 and CUDA >=11.0.
-Example scripts have additional requirements defined in [examples/README.md](examples/README.md).
+K-FAC only requires PyTorch 1.8 or later.
+The example scripts have additional requirements defined in [examples/README.md](examples/README.md).
 
 ### Installation
 
@@ -45,7 +44,7 @@ $ pip install .  # Use -e to install in development mode
 
 ## Usage
 
-K-FAC requires minimial code to add to existing training scripts.
+K-FAC requires minimial code to incorporate with existing training scripts.
 See the [K-FAC docstring](kfac/preconditioner.py) for a detailed list of K-FAC parameters.
 
 ```Python
@@ -71,8 +70,8 @@ Example scripts for K-FAC + SGD training on CIFAR-10 and ImageNet-1k are provide
 For a full list of training parameters, use `--help`, e.g. `python examples/torch_cifar10_resnet.py --help`.
 Package requirements for the examples are given in [examples/README.md](examples/README.md).
 
-**Note**: `torchrun` is only avaible in PyTorch 1.10.
-Use `python -m torch.distributed.run` in Pytorch 1.9 and `python -m torch.distributed.launch` in Pytorch 1.8 or older.
+**Note**: These examples use the `torchrun` launcher which is only avaible in PyTorch 1.10 and later.
+Use `python -m torch.distributed.run` in Pytorch 1.9 or `python -m torch.distributed.launch` in Pytorch 1.8 and older.
 
 #### Single Node, Multi-GPU
 ```
@@ -93,12 +92,14 @@ $ torchrun --nnodes=$NNODES --nproc_per_node=$NGPUS --rdzv_backend=c10d --rdzv_e
 
 K-FAC distributes second-order computations based on the `grad_worker_fraction` which specifies the fraction of workers in the world that should be assigned as gradient workers for a layer.
 Larger `grad_worker_fraction`s reduce communication in non-KFAC update steps (i.e., steps where second-order information is not recomputed) by caching data on more workers.
-Lower `grad_worker_fractions` reduce memory usage at the cost of more frequent communication.
+Lower `grad_worker_fraction`s reduce memory usage at the cost of more frequent communication.
 
-The package provides common `grad_worker_fraction`s in the form of the `kfac.DistributionMethod` enum.
-- `DistributionMethod.COMM_OPT`: `grad_worker_fraction=1`
-- `DistributionMethod.HYBRID_OPT`: `grad_worker_fraction=0.5`
-- `DistributionMethod.MEM_OPT`: `grad_worker_fraction=1/world_size`
+The package provides common `grad_worker_fraction`s in the form of the `kfac.DistributedStrategy` enum.
+| Strategy                         | Gradient Worker Fraction |
+| :------------------------------: | :----------------------: |
+| `DistributedStrategy.COMM_OPT`   | 1                        |
+| `DistributedStrategy.HYBRID_OPT` | 0.5                      |
+| `DistributedStrategy.MEM_OPT`    | 1/world_size             |
 
 ```
 import kfac
