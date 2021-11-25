@@ -7,7 +7,7 @@ KAISA enables efficient second-order optimization with K-FAC to reduce time-to-c
 
 ## Publications
 
-- J. Gregory Pauloski, Qi Huang, Lei Huang, Shivaram Venkataraman, Kyle Chard, Ian Foster, and Zhao Zhang. 2021. [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://arxiv.org/abs/2107.01739). To be published in the proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC ‘21).
+- J. Gregory Pauloski, Qi Huang, Lei Huang, Shivaram Venkataraman, Kyle Chard, Ian Foster, and Zhao Zhang. 2021. [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://arxiv.org/abs/2107.01739). In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC '21). Association for Computing Machinery, New York, NY, USA, Article 13, 1–14.
 - J. Gregory Pauloski, Zhao Zhang, Lei Huang, Weijia Xu, and Ian T. Foster. 2020. [Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826). In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC ‘20). IEEE Press, Article 94, 1–14.
 
 ## Table of Contents
@@ -220,12 +220,20 @@ The code used in "[KAISA: An Adaptive Second-order Optimizer Framework for Deep 
     doi = {10.5555/3433701.3433826}
 }
 
-@misc{pauloski2021kaisa,
-      title={KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks}, 
-      author={J. Gregory Pauloski and Qi Huang and Lei Huang and Shivaram Venkataraman and Kyle Chard and Ian Foster and Zhao Zhang},
-      year={2021},
-      eprint={2107.01739},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG}
+@inproceedings{pauloski2021kaisa,
+    author = {Pauloski, J. Gregory and Huang, Qi and Huang, Lei and Venkataraman, Shivaram and Chard, Kyle and Foster, Ian and Zhang, Zhao},
+    title = {KAISA: {A}n {A}daptive {S}econd-{O}rder {O}ptimizer {F}ramework for {D}eep {N}eural {N}etworks},
+    year = {2021},
+    isbn = {9781450384421},
+    publisher = {Association for Computing Machinery},
+    address = {New York, NY, USA},
+    url = {https://doi.org/10.1145/3458817.3476152},
+    doi = {10.1145/3458817.3476152},
+    booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+    articleno = {13},
+    numpages = {14},
+    location = {St. Louis, Missouri},
+    series = {SC '21}
 }
+
 ```
