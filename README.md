@@ -7,7 +7,7 @@ KAISA enables efficient second-order optimization with K-FAC to reduce time-to-c
 
 ## Publications
 
-- J. Gregory Pauloski, Qi Huang, Lei Huang, Shivaram Venkataraman, Kyle Chard, Ian Foster, and Zhao Zhang. 2021. [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://arxiv.org/abs/2107.01739). In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC '21). Association for Computing Machinery, New York, NY, USA, Article 13, 1–14.
+- J. Gregory Pauloski, Qi Huang, Lei Huang, Shivaram Venkataraman, Kyle Chard, Ian Foster, and Zhao Zhang. 2021. [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://dl.acm.org/doi/10.1145/3458817.3476152). In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC '21). Association for Computing Machinery, New York, NY, USA, Article 13, 1–14.
 - J. Gregory Pauloski, Zhao Zhang, Lei Huang, Weijia Xu, and Ian T. Foster. 2020. [Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826). In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC ‘20). IEEE Press, Article 94, 1–14.
 
 ## Table of Contents
@@ -203,7 +203,7 @@ The ResNet models for Cifar10 are from Yerlan Idelbayev's [pytorch_resnet_cifar1
 The CIFAR-10 and ImageNet-1k training scripts are modeled after Horovod's example PyTorch training scripts.
 
 The code used in "[Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826)"  is frozen in the `kfac-lw` and `kfac-opt` branches.
-The code used in "[KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://arxiv.org/abs/2107.01739)" is frozen in the `hybrid-opt` branch.
+The code used in "[KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://dl.acm.org/doi/10.1145/3458817.3476152)" is frozen in the `hybrid-opt` branch.
 
 ```
 @inproceedings{pauloski2020kfac,
