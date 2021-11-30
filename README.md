@@ -54,7 +54,7 @@ model = torch.nn.parallel.DistributedDataParallel(...)
 optimizer = optim.SGD(model.parameters(), ...)
 preconditioner = KFAC(model, ...)
 ... 
-for i, (data, target) in enumerate(train_loader):
+for data, target in train_loader:
     optimizer.zero_grad()
     output = model(data)
     loss = criterion(output, target)
@@ -82,7 +82,7 @@ $ torchrun --standalone --nnodes 1 --nproc_per_node=$NGPUS \
 #### Multi-Node, Multi-GPU
 On each node, run:
 ```
-$ torchrun --nnodes=$NNODES --nproc_per_node=$NGPUS --rdzv_backend=c10d --rdzv_endpoint=$HOST_ADDR
+$ torchrun --nnodes=$NNODES --nproc_per_node=$NGPUS --rdzv_backend=c10d --rdzv_endpoint=$HOST_ADDR \
       examples/torch_{cifar10,imagenet}_resnet.py $ARGS
 ```
 
@@ -101,15 +101,15 @@ The package provides common `grad_worker_fraction`s in the form of the `kfac.Dis
 | `DistributedStrategy.HYBRID_OPT` | 0.5                      |
 | `DistributedStrategy.MEM_OPT`    | 1/world_size             |
 
-```
+```Python
 import kfac
 
 # Both are equivalent
-kfac = kfac.KFAC(model, grad_worker_fraction=1)
-kfac = kfac.KFAC(model, grad_worker_fraction=kfac.DistributionMethod.COMM_OPT)
+preconditioner = kfac.KFAC(model, grad_worker_fraction=1)
+preconditioner = kfac.KFAC(model, grad_worker_fraction=kfac.DistributedStrategy.COMM_OPT)
 ```
 
-For more details on distribution strategies see the [KAISA Paper](https://arxiv.org/abs/2107.01739).
+For more details on distribution strategies see the [KAISA Paper](https://dl.acm.org/doi/10.1145/3458817.3476152).
 
 ### Gradient Accumulation
 
@@ -117,21 +117,22 @@ If using gradient accumulation, pass `accumulation_steps=num_accumulation_steps`
 
 ### Mixed-Precision Training
 
-K-FAC does **not** support NVIDIA AMP because some operations used in K-FAC (`torch.linalg.inv` and `torch.linalg.eig*`) do not support half-precision inputs, and NVIDIA AMP does not have functionality for disabling autocast in certain code regions.
+K-FAC does **not** support [NVIDIA Apex Amp](https://github.com/NVIDIA/apex) because some operations used in K-FAC (`torch.linalg.inv` and `torch.linalg.eig*`) do not support half-precision inputs, and NVIDIA Apex Amp does not have functionality for disabling autocast in certain code regions.
+Additionally, the [native PyTorch AMP is preferred over NVIDIA Apex Amp](https://discuss.pytorch.org/t/torch-cuda-amp-vs-nvidia-apex/74994/3).
 
-K-FAC suports training with `torch.cuda.amp` and `torch.nn.parallel.DistributedDataParallel`
-The `GradScaler` object can be passed to K-FAC such that K-FAC can appropriately unscale the backward pass data.
+K-FAC supports training with `torch.cuda.amp` and `torch.nn.parallel.DistributedDataParallel`
+The `GradScaler` object can optionally be passed to K-FAC such that K-FAC can appropriately unscale the backward pass data.
 Example:
 
 ```Python
 from kfac import KFAC
 ... 
-model = ...
+model = torch.nn.parallel.DistributedDataParallel(...)
 optimizer = optim.SGD(model.parameters(), ...)
 scaler = GradScaler()
 preconditioner = kfac.KFAC(model, grad_scaler=scaler)
 ...
-for i, (data, target) in enumerate(train_loader):
+for data, target in train_loader:
     optimizer.zero_grad()
     with autocast():
         output = model(data)
