@@ -7,7 +7,7 @@ KAISA enables efficient second-order optimization with K-FAC to reduce time-to-c
 
 ## Publications
 
-- J. Gregory Pauloski, Qi Huang, Lei Huang, Shivaram Venkataraman, Kyle Chard, Ian Foster, and Zhao Zhang. 2021. [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://arxiv.org/abs/2107.01739). To be published in the proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC ‘21).
+- J. Gregory Pauloski, Qi Huang, Lei Huang, Shivaram Venkataraman, Kyle Chard, Ian Foster, and Zhao Zhang. 2021. [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://dl.acm.org/doi/10.1145/3458817.3476152). In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC '21). Association for Computing Machinery, New York, NY, USA, Article 13, 1–14.
 - J. Gregory Pauloski, Zhao Zhang, Lei Huang, Weijia Xu, and Ian T. Foster. 2020. [Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826). In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC ‘20). IEEE Press, Article 94, 1–14.
 
 ## Table of Contents
@@ -31,9 +31,8 @@ KAISA enables efficient second-order optimization with K-FAC to reduce time-to-c
 
 ### Requirements
 
-K-FAC only requires PyTorch.
-This code is validated to run with PyTorch >=1.9.0 and CUDA >=11.0.
-Example scripts have additional requirements defined in [examples/README.md](examples/README.md).
+K-FAC only requires PyTorch 1.8 or later.
+The example scripts have additional requirements defined in [examples/README.md](examples/README.md).
 
 ### Installation
 
@@ -45,7 +44,7 @@ $ pip install .  # Use -e to install in development mode
 
 ## Usage
 
-K-FAC requires minimial code to add to existing training scripts.
+K-FAC requires minimial code to incorporate with existing training scripts.
 See the [K-FAC docstring](kfac/preconditioner.py) for a detailed list of K-FAC parameters.
 
 ```Python
@@ -55,7 +54,7 @@ model = torch.nn.parallel.DistributedDataParallel(...)
 optimizer = optim.SGD(model.parameters(), ...)
 preconditioner = KFAC(model, ...)
 ... 
-for i, (data, target) in enumerate(train_loader):
+for data, target in train_loader:
     optimizer.zero_grad()
     output = model(data)
     loss = criterion(output, target)
@@ -71,8 +70,8 @@ Example scripts for K-FAC + SGD training on CIFAR-10 and ImageNet-1k are provide
 For a full list of training parameters, use `--help`, e.g. `python examples/torch_cifar10_resnet.py --help`.
 Package requirements for the examples are given in [examples/README.md](examples/README.md).
 
-**Note**: `torchrun` is only avaible in PyTorch 1.10.
-Use `python -m torch.distributed.run` in Pytorch 1.9 and `python -m torch.distributed.launch` in Pytorch 1.8 or older.
+**Note**: These examples use the `torchrun` launcher which is only avaible in PyTorch 1.10 and later.
+Use `python -m torch.distributed.run` in Pytorch 1.9 or `python -m torch.distributed.launch` in Pytorch 1.8 and older.
 
 #### Single Node, Multi-GPU
 ```
@@ -83,7 +82,7 @@ $ torchrun --standalone --nnodes 1 --nproc_per_node=$NGPUS \
 #### Multi-Node, Multi-GPU
 On each node, run:
 ```
-$ torchrun --nnodes=$NNODES --nproc_per_node=$NGPUS --rdzv_backend=c10d --rdzv_endpoint=$HOST_ADDR
+$ torchrun --nnodes=$NNODES --nproc_per_node=$NGPUS --rdzv_backend=c10d --rdzv_endpoint=$HOST_ADDR \
       examples/torch_{cifar10,imagenet}_resnet.py $ARGS
 ```
 
@@ -93,22 +92,24 @@ $ torchrun --nnodes=$NNODES --nproc_per_node=$NGPUS --rdzv_backend=c10d --rdzv_e
 
 K-FAC distributes second-order computations based on the `grad_worker_fraction` which specifies the fraction of workers in the world that should be assigned as gradient workers for a layer.
 Larger `grad_worker_fraction`s reduce communication in non-KFAC update steps (i.e., steps where second-order information is not recomputed) by caching data on more workers.
-Lower `grad_worker_fractions` reduce memory usage at the cost of more frequent communication.
+Lower `grad_worker_fraction`s reduce memory usage at the cost of more frequent communication.
 
-The package provides common `grad_worker_fraction`s in the form of the `kfac.DistributionMethod` enum.
-- `DistributionMethod.COMM_OPT`: `grad_worker_fraction=1`
-- `DistributionMethod.HYBRID_OPT`: `grad_worker_fraction=0.5`
-- `DistributionMethod.MEM_OPT`: `grad_worker_fraction=1/world_size`
+The package provides common `grad_worker_fraction`s in the form of the `kfac.DistributedStrategy` enum.
+| Strategy                         | Gradient Worker Fraction |
+| :------------------------------: | :----------------------: |
+| `DistributedStrategy.COMM_OPT`   | 1                        |
+| `DistributedStrategy.HYBRID_OPT` | 0.5                      |
+| `DistributedStrategy.MEM_OPT`    | 1/world_size             |
 
-```
+```Python
 import kfac
 
 # Both are equivalent
-kfac = kfac.KFAC(model, grad_worker_fraction=1)
-kfac = kfac.KFAC(model, grad_worker_fraction=kfac.DistributionMethod.COMM_OPT)
+preconditioner = kfac.KFAC(model, grad_worker_fraction=1)
+preconditioner = kfac.KFAC(model, grad_worker_fraction=kfac.DistributedStrategy.COMM_OPT)
 ```
 
-For more details on distribution strategies see the [KAISA Paper](https://arxiv.org/abs/2107.01739).
+For more details on distribution strategies see the [KAISA Paper](https://dl.acm.org/doi/10.1145/3458817.3476152).
 
 ### Gradient Accumulation
 
@@ -116,21 +117,22 @@ If using gradient accumulation, pass `accumulation_steps=num_accumulation_steps`
 
 ### Mixed-Precision Training
 
-K-FAC does **not** support NVIDIA AMP because some operations used in K-FAC (`torch.linalg.inv` and `torch.linalg.eig*`) do not support half-precision inputs, and NVIDIA AMP does not have functionality for disabling autocast in certain code regions.
+K-FAC does **not** support [NVIDIA Apex Amp](https://github.com/NVIDIA/apex) because some operations used in K-FAC (`torch.linalg.inv` and `torch.linalg.eig*`) do not support half-precision inputs, and NVIDIA Apex Amp does not have functionality for disabling autocast in certain code regions.
+Additionally, the [native PyTorch AMP is preferred over NVIDIA Apex Amp](https://discuss.pytorch.org/t/torch-cuda-amp-vs-nvidia-apex/74994/3).
 
-K-FAC suports training with `torch.cuda.amp` and `torch.nn.parallel.DistributedDataParallel`
-The `GradScaler` object can be passed to K-FAC such that K-FAC can appropriately unscale the backward pass data.
+K-FAC supports training with `torch.cuda.amp` and `torch.nn.parallel.DistributedDataParallel`
+The `GradScaler` object can optionally be passed to K-FAC such that K-FAC can appropriately unscale the backward pass data.
 Example:
 
 ```Python
 from kfac import KFAC
 ... 
-model = ...
+model = torch.nn.parallel.DistributedDataParallel(...)
 optimizer = optim.SGD(model.parameters(), ...)
 scaler = GradScaler()
 preconditioner = kfac.KFAC(model, grad_scaler=scaler)
 ...
-for i, (data, target) in enumerate(train_loader):
+for data, target in train_loader:
     optimizer.zero_grad()
     with autocast():
         output = model(data)
@@ -202,7 +204,7 @@ The ResNet models for Cifar10 are from Yerlan Idelbayev's [pytorch_resnet_cifar1
 The CIFAR-10 and ImageNet-1k training scripts are modeled after Horovod's example PyTorch training scripts.
 
 The code used in "[Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826)"  is frozen in the `kfac-lw` and `kfac-opt` branches.
-The code used in "[KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://arxiv.org/abs/2107.01739)" is frozen in the `hybrid-opt` branch.
+The code used in "[KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://dl.acm.org/doi/10.1145/3458817.3476152)" is frozen in the `hybrid-opt` branch.
 
 ```
 @inproceedings{pauloski2020kfac,
@@ -219,12 +221,20 @@ The code used in "[KAISA: An Adaptive Second-order Optimizer Framework for Deep 
     doi = {10.5555/3433701.3433826}
 }
 
-@misc{pauloski2021kaisa,
-      title={KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks}, 
-      author={J. Gregory Pauloski and Qi Huang and Lei Huang and Shivaram Venkataraman and Kyle Chard and Ian Foster and Zhao Zhang},
-      year={2021},
-      eprint={2107.01739},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG}
+@inproceedings{pauloski2021kaisa,
+    author = {Pauloski, J. Gregory and Huang, Qi and Huang, Lei and Venkataraman, Shivaram and Chard, Kyle and Foster, Ian and Zhang, Zhao},
+    title = {KAISA: {A}n {A}daptive {S}econd-{O}rder {O}ptimizer {F}ramework for {D}eep {N}eural {N}etworks},
+    year = {2021},
+    isbn = {9781450384421},
+    publisher = {Association for Computing Machinery},
+    address = {New York, NY, USA},
+    url = {https://doi.org/10.1145/3458817.3476152},
+    doi = {10.1145/3458817.3476152},
+    booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+    articleno = {13},
+    numpages = {14},
+    location = {St. Louis, Missouri},
+    series = {SC '21}
 }
+
 ```
