@@ -29,7 +29,10 @@ def get_cov(a, b=None, scale=None):
       A square tensor representing the second moment of a.
     """
     if len(a.shape) != 2:
-        raise ValueError("Input tensor must have 2 dimensions.")
+        raise ValueError(
+            "Input tensor must have 2 dimensions. Got tensor with shape "
+            f"{a.shape}"
+        )
     if b is not None and a.shape != b.shape:
         raise ValueError(
             "Input tensors must have same shape. Got tensors of "
