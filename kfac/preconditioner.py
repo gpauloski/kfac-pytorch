@@ -2,6 +2,7 @@ import enum
 import math
 import warnings
 
+from collections import defaultdict
 from typing import Callable, List, Optional, Union
 
 import torch
@@ -241,8 +242,12 @@ class KFAC(optim.Optimizer):
             kl_clip=kl_clip,
             lr=lr,
             steps=0,
-            mini_steps=0,
         )
+
+        # We count the mini_steps (forward/backward passes between optimization
+        # steps on a per-layer basis so the key for the dict is the module
+        # registered with KFAC
+        self.mini_steps = defaultdict(int)
 
         # KFAC does not register parameters so we pass fake tensor
         # to satisfy torch.optim.Optimizer parameter checks.
@@ -344,14 +349,6 @@ class KFAC(optim.Optimizer):
     def steps(self, value):
         self.param_groups[0]["steps"] = value
 
-    @property
-    def mini_steps(self):
-        return self.param_groups[0]["mini_steps"]
-
-    @mini_steps.setter
-    def mini_steps(self, value):
-        self.param_groups[0]["mini_steps"] = value
-
     def state_dict(self, include_factors=True):
         """Returns KFAC state dict.
 
@@ -367,7 +364,7 @@ class KFAC(optim.Optimizer):
         state_dict = {
             key: value
             for key, value in super(KFAC, self).state_dict()
-            if not callable(value) or key == "mini_steps"
+            if not callable(value)
         }
         if include_factors:
             state_dict["layers"] = [
@@ -440,7 +437,8 @@ class KFAC(optim.Optimizer):
             if dist.get_rank() == 0 and self.verbose:
                 print(
                     "Registered {}: {}".format(
-                        name if name is not None else "", kfac_layer
+                        name if name is not None else "",
+                        kfac_layer.__class__.__name__,
                     )
                 )
             self.layers[module] = kfac_layer
@@ -521,7 +519,7 @@ class KFAC(optim.Optimizer):
             layer.update_grad(scale=scale)
 
         self.steps += 1
-        self.mini_steps = 0
+        self.mini_steps = defaultdict(int)
 
     def memory_usage(self):
         """Returns current approximate memory usage for KFAC on this worker
@@ -585,14 +583,9 @@ class KFAC(optim.Optimizer):
                     "assignment_strategy must be COMPUTE or MEMORY"
                 )
 
-        if self.colocate_factors:
-            assignments = allocator.assign_layer_work(
-                sizes, allocator.grad_worker_groups
-            )
-        else:
-            assignments = allocator.assign_layer_work(
-                sizes, allocator.grad_worker_groups
-            )
+        assignments = allocator.assign_layer_work(
+            sizes, allocator.grad_worker_groups
+        )
 
         for module, layer in self.layers.items():
             if self.colocate_factors:
@@ -641,8 +634,8 @@ class KFAC(optim.Optimizer):
             self.layers[module].save_layer_input(input)
             # Update mini_step here because forward pass should always
             # happen before backward pass
-            self.mini_steps += 1
-            if self.mini_steps % self.accumulation_steps == 0:
+            self.mini_steps[module] += 1
+            if self.mini_steps[module] % self.accumulation_steps == 0:
                 self.layers[module].update_a_factor(alpha=self.factor_decay)
                 self.layers[module].reduce_a_factor()
 
@@ -652,6 +645,6 @@ class KFAC(optim.Optimizer):
             return
         if self.steps % self.factor_update_steps == 0:
             self.layers[module].save_layer_grad_output(grad_output)
-            if self.mini_steps % self.accumulation_steps == 0:
+            if self.mini_steps[module] % self.accumulation_steps == 0:
                 self.layers[module].update_g_factor(alpha=self.factor_decay)
                 self.layers[module].reduce_g_factor()
