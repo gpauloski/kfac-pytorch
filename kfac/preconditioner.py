@@ -98,8 +98,8 @@ class KFAC(optim.Optimizer):
           same worker. Reccomended when num_layers < world_size (default: True).
       compute_method (ComputeMethod, str): See `ComputeMethod` for more
           details (default: ComputeMethod.EIGEN).
-      compute_eigen_outer_product (bool): when using the eigen compute method,
-          precompute the element-wise inverse of the outer product of
+      compute_eigenvalue_outer_product (bool): when using the eigen compute
+          method, precompute the element-wise inverse of the outer product of
           eigenvectors on the eigen decomposition worker rather to reduce
           computation in the gradient preconditioning stage.
           `colocate_factors` must be True (default: True).
