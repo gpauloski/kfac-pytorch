@@ -29,12 +29,12 @@ class KFACBaseLayer(object):
         self.symmetric_factors = self.module_helper.has_symmetric_factors()
 
         # KFAC State Variables
-        self.a = None  # Input of module saved in forward pass
-        self.g = None  # Gradient w.r.t. output saved in backward pass
+        self.a = None  # A factor being accumulated for current batch
+        self.g = None  # G factor being accumulated for current batch
         self.a_count = None  # Number of inputs accumulated in self.a
         self.g_count = None  # Number of grads accumulated in self.g
-        self.A = None  # Fisher factor A
-        self.G = None  # Fisher factor G
+        self.A = None  # Running average of A factor
+        self.G = None  # Running average of G factor
         self.grad = None  # Preconditioned gradient
 
     def __del__(self):
@@ -238,16 +238,17 @@ class KFACBaseLayer(object):
 
     def save_layer_input(self, input):
         """Save input for layer"""
+        a = self.module_helper.get_a_factor(input[0])
         if self.a is None:
-            self.a = input[0].data
+            self.a = a
             self.a_count = 1
         else:
-            self.a = self.a + input[0].data
+            self.a = self.a + a
             self.a_count += 1
 
     def save_layer_grad_output(self, grad_output):
         """Save grad w.r.t outputs for layer"""
-        g = grad_output[0].data
+        g = self.module_helper.get_g_factor(grad_output[0])
         if self.grad_scaler is not None:
             g = g / self.grad_scaler.get_scale()
         if self.g is None:
@@ -281,7 +282,7 @@ class KFACBaseLayer(object):
             return
         if self.a_count > 1:
             self.a = (1 / self.a_count) * self.a
-        A_new = self.module_helper.get_a_factor(self.a)
+        A_new = self.a
         self.a = None
         self.sync_a_factor()
         if self.A is None:
@@ -294,7 +295,7 @@ class KFACBaseLayer(object):
             return
         if self.g_count > 1:
             self.g = (1 / self.g_count) * self.g
-        G_new = self.module_helper.get_g_factor(self.g)
+        G_new = self.g
         self.g = None
         self.sync_g_factor()
         if self.G is None:
