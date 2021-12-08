@@ -90,7 +90,7 @@ def make_sampler_and_loader(args, train_dataset, val_dataset):
     )
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=args.batch_size * args.batches_per_allreduce,
+        batch_size=args.batch_size,
         sampler=train_sampler,
         **kwargs
     )
