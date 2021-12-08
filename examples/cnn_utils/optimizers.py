@@ -56,20 +56,6 @@ def get_optimizer(model, args):
     else:
         preconditioner = None
 
-    if args.horovod:
-        import horovod.torch as hvd
-
-        optimizer = hvd.DistributedOptimizer(
-            optimizer,
-            named_parameters=model.named_parameters(),
-            compression=hvd.Compression.none,
-            op=hvd.Average,
-            backward_passes_per_step=args.batches_per_allreduce,
-        )
-
-        hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-
     lrs = create_lr_schedule(
         dist.get_world_size(), args.warmup_epochs, args.lr_decay
     )
