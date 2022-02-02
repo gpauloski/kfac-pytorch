@@ -8,4 +8,3 @@ The provided example training scripts have additional package requirements.
 ```
 $ pip install torchinfo==1.5.2 tqdm torchvision
 ```
-

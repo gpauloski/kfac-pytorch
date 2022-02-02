@@ -1,18 +1,18 @@
 import argparse
-import time
-import os
 import datetime
+import os
+import time
 import warnings
-import torch
-import torch.distributed as dist
 
-import torchvision.models as models
 import cnn_utils.datasets as datasets
 import cnn_utils.engine as engine
 import cnn_utils.optimizers as optimizers
-
+import torch
+import torch.distributed as dist
+import torchvision.models as models
 from torch.utils.tensorboard import SummaryWriter
-from utils import LabelSmoothLoss, save_checkpoint
+from utils import LabelSmoothLoss
+from utils import save_checkpoint
 
 try:
     from torch.cuda.amp import GradScaler
@@ -72,7 +72,9 @@ def parse_args():
 
     # Default settings from https://arxiv.org/abs/1706.02677.
     parser.add_argument(
-        "--model", default="resnet50", help="Model (resnet{35,50,101,152})"
+        "--model",
+        default="resnet50",
+        help="Model (resnet{35,50,101,152})",
     )
     parser.add_argument(
         "--batch-size",
@@ -114,13 +116,22 @@ def parse_args():
         help="epoch intervals to decay lr (default: 25,35,40,45,50)",
     )
     parser.add_argument(
-        "--warmup-epochs", type=float, default=5, help="number of warmup epochs"
+        "--warmup-epochs",
+        type=float,
+        default=5,
+        help="number of warmup epochs",
     )
     parser.add_argument(
-        "--momentum", type=float, default=0.9, help="SGD momentum"
+        "--momentum",
+        type=float,
+        default=0.9,
+        help="SGD momentum",
     )
     parser.add_argument(
-        "--weight-decay", type=float, default=0.00005, help="weight decay"
+        "--weight-decay",
+        type=float,
+        default=0.00005,
+        help="weight decay",
     )
     parser.add_argument(
         "--label-smoothing",
@@ -253,7 +264,8 @@ if __name__ == "__main__":
     args = parse_args()
 
     torch.distributed.init_process_group(
-        backend=args.backend, init_method="env://"
+        backend=args.backend,
+        init_method="env://",
     )
     torch.distributed.barrier()
 
@@ -268,7 +280,7 @@ if __name__ == "__main__":
             torch.distributed.get_rank(),
             torch.distributed.get_world_size(),
             args.local_rank,
-        )
+        ),
     )
 
     args.base_lr = (
@@ -289,7 +301,8 @@ if __name__ == "__main__":
     model.to(device)
 
     model = torch.nn.parallel.DistributedDataParallel(
-        model, device_ids=[args.local_rank]
+        model,
+        device_ids=[args.local_rank],
     )
 
     os.makedirs(args.log_dir, exist_ok=True)
@@ -309,13 +322,14 @@ if __name__ == "__main__":
             raise ValueError(
                 "The installed version of torch does not "
                 "support torch.cuda.amp fp16 training. This "
-                "requires torch version >= 1.16"
+                "requires torch version >= 1.16",
             )
         scaler = GradScaler()
     args.grad_scaler = scaler
 
     optimizer, preconditioner, lr_schedules = optimizers.get_optimizer(
-        model, args
+        model,
+        args,
     )
     if args.verbose and preconditioner is not None:
         print(preconditioner)
@@ -324,7 +338,7 @@ if __name__ == "__main__":
     # Restore from a previous checkpoint, if initial_epoch is specified.
     if args.resume_from_epoch > 0:
         filepath = args.checkpoint_format.format(epoch=args.resume_from_epoch)
-        map_location = {"cuda:0": "cuda:{}".format(args.local_rank)}
+        map_location = {"cuda:0": f"cuda:{args.local_rank}"}
         checkpoint = torch.load(filepath, map_location=map_location)
         model.module.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
@@ -371,6 +385,6 @@ if __name__ == "__main__":
     if args.verbose:
         print(
             "\nTraining time: {}".format(
-                datetime.timedelta(seconds=time.time() - start)
-            )
+                datetime.timedelta(seconds=time.time() - start),
+            ),
         )

@@ -1,8 +1,9 @@
 import os
+
 import torch
 import torch.distributed as dist
-
-from torchvision import datasets, transforms
+from torchvision import datasets
+from torchvision import transforms
 
 
 def get_cifar(args):
@@ -12,17 +13,19 @@ def get_cifar(args):
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize(
-                (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                (0.4914, 0.4822, 0.4465),
+                (0.2023, 0.1994, 0.2010),
             ),
-        ]
+        ],
     )
     transform_test = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Normalize(
-                (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                (0.4914, 0.4822, 0.4465),
+                (0.2023, 0.1994, 0.2010),
             ),
-        ]
+        ],
     )
 
     os.makedirs(args.data_dir, exist_ok=True)
@@ -57,9 +60,10 @@ def get_imagenet(args):
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
                 ),
-            ]
+            ],
         ),
     )
     val_dataset = datasets.ImageFolder(
@@ -70,9 +74,10 @@ def get_imagenet(args):
                 transforms.CenterCrop(224),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
                 ),
-            ]
+            ],
         ),
     )
 
@@ -86,22 +91,26 @@ def make_sampler_and_loader(args, train_dataset, val_dataset):
     kwargs["persistent_workers"] = True
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-        train_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank()
+        train_dataset,
+        num_replicas=dist.get_world_size(),
+        rank=dist.get_rank(),
     )
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         sampler=train_sampler,
-        **kwargs
+        **kwargs,
     )
     val_sampler = torch.utils.data.distributed.DistributedSampler(
-        val_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank()
+        val_dataset,
+        num_replicas=dist.get_world_size(),
+        rank=dist.get_rank(),
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.val_batch_size,
         sampler=val_sampler,
-        **kwargs
+        **kwargs,
     )
 
     return train_sampler, train_loader, val_sampler, val_loader

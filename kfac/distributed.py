@@ -55,11 +55,13 @@ class TorchDistributedCommunicator:
         if not self.allreduce_bucketing:
             tensor = tensor.contiguous()
             future = dist.all_reduce(
-                tensor, group=group, async_op=True
+                tensor,
+                group=group,
+                async_op=True,
             ).get_future()
             if upper_tri:
                 future = future.then(
-                    lambda fut: fill_triu(shape, fut.value()[0])
+                    lambda fut: fill_triu(shape, fut.value()[0]),
                 )
             else:
                 future = future.then(lambda fut: fut.value()[0])
@@ -71,7 +73,7 @@ class TorchDistributedCommunicator:
             else:
                 index = torch.numel(self._allreduce_buffer)
                 self._allreduce_buffer = torch.cat(
-                    [self._allreduce_buffer, tensor.flatten()]
+                    [self._allreduce_buffer, tensor.flatten()],
                 )
 
             def extract_and_shape(fut):
@@ -85,7 +87,7 @@ class TorchDistributedCommunicator:
             self._allreduce_futures.append(future)
 
             mbs = torch.numel(self._allreduce_buffer) * torch.element_size(
-                self._allreduce_buffer
+                self._allreduce_buffer,
             )
             if mbs > self.bucket_cap_mb:
                 self._flush_allreduce_bucket()
@@ -140,7 +142,10 @@ class TorchDistributedCommunicator:
             tensor = tensor[torch.triu_indices(shape[0], shape[1])]
         tensor = tensor.contiguous()
         future = dist.broadcast(
-            tensor, src=src, group=group, async_op=True
+            tensor,
+            src=src,
+            group=group,
+            async_op=True,
         ).get_future()
         if upper_tri:
             future = future.then(lambda fut: fill_triu(shape, fut.value()[0]))
@@ -156,7 +161,9 @@ def get_triu(tensor):
     if tensor.shape[0] > tensor.shape[1]:
         raise ValueError("tensor cannot have more rows than columns")
     idxs = torch.triu_indices(
-        tensor.shape[0], tensor.shape[1], device=tensor.device
+        tensor.shape[0],
+        tensor.shape[1],
+        device=tensor.device,
     )
     return tensor[idxs[0], idxs[1]]
 

@@ -129,10 +129,16 @@ def test_constrained_assignment() -> None:
 
     _check(8, {"layer1": [1]}, [[0, 1, 2, 3, 4, 5, 6, 7]], {"layer1": [0]})
     _check(
-        8, {"layer1": [1, 1]}, [[0, 1, 2, 3, 4, 5, 6, 7]], {"layer1": [0, 1]}
+        8,
+        {"layer1": [1, 1]},
+        [[0, 1, 2, 3, 4, 5, 6, 7]],
+        {"layer1": [0, 1]},
     )
     _check(
-        8, {"layer1": [1, 2]}, [[0, 1, 2, 3, 4, 5, 6, 7]], {"layer1": [1, 0]}
+        8,
+        {"layer1": [1, 2]},
+        [[0, 1, 2, 3, 4, 5, 6, 7]],
+        {"layer1": [1, 0]},
     )
     _check(8, {"layer1": []}, [[0, 1, 2, 3, 4, 5, 6, 7]], {"layer1": []})
     _check(1, {"layer1": [1, 1, 1, 1]}, [[0]], {"layer1": [0, 0, 0, 0]})
@@ -151,13 +157,13 @@ def test_get_groups_comm_opt() -> None:
     for rank in range(world_size):
         assert allocator1.get_grad_worker_ranks(rank) == set(range(world_size))
         assert allocator2.get_grad_worker_ranks(rank) == set(range(world_size))
-        assert allocator1.get_grad_receiver_ranks() == set([0])
-        assert allocator2.get_grad_receiver_ranks() == set([1])
+        assert allocator1.get_grad_receiver_ranks() == {0}
+        assert allocator2.get_grad_receiver_ranks() == {1}
 
         assert allocator1.get_grad_worker_group(rank) == set(range(world_size))
         assert allocator2.get_grad_worker_group(rank) == set(range(world_size))
-        assert allocator1.get_grad_receiver_group() == set([0])
-        assert allocator2.get_grad_receiver_group() == set([1])
+        assert allocator1.get_grad_receiver_group() == {0}
+        assert allocator2.get_grad_receiver_group() == {1}
 
         assert allocator1.get_grad_src_rank(rank) == 0
         assert allocator2.get_grad_src_rank(rank) == 1
@@ -172,13 +178,13 @@ def test_get_groups_mem_opt() -> None:
     allocator2 = WorkerAllocator(grad_worker_frac, 1, world_size, lambda x: x)
 
     for rank in range(world_size):
-        assert allocator1.get_grad_worker_ranks(rank) == set([rank])
-        assert allocator2.get_grad_worker_ranks(rank) == set([rank])
+        assert allocator1.get_grad_worker_ranks(rank) == {rank}
+        assert allocator2.get_grad_worker_ranks(rank) == {rank}
         assert allocator1.get_grad_receiver_ranks() == set(range(world_size))
         assert allocator2.get_grad_receiver_ranks() == set(range(world_size))
 
-        assert allocator1.get_grad_worker_group(rank) == set([rank])
-        assert allocator2.get_grad_worker_group(rank) == set([rank])
+        assert allocator1.get_grad_worker_group(rank) == {rank}
+        assert allocator2.get_grad_worker_group(rank) == {rank}
         assert allocator1.get_grad_receiver_group() == set(range(world_size))
         assert allocator2.get_grad_receiver_group() == set(range(world_size))
 

@@ -1,11 +1,12 @@
-import torch.nn as nn
-
 from enum import Enum
+
+import torch.nn as nn
 
 import kfac
 from kfac.layers.eigen import KFACEigenLayer
 from kfac.layers.inverse import KFACInverseLayer
-from kfac.layers.modules import LinearModuleHelper, Conv2dModuleHelper
+from kfac.layers.modules import Conv2dModuleHelper
+from kfac.layers.modules import LinearModuleHelper
 
 __all__ = ["KNOWN_MODULES", "get_kfac_layers", "module_requires_grad"]
 
@@ -29,7 +30,7 @@ def get_kfac_layers(module, method, **kwargs):
         Helper = Conv2dModuleHelper
     else:
         raise NotImplementedError(
-            "KFAC does not support layer {}".format(module.__class__.__name__)
+            f"KFAC does not support layer {module.__class__.__name__}",
         )
 
     if method == kfac.ComputeMethod.EIGEN:

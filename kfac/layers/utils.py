@@ -31,12 +31,12 @@ def get_cov(a, b=None, scale=None):
     if len(a.shape) != 2:
         raise ValueError(
             "Input tensor must have 2 dimensions. Got tensor with shape "
-            f"{a.shape}"
+            f"{a.shape}",
         )
     if b is not None and a.shape != b.shape:
         raise ValueError(
             "Input tensors must have same shape. Got tensors of "
-            "shape {} and {}.".format(a.shape, b.shape)
+            "shape {} and {}.".format(a.shape, b.shape),
         )
 
     if scale is None:

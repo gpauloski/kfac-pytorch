@@ -1,17 +1,19 @@
 import enum
 import math
 import warnings
-
 from collections import defaultdict
-from typing import Callable, List, Optional, Union
+from typing import Callable
+from typing import List
+from typing import Optional
+from typing import Union
 
 import torch
 import torch.distributed as dist
 import torch.optim as optim
 
 import kfac.layers as kfac_layers
-from kfac.distributed import TorchDistributedCommunicator
 from kfac.allocator import WorkerAllocator
+from kfac.distributed import TorchDistributedCommunicator
 
 
 class AssignmentStrategy(enum.Enum):
@@ -84,7 +86,8 @@ class KFAC(optim.Optimizer):
       damping (Callable, float): Tikhonov damping parameter or a callable
           that will return the damping parameter as a float (default: 0.001).
       factor_decay (Callable, float): running average coefficient for Kronecker
-          factors or callable that will return the factor_decay (default: 0.95).
+          factors or callable that will return the factor_decay
+          (default: 0.95).
       kl_clip (Callable, float): clipping parameter for gradient scaling or
           a callable that returns a float. If None, no scaling/clipping
           will be applied (default: 0.001).
@@ -95,7 +98,8 @@ class KFAC(optim.Optimizer):
       assignment_strategy (AssignmentStrategy, str): See `AssignmentStrategy`
           for more details (default: AssignmentStrategy.COMPUTE).
       colocate_factors (bool): assign both factors for a single layer to the
-          same worker. Reccomended when num_layers < world_size (default: True).
+          same worker. Reccomended when num_layers < world_size
+          (default: True).
       compute_method (ComputeMethod, str): See `ComputeMethod` for more
           details (default: ComputeMethod.EIGEN).
       compute_eigenvalue_outer_product (bool): when using the eigen compute
@@ -138,13 +142,15 @@ class KFAC(optim.Optimizer):
         # Distribution strategy
         accumulation_steps: int = 1,
         assignment_strategy: Union[
-            AssignmentStrategy, str
+            AssignmentStrategy,
+            str,
         ] = AssignmentStrategy.COMPUTE,
         colocate_factors: bool = True,
         compute_method: Union[ComputeMethod, str] = ComputeMethod.EIGEN,
         compute_eigenvalue_outer_product: bool = True,
         grad_worker_fraction: Union[
-            DistributedStrategy, float
+            DistributedStrategy,
+            float,
         ] = DistributedStrategy.COMM_OPT,
         symmetry_aware: bool = False,
         # Optional other parameters
@@ -171,12 +177,12 @@ class KFAC(optim.Optimizer):
         if not 0 == inv_update_steps % factor_update_steps:
             warnings.warn(
                 "It is suggested that inv_update_steps be an integer multiple "
-                "of factor_update_steps"
+                "of factor_update_steps",
             )
         if compute_eigenvalue_outer_product and not colocate_factors:
             raise ValueError(
                 "colocate_factors must be True to use "
-                "compute_eigenvalue_outer_product"
+                "compute_eigenvalue_outer_product",
             )
         if isinstance(assignment_strategy, str):
             assignment_strategy = AssignmentStrategy[
@@ -203,7 +209,8 @@ class KFAC(optim.Optimizer):
                 grad_worker_fraction = 1 / size
             if size % min(1, round(size * grad_worker_fraction)) != 0:
                 raise ValueError(
-                    "grad_worker_fraction must produce groups of " "equal size"
+                    "grad_worker_fraction must produce groups of "
+                    "equal size",
                 )
             if grad_worker_fraction == 1:
                 distributed_strategy = DistributedStrategy.COMM_OPT
@@ -218,7 +225,7 @@ class KFAC(optim.Optimizer):
         ):
             warnings.warn(
                 "grad_worker_frac=1/world_size (MEM_OPT) requires "
-                "colocate_factors=True. Enabling colocate_factors."
+                "colocate_factors=True. Enabling colocate_factors.",
             )
             colocate_factors = True
 
@@ -251,13 +258,15 @@ class KFAC(optim.Optimizer):
 
         # KFAC does not register parameters so we pass fake tensor
         # to satisfy torch.optim.Optimizer parameter checks.
-        super(KFAC, self).__init__([torch.tensor(0.0)], defaults)
+        super().__init__([torch.tensor(0.0)], defaults)
 
         self.accumulation_steps = accumulation_steps
         self.assignment_strategy = assignment_strategy
         self.colocate_factors = colocate_factors
         self.compute_method = compute_method
-        self.compute_eigenvalue_outer_product = compute_eigenvalue_outer_product
+        self.compute_eigenvalue_outer_product = (
+            compute_eigenvalue_outer_product
+        )
         self.grad_worker_fraction = grad_worker_fraction
         self.distributed_strategy = distributed_strategy
         self.symmetry_aware = symmetry_aware
@@ -296,10 +305,10 @@ class KFAC(optim.Optimizer):
         format_string = self.__class__.__name__ + " ("
         for i, group in enumerate(self.param_groups + [extra_params]):
             format_string += "\n"
-            format_string += "Parameter Group {0}\n".format(i)
+            format_string += f"Parameter Group {i}\n"
             for key in sorted(group.keys()):
                 if key != "params":
-                    format_string += "    {0}: {1}\n".format(key, group[key])
+                    format_string += f"    {key}: {group[key]}\n"
         format_string += ")"
         return format_string
 
@@ -357,7 +366,7 @@ class KFAC(optim.Optimizer):
               for all registered KFACLayers as a part of the state_dict. Note:
               can make the state_dict fairly large. (default: True)
         """
-        state_dict = super(KFAC, self).state_dict()
+        state_dict = super().state_dict()
         # Remove parameters that are callables because pickling could fail
         # and mini_step because training should not resume in middle of
         # gradient accumulation but may end in middle of gradient accumulation
@@ -378,16 +387,18 @@ class KFAC(optim.Optimizer):
         Args:
           state_dict (dict): KFAC state. Should be an object returned from a
               call to `state_dict`.
-          compute_inverse (bool, optional): if True, compute the inverses
+          compute_inverses (bool, optional): if True, compute the inverses
               from the loaded factors. (default: True)
         """
         if "layers" in state_dict:
             if len(state_dict["layers"]) != len(self.layers):
                 raise ValueError(
-                    "loaded state dict contains a different " "number of layers"
+                    "loaded state dict contains a different "
+                    "number of layers",
                 )
             for layer, layer_state in zip(
-                self.layers.values(), state_dict["layers"]
+                self.layers.values(),
+                state_dict["layers"],
             ):
                 layer.load_state_dict(layer_state)
             del state_dict["layers"]
@@ -395,10 +406,10 @@ class KFAC(optim.Optimizer):
             warnings.warn(
                 "Layer factors are not included in the state_dict so "
                 "inverses cannot be computed. Skipping inverse "
-                "computation."
+                "computation.",
             )
             compute_inverses = False  # Cannot be computed if no layers
-        super(KFAC, self).load_state_dict(state_dict)
+        super().load_state_dict(state_dict)
         if compute_inverses:
             self._assign_workers()
             self.workers_assigned = True
@@ -428,10 +439,14 @@ class KFAC(optim.Optimizer):
             "symmetry_aware": self.symmetry_aware,
         }
         if self.compute_method == ComputeMethod.EIGEN:
-            kwargs["prediv_eigenvalues"] = self.compute_eigenvalue_outer_product
+            kwargs[
+                "prediv_eigenvalues"
+            ] = self.compute_eigenvalue_outer_product
 
         layer_list = kfac_layers.get_kfac_layers(
-            module, method=self.compute_method, **kwargs
+            module,
+            method=self.compute_method,
+            **kwargs,
         )
         for module, kfac_layer in layer_list:
             if dist.get_rank() == 0 and self.verbose:
@@ -439,7 +454,7 @@ class KFAC(optim.Optimizer):
                     "Registered {}: {}".format(
                         name if name is not None else "",
                         kfac_layer.__class__.__name__,
-                    )
+                    ),
                 )
             self.layers[module] = kfac_layer
             module.register_forward_pre_hook(self._save_input)
@@ -500,10 +515,16 @@ class KFAC(optim.Optimizer):
         if self.steps % self.inv_update_steps == 0:
             for layer in reversed(self.layers.values()):
                 layer.compute_a_inv(damping=self.damping)
-                if self.distributed_strategy is not DistributedStrategy.MEM_OPT:
+                if (
+                    self.distributed_strategy
+                    is not DistributedStrategy.MEM_OPT
+                ):
                     layer.broadcast_a_inv()
                 layer.compute_g_inv(damping=self.damping)
-                if self.distributed_strategy is not DistributedStrategy.MEM_OPT:
+                if (
+                    self.distributed_strategy
+                    is not DistributedStrategy.MEM_OPT
+                ):
                     layer.broadcast_g_inv()
 
         # Compute Preconditioned Gradients
@@ -525,8 +546,9 @@ class KFAC(optim.Optimizer):
         """Returns current approximate memory usage for KFAC on this worker
 
         Returns:
-            dict containing bytes used across all layers on this worker to store
-            the factors and second-order information as well as the total.
+            dict containing bytes used across all layers on this worker to
+            store the factors and second-order information as well as the
+            total.
         """
         sizes = {
             "a_factors": 0,
@@ -575,16 +597,17 @@ class KFAC(optim.Optimizer):
                 x = [layer.A.shape[0], layer.G.shape[0]]
 
             if self.assignment_strategy == AssignmentStrategy.COMPUTE:
-                sizes[module] = list(map(lambda n: n ** 3, x))
+                sizes[module] = list(map(lambda n: n**3, x))
             elif self.assignment_strategy == AssignmentStrategy.MEMORY:
-                sizes[module] = list(map(lambda n: n ** 2, x))
+                sizes[module] = list(map(lambda n: n**2, x))
             else:
                 raise ValueError(
-                    "assignment_strategy must be COMPUTE or MEMORY"
+                    "assignment_strategy must be COMPUTE or MEMORY",
                 )
 
         assignments = allocator.assign_layer_work(
-            sizes, allocator.grad_worker_groups
+            sizes,
+            allocator.grad_worker_groups,
         )
 
         for module, layer in self.layers.items():
@@ -619,9 +642,9 @@ class KFAC(optim.Optimizer):
                 v2 = layer.grad[:, -1:].view(b.size())
             else:
                 v1 = layer.grad.view(w.size())
-            vg_sum += (v1 * w * self.lr ** 2).sum().item()
+            vg_sum += (v1 * w * self.lr**2).sum().item()
             if layer.has_bias:
-                vg_sum += (v2 * b * self.lr ** 2).sum().item()
+                vg_sum += (v2 * b * self.lr**2).sum().item()
         if vg_sum == 0.0:
             return None
         return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))

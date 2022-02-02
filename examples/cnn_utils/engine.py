@@ -1,5 +1,6 @@
 import math
 import sys
+
 import torch
 from tqdm import tqdm
 
@@ -30,7 +31,7 @@ def train(
     with tqdm(
         total=math.ceil(len(train_loader) / args.batches_per_allreduce),
         bar_format="{l_bar}{bar:10}{r_bar}",
-        desc="Epoch {:3d}/{:3d}".format(epoch, args.epochs),
+        desc=f"Epoch {epoch:3d}/{args.epochs:3d}",
         disable=not args.verbose,
     ) as t:
         for batch_idx, (data, target) in enumerate(train_loader):
@@ -92,7 +93,7 @@ def train(
                         train_loss.avg,
                         100 * train_accuracy.avg,
                         optimizer.param_groups[0]["lr"],
-                    )
+                    ),
                 )
                 t.update(1)
                 mini_step = 0
@@ -101,7 +102,9 @@ def train(
         args.log_writer.add_scalar("train/loss", train_loss.avg, epoch)
         args.log_writer.add_scalar("train/accuracy", train_accuracy.avg, epoch)
         args.log_writer.add_scalar(
-            "train/lr", optimizer.param_groups[0]["lr"], epoch
+            "train/lr",
+            optimizer.param_groups[0]["lr"],
+            epoch,
         )
 
 
@@ -128,7 +131,8 @@ def test(epoch, model, loss_func, val_loader, args):
                 if i + 1 == len(val_loader):
                     t.set_postfix_str(
                         "\b\b val_loss: {:.4f}, val_acc: {:.2f}%".format(
-                            val_loss.avg, 100 * val_accuracy.avg
+                            val_loss.avg,
+                            100 * val_accuracy.avg,
                         ),
                         refresh=False,
                     )
