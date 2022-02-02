@@ -467,7 +467,7 @@ class KFACLayer(object):
         else:
             v2 = v1 / (self.state['dG'].unsqueeze(1) * 
                        self.state['dA'].unsqueeze(0) + damping)
-        return (QG @ v2 @ QA.t()).to(torch.float32)
+        return (QG @ v2 @ QA.t()).to(grad.dtype)
 
     def _get_precondition_gradient_inv(self):
         """Compute preconditioned gradient for inverse method"""
