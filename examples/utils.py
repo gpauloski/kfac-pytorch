@@ -1,6 +1,6 @@
 import torch
-import torch.nn.functional as F
 import torch.distributed as dist
+import torch.nn.functional as F
 
 
 def accuracy(output, target):
@@ -24,7 +24,7 @@ def save_checkpoint(model, optimizer, preconditioner, schedulers, filepath):
 
 class LabelSmoothLoss(torch.nn.Module):
     def __init__(self, smoothing=0.0):
-        super(LabelSmoothLoss, self).__init__()
+        super().__init__()
         self.smoothing = smoothing
 
     def forward(self, input, target):
@@ -39,7 +39,7 @@ class LabelSmoothLoss(torch.nn.Module):
         return loss
 
 
-class Metric(object):
+class Metric:
     def __init__(self, name):
         self.name = name
         self.total = torch.tensor(0.0)
@@ -59,7 +59,9 @@ def create_lr_schedule(workers, warmup_epochs, decay_schedule, alpha=0.1):
     def lr_schedule(epoch):
         lr_adj = 1.0
         if epoch < warmup_epochs:
-            lr_adj = 1.0 / workers * (epoch * (workers - 1) / warmup_epochs + 1)
+            lr_adj = (
+                1.0 / workers * (epoch * (workers - 1) / warmup_epochs + 1)
+            )
         else:
             decay_schedule.sort(reverse=True)
             for e in decay_schedule:

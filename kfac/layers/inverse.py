@@ -6,14 +6,14 @@ from kfac.layers.base import KFACBaseLayer
 
 class KFACInverseLayer(KFACBaseLayer):
     def __init__(self, *args, **kwargs):
-        super(KFACInverseLayer, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         # Inverse state variables
         self.A_inv = None  # Inverse of self.A
         self.G_inv = None  # Inverse of self.G
 
     def memory_usage(self):
-        sizes = super(KFACInverseLayer, self).memory_usage()
+        sizes = super().memory_usage()
         sizes["a_inverses"] = (
             0
             if self.A_inv is None

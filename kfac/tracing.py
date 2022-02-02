@@ -1,4 +1,5 @@
 import time
+
 import torch
 
 _FUNC_TRACES = {}
@@ -27,13 +28,15 @@ def print_trace(average=True, max_history=None):
     execution times, call kfac.utils.print_trace().
 
     Args:
+        average (bool): if true, average the times otherwise print sum of
+            times.
         max_history (int, optional): most recent `max_history` times to use
             for average. If None, all are used.
     """
     if len(_FUNC_TRACES) == 0:
         return
     for fname, times in get_trace(average, max_history).items():
-        print("{}: {}".format(fname, times))
+        print(f"{fname}: {times}")
 
 
 def trace(sync=False):

@@ -53,7 +53,7 @@ from kfac import KFAC
 model = torch.nn.parallel.DistributedDataParallel(...)
 optimizer = optim.SGD(model.parameters(), ...)
 preconditioner = KFAC(model, ...)
-... 
+...
 for data, target in train_loader:
     optimizer.zero_grad()
     output = model(data)
@@ -126,7 +126,7 @@ Example:
 
 ```Python
 from kfac import KFAC
-... 
+...
 model = torch.nn.parallel.DistributedDataParallel(...)
 optimizer = optim.SGD(model.parameters(), ...)
 scaler = GradScaler()
@@ -188,8 +188,18 @@ E.g. because the model changed or K-FAC was initialized to skip different module
 
 ## Developing
 
-For development, `black`, `flake8`, and `pytest` are additional requirements.
-`make test` is provided as a convenience to run `black`, `flake8` and `pytest`.
+Pre-commit is used for development.
+The provided pre-commit config files will run a variety of linters and code formatters.
+
+```
+$ pip install -r requirements-dev.txt
+$ pre-commit install
+$ pre-commit run --all-files
+```
+
+Unit test, contained in `test/`, can be run with `pytest`.
+
+Additionally,
 
 ## Related Code
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # USAGE:
-#   
+#
 #   To launch pretraining with this script, first customize the PRELOAD and
 #   CMD variables for your training configuration.
 #
@@ -13,7 +13,7 @@
 #     $ qsub -q QUEUE -A ALLOC -n NODES -t TIME run_imagenet.sh
 #     $ sbatch -p QUEUE -A ALLOC -N NODES -t TIME run_imagenet.sh
 #
-#   Notes: 
+#   Notes:
 #     - training configuration (e.g., # nodes, # gpus / node, etc.) will be
 #       automatically inferred from the nodelist
 #     - additional arguments to the python script can be specified by passing
@@ -77,4 +77,3 @@ for NODE in $RANKS; do
 done
 
 wait
-

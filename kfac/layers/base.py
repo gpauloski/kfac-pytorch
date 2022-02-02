@@ -1,11 +1,10 @@
 import torch
-
 import torch.distributed as dist
 
 from kfac.distributed import Future
 
 
-class KFACBaseLayer(object):
+class KFACBaseLayer:
     def __init__(
         self,
         module,
@@ -69,9 +68,9 @@ class KFACBaseLayer(object):
         """Returns the state of the KFACLayer as a dictionary.
 
         Note:
-            Only the factors are saved because because the factors are a running
-            average so need to be restored properly and the remaining variables
-            (e.g., inverses) can be recomputed.
+            Only the factors are saved because because the factors are a
+            running average so need to be restored properly and the remaining
+            variables (e.g., inverses) can be recomputed.
         """
         self.sync_a_factor()
         self.sync_g_factor()
@@ -85,7 +84,7 @@ class KFACBaseLayer(object):
         """
         if "A" not in state_dict or "G" not in state_dict:
             raise KeyError(
-                "KFACLayer state_dict must contain keys " '"A" and "G"'
+                "KFACLayer state_dict must contain keys 'A' and 'G'",
             )
         device = next(self.module.parameters()).device
         self.A = state_dict["A"].to(device)
@@ -106,8 +105,8 @@ class KFACBaseLayer(object):
         Args:
           a_inv_worker (int): rank to compute A inverse.
           g_inv_worker (int): rank to compute G inverse.
-          grad_src_worker (int): gradient worker that is responsible for sharing
-              the preconditioned gradient with this rank
+          grad_src_worker (int): gradient worker that is responsible for
+              sharing the preconditioned gradient with this rank
           grad_worker_ranks (List[int]): ranks that will compute preconditioned
               gradient.
           grad_worker_group (ProcessGroup): Torch ProcessGroup composed of
@@ -120,12 +119,12 @@ class KFACBaseLayer(object):
         if a_inv_worker != g_inv_worker and self.prediv_eigenvalues:
             raise ValueError(
                 "When precomputing 1 / (dG * dA.T + damping), A and G inverse "
-                "workers must be the same. I.e. colocate_factors=True."
+                "workers must be the same. I.e. colocate_factors=True.",
             )
         if grad_src_worker not in grad_worker_ranks:
             raise ValueError(
                 f"grad_src_worker is worker {grad_src_worker} which is not a "
-                f"member of grad_worker_ranks={grad_worker_ranks}."
+                f"member of grad_worker_ranks={grad_worker_ranks}.",
             )
         if (
             a_inv_worker not in grad_worker_ranks
@@ -133,7 +132,7 @@ class KFACBaseLayer(object):
         ):
             raise ValueError(
                 f"a_inv_worker={a_inv_worker} and g_inv_worker={g_inv_worker} "
-                f"must be members of grad_worker_ranks={grad_worker_ranks}."
+                f"must be members of grad_worker_ranks={grad_worker_ranks}.",
             )
         self.a_inv_worker = a_inv_worker
         self.g_inv_worker = g_inv_worker
@@ -189,7 +188,9 @@ class KFACBaseLayer(object):
             self.grad = g.new_empty(g.shape)
 
         self.grad = self.comm.broadcast(
-            self.grad, src=self.grad_src_worker, group=self.grad_receiver_group
+            self.grad,
+            src=self.grad_src_worker,
+            group=self.grad_receiver_group,
         )
 
     def compute_a_inv(self, damping=0.001):
@@ -227,13 +228,15 @@ class KFACBaseLayer(object):
     def reduce_a_factor(self):
         """Initiate reduction of A and store future to result"""
         self.A = self.comm.allreduce(
-            self.A, upper_tri=self.symmetric_factors and self.symmetry_aware
+            self.A,
+            upper_tri=self.symmetric_factors and self.symmetry_aware,
         )
 
     def reduce_g_factor(self):
         """Initiate reduction of G and store future to result"""
         self.G = self.comm.allreduce(
-            self.G, upper_tri=self.symmetric_factors and self.symmetry_aware
+            self.G,
+            upper_tri=self.symmetric_factors and self.symmetry_aware,
         )
 
     def save_layer_input(self, input):

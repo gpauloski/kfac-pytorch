@@ -1,7 +1,13 @@
-from typing import Any, Callable, Dict, List, Iterable, Optional, Set
+from typing import Any
+from typing import Callable
+from typing import Dict
+from typing import Iterable
+from typing import List
+from typing import Optional
+from typing import Set
 
 
-class WorkerAllocator(object):
+class WorkerAllocator:
     """Worker Allocator Abstraction
 
     Handles dividing up ranks into equal sized groups for sharing inverses
@@ -30,7 +36,7 @@ class WorkerAllocator(object):
         if 0 > grad_worker_fraction or 1 < grad_worker_fraction:
             raise ValueError(
                 "grad_worker_fraction must be in [0, 1]. "
-                f"Got {grad_worker_fraction}."
+                f"Got {grad_worker_fraction}.",
             )
         if 0 > local_rank:
             raise ValueError("local_rank must be > 0")
@@ -41,16 +47,16 @@ class WorkerAllocator(object):
             raise ValueError(
                 "world_size*grad_worker_fraction must produce an integer "
                 f"value. Found {world_size}*{grad_worker_fraction}"
-                f"={grad_workers}."
+                f"={grad_workers}.",
             )
         grad_workers = max(1, round(world_size * grad_worker_fraction))
         if world_size % grad_workers != 0:
             raise ValueError(
-                "compute_grad_fraction must produce equally size groups"
+                "compute_grad_fraction must produce equally size groups",
             )
         if local_rank >= world_size:
             raise ValueError(
-                "local_rank={local_rank} larger than world_size={world_size}"
+                "local_rank={local_rank} larger than world_size={world_size}",
             )
         self.grad_worker_fraction = grad_worker_fraction
         self.grad_workers = grad_workers
@@ -59,10 +65,12 @@ class WorkerAllocator(object):
         self.group_func = group_func
 
         self.grad_worker_groups = self.partition_grad_workers(
-            self.world_size, self.grad_workers
+            self.world_size,
+            self.grad_workers,
         )
         self.grad_receiver_groups = self.partition_grad_receivers(
-            self.world_size, self.grad_workers
+            self.world_size,
+            self.grad_workers,
         )
         self._comm_groups = {}
         if self.group_func is not None:
@@ -73,7 +81,8 @@ class WorkerAllocator(object):
 
     @staticmethod
     def partition_grad_workers(
-        world_size: int, grad_workers: int
+        world_size: int,
+        grad_workers: int,
     ) -> Set[Set[int]]:
         """Returns set of sets of unique gradient workers
 
@@ -102,7 +111,7 @@ class WorkerAllocator(object):
         if world_size % grad_workers != 0:
             raise ValueError(
                 "world_size must be an integer multiple of the gradient "
-                "worker count"
+                "worker count",
             )
         partitions = world_size // grad_workers
         return {
@@ -112,7 +121,8 @@ class WorkerAllocator(object):
 
     @staticmethod
     def partition_grad_receivers(
-        world_size: int, grad_workers: int
+        world_size: int,
+        grad_workers: int,
     ) -> Set[Set[int]]:
         """Returns set of sets of unique gradient receiver groups
 
@@ -129,7 +139,7 @@ class WorkerAllocator(object):
         if world_size % grad_workers != 0:
             raise ValueError(
                 "world_size must be an integer multiple of the gradient "
-                "worker count"
+                "worker count",
             )
         partitions = world_size // grad_workers
         return {
@@ -144,14 +154,15 @@ class WorkerAllocator(object):
         if len(self._comm_groups) == 0:
             raise ValueError(
                 "Communication groups are not intialized. This is likely "
-                "because group_func was not passed to WorkerAllocator."
+                "because group_func was not passed to WorkerAllocator.",
             )
         if ranks not in self._comm_groups:
             raise ValueError(f"{ranks} not a known communication group")
         return self._comm_groups[ranks]
 
     def _unconstrained_assign(
-        self, work: Dict[Any, List[int]]
+        self,
+        work: Dict[Any, List[int]],
     ) -> Dict[Any, List[int]]:
         """Helper for unconstrained layer work assignments"""
         flat_work = [
@@ -168,7 +179,9 @@ class WorkerAllocator(object):
         return assignments
 
     def _constrained_assign(
-        self, work: Dict[Any, List[int]], worker_groups: List[List[int]]
+        self,
+        work: Dict[Any, List[int]],
+        worker_groups: List[List[int]],
     ) -> Dict[Any, List[int]]:
         """Helper for constrained layer work assignments"""
         summed_work = {k: sum(v) for k, v in work.items()}
@@ -219,7 +232,8 @@ class WorkerAllocator(object):
                 of work costs to perform.
             worker_groups (Iterable[Iterable[int]]): optional list of groups of
                 worker. If not None, work items within a group in `work`
-                will be guarenteed to be performed within the same worker_group.
+                will be guarenteed to be performed within the same
+                worker_group.
 
         Returns:
             Dict with same shape as work where values in each list represent

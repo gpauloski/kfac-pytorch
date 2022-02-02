@@ -36,15 +36,16 @@ class KFACParamScheduler:
 
         if damping_schedule is not None and callable(params["damping"]):
             raise ValueError(
-                "Cannot use a damping schedule when KFAC was passed a callable "
-                "for damping "
+                "Cannot use a damping schedule when KFAC was passed a "
+                "callable for damping ",
             )
 
         self.damping_base = params["damping"]
         self.damping_alpha = damping_alpha
         self.damping_schedule = damping_schedule
         self.damping_factor_func = self._get_factor_func(
-            self.damping_schedule, self.damping_alpha
+            self.damping_schedule,
+            self.damping_alpha,
         )
 
         self.factor_update_freq_base = params["factor_update_steps"]
@@ -52,7 +53,8 @@ class KFACParamScheduler:
         self.update_freq_alpha = update_freq_alpha
         self.update_freq_schedule = update_freq_schedule
         self.update_freq_factor_func = self._get_factor_func(
-            self.update_freq_schedule, self.update_freq_alpha
+            self.update_freq_schedule,
+            self.update_freq_alpha,
         )
 
         self._step = start_step
@@ -100,11 +102,11 @@ class KFACParamScheduler:
         params = self.kfac.param_groups[0]
 
         params["damping"] = self.damping_base * self.damping_factor_func(
-            self._step
+            self._step,
         )
 
         factor = self.update_freq_factor_func(self._step)
         params["factor_update_steps"] = int(
-            self.factor_update_freq_base * factor
+            self.factor_update_freq_base * factor,
         )
         params["inv_update_steps"] = int(self.inv_update_freq_base * factor)

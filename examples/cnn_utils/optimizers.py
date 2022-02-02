@@ -1,7 +1,9 @@
 import sys
-import kfac
+
 import torch.distributed as dist
 import torch.optim as optim
+
+import kfac
 
 sys.path.append("..")
 from utils import create_lr_schedule  # noqa: E402
@@ -25,7 +27,7 @@ def get_optimizer(model, args):
         grad_worker_fraction = args.kfac_grad_worker_fraction
     else:
         raise ValueError(
-            "Unknown KFAC Comm Method: {}".format(args.kfac_strategy)
+            f"Unknown KFAC Comm Method: {args.kfac_strategy}",
         )
 
     if use_kfac:
@@ -57,7 +59,9 @@ def get_optimizer(model, args):
         preconditioner = None
 
     lrs = create_lr_schedule(
-        dist.get_world_size(), args.warmup_epochs, args.lr_decay
+        dist.get_world_size(),
+        args.warmup_epochs,
+        args.lr_decay,
     )
     lr_scheduler = [optim.lr_scheduler.LambdaLR(optimizer, lrs)]
     if use_kfac:

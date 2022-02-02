@@ -1,17 +1,16 @@
 import argparse
-import time
-import os
 import datetime
-import torch
-import torch.distributed as dist
+import os
+import time
 
 import cnn_utils.cifar_resnet as models
 import cnn_utils.datasets as datasets
 import cnn_utils.engine as engine
 import cnn_utils.optimizers as optimizers
-
-from torchinfo import summary
+import torch
+import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
+from torchinfo import summary
 from utils import save_checkpoint
 
 try:
@@ -256,7 +255,8 @@ def main():
     args = parse_args()
 
     torch.distributed.init_process_group(
-        backend=args.backend, init_method="env://"
+        backend=args.backend,
+        init_method="env://",
     )
 
     if args.cuda:
@@ -270,7 +270,7 @@ def main():
             torch.distributed.get_rank(),
             torch.distributed.get_world_size(),
             args.local_rank,
-        )
+        ),
     )
 
     args.base_lr = (
@@ -289,7 +289,8 @@ def main():
         summary(model, (args.batch_size, 3, 32, 32), device=device)
 
     model = torch.nn.parallel.DistributedDataParallel(
-        model, device_ids=[args.local_rank]
+        model,
+        device_ids=[args.local_rank],
     )
 
     os.makedirs(args.log_dir, exist_ok=True)
@@ -308,13 +309,14 @@ def main():
             raise ValueError(
                 "The installed version of torch does not "
                 "support torch.cuda.amp fp16 training. This "
-                "requires torch version >= 1.16"
+                "requires torch version >= 1.16",
             )
         scaler = GradScaler()
     args.grad_scaler = scaler
 
     optimizer, preconditioner, lr_schedules = optimizers.get_optimizer(
-        model, args
+        model,
+        args,
     )
     if args.verbose:
         print(preconditioner)
@@ -322,7 +324,7 @@ def main():
 
     if args.resume_from_epoch > 0:
         filepath = args.checkpoint_format.format(epoch=args.resume_from_epoch)
-        map_location = {"cuda:0": "cuda:{}".format(args.local_rank)}
+        map_location = {"cuda:0": f"cuda:{args.local_rank}"}
         checkpoint = torch.load(filepath, map_location=map_location)
         model.module.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
@@ -369,8 +371,8 @@ def main():
     if args.verbose:
         print(
             "\nTraining time: {}".format(
-                datetime.timedelta(seconds=time.time() - start)
-            )
+                datetime.timedelta(seconds=time.time() - start),
+            ),
         )
 
 
