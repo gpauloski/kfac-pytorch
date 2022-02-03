@@ -229,14 +229,14 @@ class KFACBaseLayer:
         """Initiate reduction of A and store future to result"""
         self.A = self.comm.allreduce(
             self.A,
-            upper_tri=self.symmetric_factors and self.symmetry_aware,
+            symmetric=self.symmetric_factors and self.symmetry_aware,
         )
 
     def reduce_g_factor(self):
         """Initiate reduction of G and store future to result"""
         self.G = self.comm.allreduce(
             self.G,
-            upper_tri=self.symmetric_factors and self.symmetry_aware,
+            symmetric=self.symmetric_factors and self.symmetry_aware,
         )
 
     def save_layer_input(self, input):

@@ -33,7 +33,7 @@ class KFACInverseLayer(KFACBaseLayer):
             self.A_inv,
             src=self.a_inv_worker,
             group=self.grad_worker_group,
-            upper_tri=self.symmetric_factors and self.symmetry_aware,
+            symmetric=self.symmetric_factors and self.symmetry_aware,
         )
 
     def broadcast_g_inv(self):
@@ -43,7 +43,7 @@ class KFACInverseLayer(KFACBaseLayer):
             self.G_inv,
             src=self.g_inv_worker,
             group=self.grad_worker_group,
-            upper_tri=self.symmetric_factors and self.symmetry_aware,
+            symmetric=self.symmetric_factors and self.symmetry_aware,
         )
 
     def compute_a_inv(self, damping=0.001):

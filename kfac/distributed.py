@@ -6,6 +6,10 @@ import torch.distributed as dist
 Future = (torch._C.Future, torch.futures.Future)
 
 
+class NonSquareTensorError(Exception):
+    pass
+
+
 class TorchDistributedCommunicator:
     __slots__ = [
         "allreduce_bucketing",
@@ -28,7 +32,7 @@ class TorchDistributedCommunicator:
         self,
         tensor: torch.Tensor,
         group: dist.ProcessGroup = None,
-        upper_tri=False,
+        symmetric=False,
     ) -> Union[torch._C.Future, torch.futures.Future, torch.Tensor]:
         """Allreduce tensor asynchronously
 
@@ -36,7 +40,7 @@ class TorchDistributedCommunicator:
             tensor (torch.Tensor): tensor to allreduce
             group (torch.distributed.ProcessGroup): optional process group
                 to perform communication within
-            upper_tri (bool): communicate only upper triangle
+            symmetric (bool): communicate symmetric tensor using upper triangle
 
         Returns:
             Future to tensor. Tensor can be retrieved with `future.wait()`.
@@ -45,78 +49,41 @@ class TorchDistributedCommunicator:
 
             If group size is 1, no communication is performed and the tensor
             is returned.
+
+        Raises:
+            NonSquareTensorError:
+                if symmetric is True and tensor is not a 2D square tensor.
         """
         if dist.get_world_size(group) == 1:
             return tensor
         shape = tensor.size()
-        length = torch.numel(tensor)
-        if upper_tri:
+        if symmetric:
+            if len(shape) != 2 or shape[0] != shape[1]:
+                raise NonSquareTensorError(
+                    "Symmetric communication can only be done with a 2D "
+                    f"square tensor. Got tensor with shape {shape}.",
+                )
             tensor = get_triu(tensor)
-        if not self.allreduce_bucketing:
-            tensor = tensor.contiguous()
-            future = dist.all_reduce(
-                tensor,
-                group=group,
-                async_op=True,
-            ).get_future()
-            if upper_tri:
-                future = future.then(
-                    lambda fut: fill_triu(shape, fut.value()[0]),
-                )
-            else:
-                future = future.then(lambda fut: fut.value()[0])
-            return future
-        else:
-            if self._allreduce_buffer is None:
-                index = 0
-                self._allreduce_buffer = tensor.flatten()
-            else:
-                index = torch.numel(self._allreduce_buffer)
-                self._allreduce_buffer = torch.cat(
-                    [self._allreduce_buffer, tensor.flatten()],
-                )
-
-            def extract_and_shape(fut):
-                t = fut.value()[0]
-                t = fut[index : index + length].view(shape)
-                if upper_tri:
-                    t = fill_triu(shape, t)
-                return t
-
-            future = torch.future.Future().then(extract_and_shape)
-            self._allreduce_futures.append(future)
-
-            mbs = torch.numel(self._allreduce_buffer) * torch.element_size(
-                self._allreduce_buffer,
+        tensor = tensor.contiguous()
+        future = dist.all_reduce(
+            tensor,
+            group=group,
+            async_op=True,
+        ).get_future()
+        if symmetric:
+            future = future.then(
+                lambda fut: fill_triu(shape, fut.value()[0]),
             )
-            if mbs > self.bucket_cap_mb:
-                self._flush_allreduce_bucket()
-                self._allreduce_futures = None
-                self._allreduce_buffer = None
-
-            return future
-
-    def _flush_allreduce_bucket(self):
-        mini_futures = self._allreduce_futures
-
-        def set_all_futures(fut):
-            t = fut.value()[0]
-            for mini_fut in mini_futures:
-                mini_fut.set_result(t)
-
-        # TODO(gpauloski)
-        # big_future = (
-        #     dist.all_reduce(
-        #         self._allreduce_buffer, group=group, async_op=True
-        #      ).get_future().then(mini_futures)
-        # )
+        else:
+            future = future.then(lambda fut: fut.value()[0])
+        return future
 
     def broadcast(
         self,
         tensor: torch.Tensor,
         src: int,
         group: dist.ProcessGroup = None,
-        upper_tri=False,
+        symmetric=False,
     ) -> Union[torch._C.Future, torch.futures.Future, torch.Tensor]:
         """Broadcast tensor from src to all other workers asynchronously
 
@@ -125,7 +92,7 @@ class TorchDistributedCommunicator:
             src (int): rank of worker with src tensor
             group (torch.distributed.ProcessGroup): optional process group
                 to perform communication within
-            upper_tri (bool): communicate only upper triangle
+            symmetric (bool): communicate symmetric tensor using upper triangle
 
         Returns:
             Future to tensor. Tensor can be retrieved with `future.wait()`.
@@ -134,12 +101,21 @@ class TorchDistributedCommunicator:
 
             If group size is 1, no communication is performed and the tensor
             is returned.
+
+        Raises:
+            NonSquareTensorError:
+                if symmetric is True and tensor is not a 2D square tensor.
         """
         if dist.get_world_size(group) == 1:
             return tensor
         shape = tensor.size()
-        if upper_tri:
-            tensor = tensor[torch.triu_indices(shape[0], shape[1])]
+        if symmetric:
+            if len(shape) != 2 or shape[0] != shape[1]:
+                raise NonSquareTensorError(
+                    "Symmetric communication can only be done with a 2D "
+                    f"square tensor. Got tensor with shape {shape}.",
+                )
+            tensor = get_triu(tensor)
         tensor = tensor.contiguous()
         future = dist.broadcast(
             tensor,
@@ -147,7 +123,7 @@ class TorchDistributedCommunicator:
             group=group,
             async_op=True,
         ).get_future()
-        if upper_tri:
+        if symmetric:
             future = future.then(lambda fut: fill_triu(shape, fut.value()[0]))
         else:
             future = future.then(lambda fut: fut.value()[0])
