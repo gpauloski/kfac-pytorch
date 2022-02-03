@@ -157,3 +157,39 @@ def test_broadcast() -> None:
         symmetric=True,
         expect_raises=NonSquareTensorError,
     )
+
+
+def test_broadcast_bucketing() -> None:
+    """Test bucketed broadcast"""
+
+    def broadcast(
+        shape: list[int],
+        tensor_count: int,
+        bucket_cap_mb: float,
+        symmetric: bool = False,
+    ) -> None:
+        rank = torch.distributed.get_rank()
+        comm = TorchDistributedCommunicator(bucket_cap_mb)
+
+        tensors = []
+        for i in range(tensor_count):
+            if rank == 0:
+                t = i * torch.ones(shape, dtype=torch.float32)
+            else:
+                t = torch.zeros(shape, dtype=torch.float32)
+            tensors.append(
+                comm.broadcast_bucketed(t, src=0, symmetric=symmetric),
+            )
+        comm.flush_broadcast_buckets()
+
+        for i, tensor in enumerate(tensors):
+            if isinstance(tensor, Future):
+                tensor = tensor.wait()
+            assert torch.sum(tensor).item() == i * torch.numel(tensor)
+
+    # Test sum of all tensors less than bucket
+    run_parallel(1, broadcast, [2, 2], 4, 1)
+    run_parallel(4, broadcast, [100, 100], 4, 1)
+
+    # Test each tensor larger than bucket
+    run_parallel(4, broadcast, [100, 100], 4, 0.001)
