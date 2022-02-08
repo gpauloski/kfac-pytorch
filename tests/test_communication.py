@@ -7,6 +7,7 @@ from typing import Callable
 import torch
 from pytest import raises
 
+from kfac.distributed import AllreduceTensorBucket
 from kfac.distributed import fill_triu
 from kfac.distributed import Future
 from kfac.distributed import get_triu
@@ -159,37 +160,86 @@ def test_broadcast() -> None:
     )
 
 
-def test_broadcast_bucketing() -> None:
-    """Test bucketed broadcast"""
+def test_allreduce_tensor_bucket() -> None:
+    """Test AllreduceTensorBucket."""
 
-    def broadcast(
+    def allreduce() -> None:
+        bucket = AllreduceTensorBucket()
+
+        # Communication operation can only be called once
+        assert not bucket.communicated()
+        bucket.allreduce()
+        assert bucket.communicated()
+        with raises(RuntimeError):
+            bucket.allreduce()
+
+        bucket = AllreduceTensorBucket()
+
+        t1 = torch.ones([2, 2], dtype=torch.float32)
+        f1 = bucket.add_tensor(t1)
+        # 4 elements and each takes 4 bytes
+        assert bucket.size == 4 * 4
+
+        t2 = torch.ones([2, 4], dtype=torch.float32)
+        f2 = bucket.add_tensor(t2)
+        # 4 + 8 elements and each element takes 4 bytes
+        assert bucket.size == (4 + 8) * 4
+
+        assert not f1.done()
+        assert not f2.done()
+
+        allreduce_future = bucket.allreduce()
+
+        allreduce_tensor = allreduce_future.wait()
+
+        assert allreduce_tensor.nelement() == 12
+
+        s = torch.distributed.get_world_size()
+
+        f1.wait()
+        assert f1.done()
+        assert torch.equal(s * t1, f1.value())
+
+        f2.wait()
+        assert f2.done()
+        assert torch.equal(s * t2, f2.value())
+
+    run_parallel(1, allreduce)
+    run_parallel(4, allreduce)
+
+
+def test_allreduce_bucketed() -> None:
+    """Test bucketed allreduce."""
+
+    def allreduce(
         shape: list[int],
         tensor_count: int,
         bucket_cap_mb: float,
         symmetric: bool = False,
     ) -> None:
-        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
         comm = TorchDistributedCommunicator(bucket_cap_mb)
 
         tensors = []
         for i in range(tensor_count):
-            if rank == 0:
-                t = i * torch.ones(shape, dtype=torch.float32)
-            else:
-                t = torch.zeros(shape, dtype=torch.float32)
+            t = torch.ones(shape, dtype=torch.float32)
             tensors.append(
-                comm.broadcast_bucketed(t, src=0, symmetric=symmetric),
+                comm.allreduce_bucketed(t, symmetric=symmetric),
             )
-        comm.flush_broadcast_buckets()
+        comm.flush_allreduce_bucket()
 
         for i, tensor in enumerate(tensors):
             if isinstance(tensor, Future):
                 tensor = tensor.wait()
-            assert torch.sum(tensor).item() == i * torch.numel(tensor)
+            assert torch.sum(tensor).item() == world_size * torch.numel(tensor)
 
     # Test sum of all tensors less than bucket
-    run_parallel(1, broadcast, [2, 2], 4, 1)
-    run_parallel(4, broadcast, [100, 100], 4, 1)
+    run_parallel(1, allreduce, [2, 2], 4, 1)
+    run_parallel(4, allreduce, [100, 100], 4, 1)
 
     # Test each tensor larger than bucket
-    run_parallel(4, broadcast, [100, 100], 4, 0.001)
+    run_parallel(4, allreduce, [100, 100], 4, 0.001)
+
+    # Test symmetric
+    run_parallel(1, allreduce, [4, 4], 4, 1, True)
+    run_parallel(4, allreduce, [100, 100], 4, 0.001, True)
