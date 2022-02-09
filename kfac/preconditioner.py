@@ -364,7 +364,9 @@ class KFAC(optim.Optimizer):
         Args:
           include_factors (optional, bool): include tensors with factors
               for all registered KFACLayers as a part of the state_dict. Note:
-              can make the state_dict fairly large. (default: True)
+              can make the state_dict fairly large, but not saving the factors
+              can cause issues if the first iteration when resuming from a
+              checkpoint is not a KFAC update step (default: True).
         """
         state_dict = super().state_dict()
         # Remove parameters that are callables because pickling could fail
@@ -388,7 +390,9 @@ class KFAC(optim.Optimizer):
           state_dict (dict): KFAC state. Should be an object returned from a
               call to `state_dict`.
           compute_inverses (bool, optional): if True, compute the inverses
-              from the loaded factors. (default: True)
+              from the loaded factors. Note that not computing the inverses
+              when loading from a checkpoint will only work if the first
+              iteration is a KFAC update step (default: True).
         """
         if "layers" in state_dict:
             if len(state_dict["layers"]) != len(self.layers):
