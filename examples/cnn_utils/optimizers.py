@@ -40,6 +40,7 @@ def get_optimizer(model, args):
             kl_clip=args.kfac_kl_clip,
             lr=args.base_lr,
             accumulation_steps=args.batches_per_allreduce,
+            allreduce_bucket_cap_mb=25,
             colocate_factors=args.kfac_colocate_factors,
             compute_method=kfac.ComputeMethod.INVERSE
             if args.kfac_inv_method
