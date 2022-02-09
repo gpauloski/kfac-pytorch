@@ -372,7 +372,7 @@ class KFAC(optim.Optimizer):
         # gradient accumulation but may end in middle of gradient accumulation
         state_dict = {
             key: value
-            for key, value in super(KFAC, self).state_dict()
+            for key, value in state_dict.items()
             if not callable(value)
         }
         if include_factors:
