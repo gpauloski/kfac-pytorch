@@ -29,7 +29,7 @@ class KFACInverseLayer(KFACBaseLayer):
     def broadcast_a_inv(self):
         if not self.is_grad_worker:
             return
-        self.A_inv = self.comm.broadcast(
+        self.A_inv = self.tdc.broadcast(
             self.A_inv,
             src=self.a_inv_worker,
             group=self.grad_worker_group,
@@ -39,7 +39,7 @@ class KFACInverseLayer(KFACBaseLayer):
     def broadcast_g_inv(self):
         if not self.is_grad_worker:
             return
-        self.G_inv = self.comm.broadcast(
+        self.G_inv = self.tdc.broadcast(
             self.G_inv,
             src=self.g_inv_worker,
             group=self.grad_worker_group,

@@ -95,6 +95,8 @@ class KFAC(optim.Optimizer):
           rate (default: 0.1).
       accumulation_steps (int): number of forward/backward passes
           between optimization steps (default: 1).
+      allreduce_bucket_cap_mb (float): maximum size in megabytes for allreduce
+          bucketing. If zero, bucketing is not used (default: 25).
       assignment_strategy (AssignmentStrategy, str): See `AssignmentStrategy`
           for more details (default: AssignmentStrategy.COMPUTE).
       colocate_factors (bool): assign both factors for a single layer to the
@@ -141,6 +143,7 @@ class KFAC(optim.Optimizer):
         lr: Union[Callable, float] = 0.1,
         # Distribution strategy
         accumulation_steps: int = 1,
+        allreduce_bucket_cap_mb: float = 25.0,
         assignment_strategy: Union[
             AssignmentStrategy,
             str,
@@ -174,6 +177,8 @@ class KFAC(optim.Optimizer):
             raise ValueError("lr be > 0")
         if not 0 < accumulation_steps:
             raise ValueError("accumulation_steps must be > 0")
+        if not 0 <= allreduce_bucket_cap_mb:
+            raise ValueError("allreduce_bucket_cap_mb must be >= 0")
         if not 0 == inv_update_steps % factor_update_steps:
             warnings.warn(
                 "It is suggested that inv_update_steps be an integer multiple "
@@ -261,6 +266,7 @@ class KFAC(optim.Optimizer):
         super().__init__([torch.tensor(0.0)], defaults)
 
         self.accumulation_steps = accumulation_steps
+        self.allreduce_bucket_cap_mb = allreduce_bucket_cap_mb
         self.assignment_strategy = assignment_strategy
         self.colocate_factors = colocate_factors
         self.compute_method = compute_method
@@ -278,7 +284,9 @@ class KFAC(optim.Optimizer):
         self.verbose = verbose
 
         self.workers_assigned = False
-        self.comm = TorchDistributedCommunicator()
+        self.tdc = TorchDistributedCommunicator(
+            bucket_cap_mb=self.allreduce_bucket_cap_mb,
+        )
 
         # key: nn.Module, value: KFACLayer
         self.layers = {}
@@ -287,6 +295,7 @@ class KFAC(optim.Optimizer):
     def __repr__(self):
         extra_params = {
             "accumulation_steps": self.accumulation_steps,
+            "allreduce_bucket_cap_mb": self.allreduce_bucket_cap_mb,
             "assignment_strategy": self.assignment_strategy,
             "colocate_factors": self.colocate_factors,
             "compute_method": self.compute_method,
@@ -436,9 +445,9 @@ class KFAC(optim.Optimizer):
           Layer.
         """
         kwargs = {
-            "comm": self.comm,
-            "grad_scaler": self.grad_scaler,
+            "bucketed_allreduce": self.allreduce_bucket_cap_mb > 0,
             "factor_dtype": self.factor_dtype,
+            "grad_scaler": self.grad_scaler,
             "inv_dtype": self.inv_dtype,
             "symmetry_aware": self.symmetry_aware,
         }
@@ -450,6 +459,7 @@ class KFAC(optim.Optimizer):
         layer_list = kfac_layers.get_kfac_layers(
             module,
             method=self.compute_method,
+            tdc=self.tdc,
             **kwargs,
         )
         for module, kfac_layer in layer_list:
@@ -515,6 +525,10 @@ class KFAC(optim.Optimizer):
             self._assign_workers()
             self.workers_assigned = True
 
+        # Flush last allreduce bucket from forward/backward pass.
+        # Will be a no-op if bucketing was not used
+        self.tdc.flush_allreduce_bucket()
+
         # Compute Inverses
         if self.steps % self.inv_update_steps == 0:
             for layer in reversed(self.layers.values()):
@@ -561,6 +575,7 @@ class KFAC(optim.Optimizer):
             "g_inverses": 0,
         }
 
+        self.tdc.flush_allreduce_bucket()
         for layer in self.layers.values():
             layer.sync_a_factor()
             layer.sync_g_factor()
@@ -591,6 +606,7 @@ class KFAC(optim.Optimizer):
         )
 
         sizes = {}
+        self.tdc.flush_allreduce_bucket()
         for module, layer in self.layers.items():
             layer.sync_a_factor()
             layer.sync_g_factor()

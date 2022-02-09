@@ -54,13 +54,13 @@ class KFACEigenLayer(KFACBaseLayer):
         if len(self.grad_worker_ranks) == 1:
             # MEM-OPT case -> no communication necessary
             return
-        self.QA = self.comm.broadcast(
+        self.QA = self.tdc.broadcast(
             self.QA,
             src=self.a_inv_worker,
             group=self.grad_worker_group,
         )
         if not self.prediv_eigenvalues:
-            self.dA = self.comm.broadcast(
+            self.dA = self.tdc.broadcast(
                 self.dA,
                 src=self.a_inv_worker,
                 group=self.grad_worker_group,
@@ -72,19 +72,19 @@ class KFACEigenLayer(KFACBaseLayer):
         if len(self.grad_worker_ranks) == 1:
             # MEM-OPT case -> no communication necessary
             return
-        self.QG = self.comm.broadcast(
+        self.QG = self.tdc.broadcast(
             self.QG,
             src=self.g_inv_worker,
             group=self.grad_worker_group,
         )
         if not self.prediv_eigenvalues:
-            self.dG = self.comm.broadcast(
+            self.dG = self.tdc.broadcast(
                 self.dG,
                 src=self.g_inv_worker,
                 group=self.grad_worker_group,
             )
         else:
-            self.dGdA = self.comm.broadcast(
+            self.dGdA = self.tdc.broadcast(
                 self.dGdA,
                 src=self.g_inv_worker,
                 group=self.grad_worker_group,

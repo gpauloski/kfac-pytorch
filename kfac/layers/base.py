@@ -9,18 +9,20 @@ class KFACBaseLayer:
         self,
         module,
         module_helper,
-        comm,
-        inv_dtype=None,
-        grad_scaler=None,
+        tdc,
+        bucketed_allreduce=False,
         factor_dtype=None,
+        grad_scaler=None,
+        inv_dtype=None,
         symmetry_aware=False,
     ):
         self.module = module
         self.module_helper = module_helper
-        self.comm = comm
+        self.tdc = tdc
+        self.bucketed_allreduce = bucketed_allreduce
+        self.factor_dtype = factor_dtype
         self.grad_scaler = grad_scaler
         self.inv_dtype = inv_dtype
-        self.factor_dtype = factor_dtype
         self.symmetry_aware = symmetry_aware
 
         self.eps = 1e-10
@@ -187,7 +189,7 @@ class KFACBaseLayer:
             g = self.module_helper.get_grad()
             self.grad = g.new_empty(g.shape)
 
-        self.grad = self.comm.broadcast(
+        self.grad = self.tdc.broadcast(
             self.grad,
             src=self.grad_src_worker,
             group=self.grad_receiver_group,
@@ -227,14 +229,22 @@ class KFACBaseLayer:
 
     def reduce_a_factor(self):
         """Initiate reduction of A and store future to result"""
-        self.A = self.comm.allreduce(
+        if self.bucketed_allreduce:
+            allreduce_fn = self.tdc.allreduce_bucketed
+        else:
+            allreduce_fn = self.tdc.allreduce
+        self.A = allreduce_fn(
             self.A,
             symmetric=self.symmetric_factors and self.symmetry_aware,
         )
 
     def reduce_g_factor(self):
         """Initiate reduction of G and store future to result"""
-        self.G = self.comm.allreduce(
+        if self.bucketed_allreduce:
+            allreduce_fn = self.tdc.allreduce_bucketed
+        else:
+            allreduce_fn = self.tdc.allreduce
+        self.G = allreduce_fn(
             self.G,
             symmetric=self.symmetric_factors and self.symmetry_aware,
         )
