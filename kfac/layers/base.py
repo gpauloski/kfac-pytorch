@@ -1,7 +1,20 @@
+from enum import Enum
+
 import torch
 import torch.distributed as dist
 
 from kfac.distributed import Future
+
+
+class AllreduceMethod(Enum):
+    ALLREDUCE = 1
+    ALLREDUCE_BUCKETED = 2
+
+
+class BroadcastMethod(Enum):
+    BROADCAST = 1
+    ALLREDUCE = 2
+    ALLREDUCE_BUCKETED = 3
 
 
 class KFACBaseLayer:
@@ -10,7 +23,8 @@ class KFACBaseLayer:
         module,
         module_helper,
         tdc,
-        bucketed_allreduce=False,
+        allreduce_method=AllreduceMethod.ALLREDUCE,
+        broadcast_method=BroadcastMethod.BROADCAST,
         factor_dtype=None,
         grad_scaler=None,
         inv_dtype=None,
@@ -19,7 +33,8 @@ class KFACBaseLayer:
         self.module = module
         self.module_helper = module_helper
         self.tdc = tdc
-        self.bucketed_allreduce = bucketed_allreduce
+        self.allreduce_method = allreduce_method
+        self.broadcast_method = broadcast_method
         self.factor_dtype = factor_dtype
         self.grad_scaler = grad_scaler
         self.inv_dtype = inv_dtype
@@ -28,6 +43,18 @@ class KFACBaseLayer:
         self.eps = 1e-10
         self.has_bias = self.module_helper.has_bias()
         self.symmetric_factors = self.module_helper.has_symmetric_factors()
+
+        # Communication internal implementation helpers
+        if self.allreduce_method == AllreduceMethod.ALLREDUCE:
+            self._allreduce_fn = self.tdc.allreduce
+        elif self.allreduce_method == AllreduceMethod.ALLREDUCE_BUCKETED:
+            self._allreduce_fn = self.tdc.allreduce
+        if self.broadcast_method == BroadcastMethod.BROADCAST:
+            self._broadcast_fn = self.tdc.broadcast
+        elif self.broadcast_method == BroadcastMethod.ALLREDUCE:
+            self._broadcast_fn = self.tdc.allreduce
+        elif self.broadcast_method == BroadcastMethod.ALLREDUCE_BUCKETED:
+            self._broadcast_fn = self.tdc.allreduce_bucketed
 
         # KFAC State Variables
         self.a = None  # A factor being accumulated for current batch
@@ -185,14 +212,20 @@ class KFACBaseLayer:
         if len(self.grad_receiver_ranks) == 1:
             # COMM-OPT case -> no gradient communication
             return
-        if self.grad is None:
-            g = self.module_helper.get_grad()
-            self.grad = g.new_empty(g.shape)
 
-        self.grad = self.tdc.broadcast(
+        if self.grad is None:
+            self.grad = torch.empty_like(self.module_helper.get_grad())
+
+        kwargs = {}
+        if self.broadcast_method == BroadcastMethod.BROADCAST:
+            kwargs["src"] = self.grad_src_worker
+        elif not self.is_grad_worker:
+            self.grad.zero_()
+
+        self.grad = self._broadcast_fn(
             self.grad,
-            src=self.grad_src_worker,
             group=self.grad_receiver_group,
+            **kwargs,
         )
 
     def compute_a_inv(self, damping=0.001):
@@ -229,11 +262,7 @@ class KFACBaseLayer:
 
     def reduce_a_factor(self):
         """Initiate reduction of A and store future to result"""
-        if self.bucketed_allreduce:
-            allreduce_fn = self.tdc.allreduce_bucketed
-        else:
-            allreduce_fn = self.tdc.allreduce
-        self.A = allreduce_fn(
+        self.A = self._allreduce_fn(
             self.A,
             average=True,
             symmetric=self.symmetric_factors and self.symmetry_aware,
@@ -241,11 +270,7 @@ class KFACBaseLayer:
 
     def reduce_g_factor(self):
         """Initiate reduction of G and store future to result"""
-        if self.bucketed_allreduce:
-            allreduce_fn = self.tdc.allreduce_bucketed
-        else:
-            allreduce_fn = self.tdc.allreduce
-        self.G = allreduce_fn(
+        self.G = self._allreduce_fn(
             self.G,
             average=True,
             symmetric=self.symmetric_factors and self.symmetry_aware,

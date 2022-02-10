@@ -11,9 +11,11 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 
-import kfac.layers as kfac_layers
+import kfac
 from kfac.allocator import WorkerAllocator
 from kfac.distributed import TorchDistributedCommunicator
+from kfac.layers.base import AllreduceMethod
+from kfac.layers.base import BroadcastMethod
 
 
 class AssignmentStrategy(enum.Enum):
@@ -234,7 +236,7 @@ class KFAC(optim.Optimizer):
             )
             colocate_factors = True
 
-        known_modules = {m.lower() for m in kfac_layers.KNOWN_MODULES}
+        known_modules = {m.lower() for m in kfac.layers.KNOWN_MODULES}
         if skip_layers is not None:
             if isinstance(skip_layers, str):
                 skip_layers = [skip_layers.lower()]
@@ -287,6 +289,11 @@ class KFAC(optim.Optimizer):
         self.tdc = TorchDistributedCommunicator(
             bucket_cap_mb=self.allreduce_bucket_cap_mb,
         )
+        if self.allreduce_bucket_cap_mb > 0:
+            self.allreduce_method = AllreduceMethod.ALLREDUCE_BUCKETED
+        else:
+            self.allreduce_method = AllreduceMethod.ALLREDUCE
+        self.broadcast_method = BroadcastMethod.BROADCAST
 
         # key: nn.Module, value: KFACLayer
         self.layers = {}
@@ -296,7 +303,9 @@ class KFAC(optim.Optimizer):
         extra_params = {
             "accumulation_steps": self.accumulation_steps,
             "allreduce_bucket_cap_mb": self.allreduce_bucket_cap_mb,
+            "allreduce_method": self.allreduce_method,
             "assignment_strategy": self.assignment_strategy,
+            "broadcast_method": self.broadcast_method,
             "colocate_factors": self.colocate_factors,
             "compute_method": self.compute_method,
             "compute_eigenvalue_outer_product": self.compute_eigenvalue_outer_product,  # noqa: E501
@@ -435,6 +444,7 @@ class KFAC(optim.Optimizer):
                 ]:
                     layer.broadcast_a_inv()
                     layer.broadcast_g_inv()
+                    self.tdc.flush_allreduce_buckets()
                 layer.sync_a_inv()
                 layer.sync_g_inv()
 
@@ -447,7 +457,8 @@ class KFAC(optim.Optimizer):
           Layer.
         """
         kwargs = {
-            "bucketed_allreduce": self.allreduce_bucket_cap_mb > 0,
+            "allreduce_method": self.allreduce_method,
+            "broadcast_method": self.broadcast_method,
             "factor_dtype": self.factor_dtype,
             "grad_scaler": self.grad_scaler,
             "inv_dtype": self.inv_dtype,
@@ -458,7 +469,7 @@ class KFAC(optim.Optimizer):
                 "prediv_eigenvalues"
             ] = self.compute_eigenvalue_outer_product
 
-        layer_list = kfac_layers.get_kfac_layers(
+        layer_list = kfac.layers.get_kfac_layers(
             module,
             method=self.compute_method,
             tdc=self.tdc,
@@ -486,7 +497,7 @@ class KFAC(optim.Optimizer):
             elif module_name not in self.known_modules:
                 self.register_submodules(module, prefix=name)
             elif (
-                kfac_layers.module_requires_grad(module)
+                kfac.layers.module_requires_grad(module)
                 and module not in self.layers
             ):
                 self.register_module(module, name)
@@ -529,7 +540,7 @@ class KFAC(optim.Optimizer):
 
         # Flush last allreduce bucket from forward/backward pass.
         # Will be a no-op if bucketing was not used
-        self.tdc.flush_allreduce_bucket()
+        self.tdc.flush_allreduce_buckets()
 
         # Compute Inverses
         if self.steps % self.inv_update_steps == 0:
@@ -546,6 +557,7 @@ class KFAC(optim.Optimizer):
                     is not DistributedStrategy.MEM_OPT
                 ):
                     layer.broadcast_g_inv()
+                self.tdc.flush_allreduce_buckets()
 
         # Compute Preconditioned Gradients
         for layer in reversed(self.layers.values()):
@@ -577,7 +589,7 @@ class KFAC(optim.Optimizer):
             "g_inverses": 0,
         }
 
-        self.tdc.flush_allreduce_bucket()
+        self.tdc.flush_allreduce_buckets()
         for layer in self.layers.values():
             layer.sync_a_factor()
             layer.sync_g_factor()
@@ -608,7 +620,7 @@ class KFAC(optim.Optimizer):
         )
 
         sizes = {}
-        self.tdc.flush_allreduce_bucket()
+        self.tdc.flush_allreduce_buckets()
         for module, layer in self.layers.items():
             layer.sync_a_factor()
             layer.sync_g_factor()
