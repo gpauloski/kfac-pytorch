@@ -435,6 +435,8 @@ class KFAC(optim.Optimizer):
                 ]:
                     layer.broadcast_a_inv()
                     layer.broadcast_g_inv()
+                layer.sync_a_inv()
+                layer.sync_g_inv()
 
     def register_module(self, module, name=None):
         """Create and register a KFAC layer for a module.
