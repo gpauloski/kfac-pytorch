@@ -1,6 +1,7 @@
 import torch
 
 from kfac.distributed import Future
+from kfac.layers.base import BroadcastMethod
 from kfac.layers.base import KFACBaseLayer
 
 
@@ -29,21 +30,35 @@ class KFACInverseLayer(KFACBaseLayer):
     def broadcast_a_inv(self):
         if not self.is_grad_worker:
             return
-        self.A_inv = self.tdc.broadcast(
+
+        kwargs = {}
+        if self.broadcast_method == BroadcastMethod.BROADCAST:
+            kwargs["src"] = self.g_inv_worker
+        elif not self.is_a_inv_worker:
+            self.A_inv.zero_()
+
+        self.A_inv = self._broadcast_fn(
             self.A_inv,
-            src=self.a_inv_worker,
             group=self.grad_worker_group,
             symmetric=self.symmetric_factors and self.symmetry_aware,
+            **kwargs,
         )
 
     def broadcast_g_inv(self):
         if not self.is_grad_worker:
             return
-        self.G_inv = self.tdc.broadcast(
+
+        kwargs = {}
+        if self.broadcast_method == BroadcastMethod.BROADCAST:
+            kwargs["src"] = self.g_inv_worker
+        elif not self.is_g_inv_worker:
+            self.G_inv.zero_()
+
+        self.G_inv = self._broadcast_fn(
             self.G_inv,
-            src=self.g_inv_worker,
             group=self.grad_worker_group,
             symmetric=self.symmetric_factors and self.symmetry_aware,
+            **kwargs,
         )
 
     def compute_a_inv(self, damping=0.001):

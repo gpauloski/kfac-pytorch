@@ -1,6 +1,7 @@
 import torch
 
 from kfac.distributed import Future
+from kfac.layers.base import BroadcastMethod
 from kfac.layers.base import KFACBaseLayer
 
 
@@ -54,16 +55,25 @@ class KFACEigenLayer(KFACBaseLayer):
         if len(self.grad_worker_ranks) == 1:
             # MEM-OPT case -> no communication necessary
             return
-        self.QA = self.tdc.broadcast(
+
+        kwargs = {}
+        if self.broadcast_method == BroadcastMethod.BROADCAST:
+            kwargs["src"] = self.a_inv_worker
+        elif not self.is_a_inv_worker:
+            self.QA.zero_()
+            if not self.prediv_eigenvalues:
+                self.dA.zero_()
+
+        self.QA = self._broadcast_fn(
             self.QA,
-            src=self.a_inv_worker,
             group=self.grad_worker_group,
+            **kwargs,
         )
         if not self.prediv_eigenvalues:
-            self.dA = self.tdc.broadcast(
+            self.dA = self._broadcast_fn(
                 self.dA,
-                src=self.a_inv_worker,
                 group=self.grad_worker_group,
+                **kwargs,
             )
 
     def broadcast_g_inv(self):
@@ -72,22 +82,33 @@ class KFACEigenLayer(KFACBaseLayer):
         if len(self.grad_worker_ranks) == 1:
             # MEM-OPT case -> no communication necessary
             return
-        self.QG = self.tdc.broadcast(
+
+        kwargs = {}
+        if self.broadcast_method == BroadcastMethod.BROADCAST:
+            kwargs["src"] = self.g_inv_worker
+        elif not self.is_a_inv_worker:
+            self.QG.zero_()
+            if not self.prediv_eigenvalues:
+                self.dG.zero_()
+            else:
+                self.dGdA.zero_()
+
+        self.QG = self._broadcast_fn(
             self.QG,
-            src=self.g_inv_worker,
             group=self.grad_worker_group,
+            **kwargs,
         )
         if not self.prediv_eigenvalues:
-            self.dG = self.tdc.broadcast(
+            self.dG = self._broadcast_fn(
                 self.dG,
-                src=self.g_inv_worker,
                 group=self.grad_worker_group,
+                **kwargs,
             )
         else:
-            self.dGdA = self.tdc.broadcast(
+            self.dGdA = self._broadcast_fn(
                 self.dGdA,
-                src=self.g_inv_worker,
                 group=self.grad_worker_group,
+                **kwargs,
             )
 
     def compute_a_inv(self, damping=0.001):
