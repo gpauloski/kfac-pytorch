@@ -444,9 +444,6 @@ class KFAC(optim.Optimizer):
                 ]:
                     layer.broadcast_a_inv()
                     layer.broadcast_g_inv()
-                    self.tdc.flush_allreduce_buckets()
-                layer.sync_a_inv()
-                layer.sync_g_inv()
 
     def register_module(self, module, name=None):
         """Create and register a KFAC layer for a module.
@@ -531,16 +528,16 @@ class KFAC(optim.Optimizer):
         if closure is not None:
             raise ValueError("KFAC does not support closures")
 
+        # Flush last allreduce bucket from forward/backward pass.
+        # Will be a no-op if bucketing was not used
+        self.tdc.flush_allreduce_buckets()
+
         # We do this after compute_factors() because the buffers
         # are not instantiated until this point and we use the size of the
         # buffers to approximate the time each layer will take to compute.
         if not self.workers_assigned:
             self._assign_workers()
             self.workers_assigned = True
-
-        # Flush last allreduce bucket from forward/backward pass.
-        # Will be a no-op if bucketing was not used
-        self.tdc.flush_allreduce_buckets()
 
         # Compute Inverses
         if self.steps % self.inv_update_steps == 0:
@@ -557,13 +554,14 @@ class KFAC(optim.Optimizer):
                     is not DistributedStrategy.MEM_OPT
                 ):
                     layer.broadcast_g_inv()
-                self.tdc.flush_allreduce_buckets()
+            self.tdc.flush_allreduce_buckets()
 
         # Compute Preconditioned Gradients
         for layer in reversed(self.layers.values()):
             layer.preconditioned_grad(damping=self.damping)
             if self.distributed_strategy is not DistributedStrategy.COMM_OPT:
                 layer.broadcast_grad()
+        self.tdc.flush_allreduce_buckets()
 
         scale = None if self.kl_clip is None else self._compute_grad_scale()
 
@@ -589,13 +587,11 @@ class KFAC(optim.Optimizer):
             "g_inverses": 0,
         }
 
+        # Need to flush buffered communication operations in case user
+        # calls this method at a strange time (e.g., in the middle of
+        # KFAC.step())
         self.tdc.flush_allreduce_buckets()
         for layer in self.layers.values():
-            layer.sync_a_factor()
-            layer.sync_g_factor()
-            layer.sync_a_inv()
-            layer.sync_g_inv()
-            layer.sync_grad()
             layer_sizes = layer.memory_usage()
             for key, size in layer_sizes.items():
                 sizes[key] += size
@@ -620,11 +616,7 @@ class KFAC(optim.Optimizer):
         )
 
         sizes = {}
-        self.tdc.flush_allreduce_buckets()
         for module, layer in self.layers.items():
-            layer.sync_a_factor()
-            layer.sync_g_factor()
-
             if self.colocate_factors:
                 x = [layer.A.shape[0] + layer.G.shape[0]]
             else:
@@ -668,7 +660,6 @@ class KFAC(optim.Optimizer):
         """
         vg_sum = 0.0
         for layer in reversed(self.layers.values()):
-            layer.sync_grad()
             w = layer._get_weight_grad()
             if layer.has_bias:
                 b = layer._get_bias_grad()

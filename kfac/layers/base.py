@@ -61,23 +61,9 @@ class KFACBaseLayer:
         self.g = None  # G factor being accumulated for current batch
         self.a_count = None  # Number of inputs accumulated in self.a
         self.g_count = None  # Number of grads accumulated in self.g
-        self.A = None  # Running average of A factor
-        self.G = None  # Running average of G factor
-        self.grad = None  # Preconditioned gradient
-
-    def __del__(self):
-        """Wait on communications before destruction
-
-        It is possible the training script exits while a future to a
-        communication op is still held so we sync before object deletion.
-        Note that Python does not actually guarentee that __del__ is called
-        when a script exits.
-        """
-        self.sync_a_factor()
-        self.sync_g_factor()
-        self.sync_grad()
-        self.sync_a_inv()
-        self.sync_g_inv()
+        self._A = None  # Running average of A factor
+        self._G = None  # Running average of G factor
+        self._grad = None  # Preconditioned gradient
 
     def __repr__(self):
         return (
@@ -93,6 +79,36 @@ class KFACBaseLayer:
             f"}}"
         )
 
+    @property
+    def A(self):
+        if isinstance(self._A, Future):
+            self._A = self._A.wait()
+        return self._A
+
+    @A.setter
+    def A(self, value):
+        self._A = value
+
+    @property
+    def G(self):
+        if isinstance(self._G, Future):
+            self._G = self._G.wait()
+        return self._G
+
+    @G.setter
+    def G(self, value):
+        self._G = value
+
+    @property
+    def grad(self):
+        if isinstance(self._grad, Future):
+            self._grad = self._grad.wait()
+        return self._grad
+
+    @grad.setter
+    def grad(self, value):
+        self._grad = value
+
     def state_dict(self):
         """Returns the state of the KFACLayer as a dictionary.
 
@@ -101,8 +117,6 @@ class KFACBaseLayer:
             running average so need to be restored properly and the remaining
             variables (e.g., inverses) can be recomputed.
         """
-        self.sync_a_factor()
-        self.sync_g_factor()
         return {"A": self.A, "G": self.G}
 
     def load_state_dict(self, state_dict):
@@ -298,24 +312,6 @@ class KFACBaseLayer:
             self.g = self.g + g
             self.g_count += 1
 
-    def sync_a_factor(self):
-        if isinstance(self.A, Future):
-            self.A = self.A.wait()
-
-    def sync_a_inv(self):
-        raise NotImplementedError
-
-    def sync_g_factor(self):
-        if isinstance(self.G, Future):
-            self.G = self.G.wait()
-
-    def sync_g_inv(self):
-        raise NotImplementedError
-
-    def sync_grad(self):
-        if isinstance(self.grad, Future):
-            self.grad = self.grad.wait()
-
     def update_a_factor(self, alpha=0.95):
         """Compute factor A and add to running averages"""
         if self.a is None:
@@ -324,7 +320,6 @@ class KFACBaseLayer:
             self.a = (1 / self.a_count) * self.a
         A_new = self.a
         self.a = None
-        self.sync_a_factor()
         if self.A is None:
             self.A = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
         self.A = (alpha * self.A) + ((1 - alpha) * A_new)
@@ -337,14 +332,12 @@ class KFACBaseLayer:
             self.g = (1 / self.g_count) * self.g
         G_new = self.g
         self.g = None
-        self.sync_g_factor()
         if self.G is None:
             self.G = torch.diag(G_new.new(G_new.shape[0]).fill_(1))
         self.G = (alpha * self.G) + ((1 - alpha) * G_new)
 
     def update_grad(self, scale=None):
         """Updates gradients of module with computed precondition gradients"""
-        self.sync_grad()
         if self.has_bias:
             weight = self.grad[:, :-1].view(self._get_weight_grad().size())
             bias = self.grad[:, -1:].view(self._get_bias_grad().size())
