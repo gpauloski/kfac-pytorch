@@ -226,12 +226,69 @@ def test_allreduce_bucketed() -> None:
             tensors.append(
                 comm.allreduce_bucketed(t, symmetric=symmetric),
             )
-        comm.flush_allreduce_bucket()
+        comm.flush_allreduce_buckets()
 
         for i, tensor in enumerate(tensors):
             if isinstance(tensor, Future):
                 tensor = tensor.wait()
             assert torch.sum(tensor).item() == world_size * torch.numel(tensor)
+
+    # Test sum of all tensors less than bucket
+    run_parallel(1, allreduce, [2, 2], 4, 1)
+    run_parallel(4, allreduce, [100, 100], 4, 1)
+
+    # Test each tensor larger than bucket
+    run_parallel(4, allreduce, [100, 100], 4, 0.001)
+
+    # Test symmetric
+    run_parallel(1, allreduce, [4, 4], 4, 1, True)
+    run_parallel(4, allreduce, [100, 100], 4, 0.001, True)
+
+
+def test_allreduce_bucketed_grouped() -> None:
+    """Test bucketed allreduce with communication groups."""
+
+    def allreduce(
+        shape: list[int],
+        tensor_count: int,
+        bucket_cap_mb: float,
+        symmetric: bool = False,
+    ) -> None:
+        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+        comm = TorchDistributedCommunicator(bucket_cap_mb)
+
+        if world_size == 1:
+            group = None
+        else:
+            # Exclude rank 0
+            group = torch.distributed.new_group(
+                [i for i in range(world_size) if i >= 1],
+            )
+        group_size = torch.distributed.get_world_size(group)
+
+        tensors = []
+        for i in range(tensor_count):
+            t = torch.ones(shape, dtype=torch.float32)
+            if group is None or rank > 0:
+                tensors.append(
+                    comm.allreduce_bucketed(
+                        t,
+                        symmetric=symmetric,
+                        group=group,
+                    ),
+                )
+        comm.flush_allreduce_buckets()
+
+        for i, tensor in enumerate(tensors):
+            if isinstance(tensor, Future):
+                tensor = tensor.wait()
+            if group is not None and rank == 0:
+                assert torch.sum(tensor).item() == torch.numel(tensor)
+            else:
+                assert torch.sum(tensor).item() == group_size * torch.numel(
+                    tensor,
+                )
 
     # Test sum of all tensors less than bucket
     run_parallel(1, allreduce, [2, 2], 4, 1)
