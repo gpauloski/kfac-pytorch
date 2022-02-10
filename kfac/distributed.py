@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import warnings
+from collections import defaultdict
+from typing import Union
 
 import torch
 import torch.distributed as dist
@@ -20,6 +22,7 @@ except ImportError:
 
 
 Future = (torch._C.Future, torch.futures.Future)
+FutureType = Union[torch._C.Future, torch.futures.Future]
 
 
 class NonSquareTensorError(Exception):
@@ -27,7 +30,8 @@ class NonSquareTensorError(Exception):
 
 
 class AllreduceTensorBucket:
-    def __init__(self) -> None:
+    def __init__(self, group) -> None:
+        self._group = group
         self._tensors: list[torch.Tensor] = []
         self._futures: list[Future] = []
         self._size: int = 0
@@ -42,7 +46,7 @@ class AllreduceTensorBucket:
         """Check if communication for the bucket has been initiated."""
         return self._communicated
 
-    def add_tensor(self, tensor: torch.Tensor) -> Future:
+    def add_tensor(self, tensor: torch.Tensor) -> FutureType:
         """Add tensor to bucket.
 
         Args:
@@ -59,7 +63,7 @@ class AllreduceTensorBucket:
         self._size += tensor.element_size() * tensor.nelement()
         return future
 
-    def allreduce(self) -> Future:
+    def allreduce(self) -> FutureType:
         """Initiate the allreduce for the bucket.
 
         Returns:
@@ -80,7 +84,11 @@ class AllreduceTensorBucket:
         if len(self._tensors) == 0:
             return
         tensor = flatten(self._tensors)
-        future = dist.all_reduce(tensor, async_op=True).get_future()
+        future = dist.all_reduce(
+            tensor,
+            group=self._group,
+            async_op=True,
+        ).get_future()
         # future.value is a list of one tensor so unpack it to be cleaner
         future = future.then(lambda f: f.value()[0])
 
@@ -111,23 +119,38 @@ class TorchDistributedCommunicator:
                 operations in megabytes (default: 25).
         """
         self._bucket_cap_mb = bucket_cap_mb
-        self._allreduce_bucket: AllreduceTensorBucket | None = None
+        self._allreduce_buckets: defaultdict[
+            frozenset,
+            AllreduceTensorBucket | None,
+        ] = defaultdict(lambda: None)
 
     @property
     def bucket_cap_bytes(self) -> int:
         """Get bucket cap in bytes."""
         return int(self._bucket_cap_mb * 1000 * 1000)
 
-    def _get_allreduce_bucket(self) -> AllreduceTensorBucket | None:
+    def _get_allreduce_bucket(
+        self,
+        group: dist.ProcessGroup | None,
+    ) -> AllreduceTensorBucket | None:
         """Get current allreduce bucket.
+
+        Args:
+            group (ProcessGroup, optional): process group to get bucket for
 
         Returns:
             Current AllreduceTensorBucket if one has been created else None.
         """
-        return self._allreduce_bucket
+        return self._allreduce_buckets[self.group_ranks(group)]
 
-    def _new_allreduce_bucket(self) -> AllreduceTensorBucket:
+    def _new_allreduce_bucket(
+        self,
+        group: dist.ProcessGroup | None,
+    ) -> AllreduceTensorBucket:
         """Create a new allreduce bucket.
+
+        Args:
+            group: process group to get bucket for
 
         Returns:
             TensorBucket
@@ -138,22 +161,24 @@ class TorchDistributedCommunicator:
                 this method will replace the current bucket with a new empty
                 bucket.
         """
-        bucket = self._get_allreduce_bucket()
+        bucket = self._get_allreduce_bucket(group)
         if bucket is not None and not bucket.communicated():
             raise RuntimeError(
                 "Current bucket is being replaced without having been "
                 "communicated.",
             )
-        self._allreduce_bucket = AllreduceTensorBucket()
-        return self._get_allreduce_bucket()
+        self._allreduce_buckets[
+            self.group_ranks(group)
+        ] = AllreduceTensorBucket(group)
+        return self._get_allreduce_bucket(group)
 
     def allreduce(
         self,
         tensor: torch.Tensor,
         average: bool = False,
-        group: dist.ProcessGroup = None,
-        symmetric=False,
-    ) -> torch._C.Future | torch.futures.Future | torch.Tensor:
+        group: dist.ProcessGroup | None = None,
+        symmetric: bool = False,
+    ) -> FutureType | torch.Tensor:
         """Allreduce tensor asynchronously
 
         Args:
@@ -208,8 +233,8 @@ class TorchDistributedCommunicator:
         tensor: torch.Tensor,
         src: int,
         group: dist.ProcessGroup = None,
-        symmetric=False,
-    ) -> torch._C.Future | torch.futures.Future | torch.Tensor:
+        symmetric: bool = False,
+    ) -> FutureType | torch.Tensor:
         """Broadcast tensor from src to all other workers asynchronously
 
         Args:
@@ -259,8 +284,8 @@ class TorchDistributedCommunicator:
         tensor: torch.Tensor,
         average: bool = False,
         group: dist.ProcessGroup = None,
-        symmetric=False,
-    ) -> torch._C.Future | torch.futures.Future | torch.Tensor:
+        symmetric: bool = False,
+    ) -> FutureType | torch.Tensor:
         """Allreduce tensor asynchronously with bucketing
 
         Warning:
@@ -293,8 +318,6 @@ class TorchDistributedCommunicator:
         Raises:
             NonSquareTensorError:
                 if symmetric is True and tensor is not a 2D square tensor.
-            ValueError:
-                if group is not None (groups are not supported yet).
         """
         if dist.get_world_size(group) == 1:
             return tensor
@@ -306,17 +329,13 @@ class TorchDistributedCommunicator:
                     f"square tensor. Got tensor with shape {shape}.",
                 )
             tensor = get_triu(tensor)
-        if group is not None:
-            raise ValueError(
-                "Bucketed allreduce does not support custom groups currently",
-            )
         tensor_size = tensor.element_size() * tensor.nelement()
-        bucket = self._get_allreduce_bucket()
+        bucket = self._get_allreduce_bucket(group)
         if bucket is None:
-            bucket = self._new_allreduce_bucket()
+            bucket = self._new_allreduce_bucket(group)
         if bucket.size + tensor_size > self.bucket_cap_bytes:
             bucket.allreduce()
-            bucket = self._new_allreduce_bucket()
+            bucket = self._new_allreduce_bucket(group)
         future = bucket.add_tensor(tensor)
 
         def callback_(future_):
@@ -329,12 +348,16 @@ class TorchDistributedCommunicator:
 
         return future.then(callback_)
 
-    def flush_allreduce_bucket(self) -> None:
+    def group_ranks(self, group: dist.ProcessGroup | None) -> None:
+        """Get frozenset of ranks in group."""
+        return frozenset(range(dist.get_world_size(group)))
+
+    def flush_allreduce_buckets(self) -> None:
         """Initiate the communication for the current allreduce bucket."""
-        bucket = self._get_allreduce_bucket()
-        if bucket is not None:
-            bucket.allreduce()
-            self._allreduce_bucket = None
+        for group, bucket in self._allreduce_buckets.items():
+            if bucket is not None:
+                bucket.allreduce()
+                self._allreduce_buckets[group] = None
 
 
 def get_triu(tensor):
