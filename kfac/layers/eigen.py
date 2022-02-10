@@ -11,12 +11,62 @@ class KFACEigenLayer(KFACBaseLayer):
         self.prediv_eigenvalues = prediv_eigenvalues
 
         # Eigen state variables
-        self.QA = None  # Eigenvectors of self.A
-        self.QG = None  # Eigenvectors of self.G
-        self.dA = None  # Eigenvalues of self.A
-        self.dG = None  # Eigenvalues of self.G
+        self._QA = None  # Eigenvectors of self.A
+        self._QG = None  # Eigenvectors of self.G
+        self._dA = None  # Eigenvalues of self.A
+        self._dG = None  # Eigenvalues of self.G
         # Only used if self.prediv_eigenvalues
-        self.dGdA = None  # Outer product + damping of eigenvalues
+        self._dGdA = None  # Outer product + damping of eigenvalues
+
+    @property
+    def QA(self):
+        if isinstance(self._QA, Future):
+            self._QA = self._QA.wait()
+        return self._QA
+
+    @QA.setter
+    def QA(self, value):
+        self._QA = value
+
+    @property
+    def QG(self):
+        if isinstance(self._QG, Future):
+            self._QG = self._QG.wait()
+        return self._QG
+
+    @QG.setter
+    def QG(self, value):
+        self._QG = value
+
+    @property
+    def dA(self):
+        if isinstance(self._dA, Future):
+            self._dA = self._dA.wait()
+        return self._dA
+
+    @dA.setter
+    def dA(self, value):
+        self._dA = value
+
+    @property
+    def dG(self):
+        if isinstance(self._dG, Future):
+            self._dG = self._dG.wait()
+        return self._dG
+
+    @dG.setter
+    def dG(self, value):
+        self._dG = value
+
+    @property
+    def dGdA(self):
+        if isinstance(self._dGdA, Future):
+            self._dGdA = self._dGdA.wait()
+        return self._dGdA
+
+    @dGdA.setter
+    def dGdA(self, value):
+        self._dGdA = value
 
     def memory_usage(self):
         sizes = super().memory_usage()
@@ -114,7 +164,6 @@ class KFACEigenLayer(KFACBaseLayer):
     def compute_a_inv(self, damping=0.001):
         if not self.is_grad_worker:
             return
-        self.sync_a_factor()
 
         if self.QA is None:
             self.QA = torch.empty_like(self.A, dtype=self.inv_dtype)
@@ -143,7 +192,6 @@ class KFACEigenLayer(KFACBaseLayer):
     def compute_g_inv(self, damping=0.001):
         if not self.is_grad_worker:
             return
-        self.sync_g_factor()
 
         if self.QG is None:
             self.QG = torch.empty_like(self.G, dtype=self.inv_dtype)
@@ -179,8 +227,6 @@ class KFACEigenLayer(KFACBaseLayer):
     def preconditioned_grad(self, damping=0.001):
         if not self.is_grad_worker:
             return
-        self.sync_a_inv()
-        self.sync_g_inv()
         grad = self.module_helper.get_grad()
         grad_type = grad.dtype
         grad = grad.to(self.QA.dtype)
@@ -190,17 +236,3 @@ class KFACEigenLayer(KFACBaseLayer):
         else:
             v2 = v1 / (torch.outer(self.dG, self.dA) + damping)
         self.grad = (self.QG @ v2 @ self.QA.t()).to(grad_type)
-
-    def sync_a_inv(self):
-        if isinstance(self.QA, Future):
-            self.QA = self.QA.wait()
-        if isinstance(self.dA, Future):
-            self.dA = self.dA.wait()
-
-    def sync_g_inv(self):
-        if isinstance(self.QG, Future):
-            self.QG = self.QG.wait()
-        if isinstance(self.dG, Future):
-            self.dG = self.dG.wait()
-        if self.prediv_eigenvalues and isinstance(self.dGdA, Future):
-            self.dGdA = self.dGdA.wait()

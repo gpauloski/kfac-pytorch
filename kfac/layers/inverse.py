@@ -10,8 +10,28 @@ class KFACInverseLayer(KFACBaseLayer):
         super().__init__(*args, **kwargs)
 
         # Inverse state variables
-        self.A_inv = None  # Inverse of self.A
-        self.G_inv = None  # Inverse of self.G
+        self._A_inv = None  # Inverse of self.A
+        self._G_inv = None  # Inverse of self.G
+
+    @property
+    def A_inv(self):
+        if isinstance(self._A_inv, Future):
+            self._A_inv = self._A_inv.wait()
+        return self._A_inv
+
+    @A_inv.setter
+    def A_inv(self, value):
+        self._A_inv = value
+
+    @property
+    def G_inv(self):
+        if isinstance(self._G_inv, Future):
+            self._G_inv = self._G_inv.wait()
+        return self._G_inv
+
+    @G_inv.setter
+    def G_inv(self, value):
+        self._G_inv = value
 
     def memory_usage(self):
         sizes = super().memory_usage()
@@ -64,7 +84,6 @@ class KFACInverseLayer(KFACBaseLayer):
     def compute_a_inv(self, damping=0.001):
         if not self.is_grad_worker:
             return
-        self.sync_a_factor()
 
         if self.A_inv is None:
             self.A_inv = torch.empty_like(self.A)
@@ -77,7 +96,6 @@ class KFACInverseLayer(KFACBaseLayer):
     def compute_g_inv(self, damping=0.001):
         if not self.is_grad_worker:
             return
-        self.sync_g_factor()
 
         if self.G_inv is None:
             self.G_inv = torch.empty_like(self.G)
@@ -90,17 +108,7 @@ class KFACInverseLayer(KFACBaseLayer):
     def preconditioned_grad(self, damping=0.001):
         if not self.is_grad_worker:
             return
-        self.sync_a_inv()
-        self.sync_g_inv()
         grad = self.module_helper.get_grad()
         grad_type = grad.dtype
         grad = grad.to(self.A_inv.dtype)
         self.grad = (self.G_inv @ grad @ self.A_inv).to(grad_type)
-
-    def sync_a_inv(self):
-        if isinstance(self.A_inv, Future):
-            self.A_inv = self.A_inv.wait()
-
-    def sync_g_inv(self):
-        if isinstance(self.G_inv, Future):
-            self.G_inv = self.G_inv.wait()
