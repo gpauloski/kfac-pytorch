@@ -150,6 +150,7 @@ class TorchDistributedCommunicator:
     def allreduce(
         self,
         tensor: torch.Tensor,
+        average: bool = False,
         group: dist.ProcessGroup = None,
         symmetric=False,
     ) -> torch._C.Future | torch.futures.Future | torch.Tensor:
@@ -157,6 +158,8 @@ class TorchDistributedCommunicator:
 
         Args:
             tensor (torch.Tensor): tensor to allreduce
+            average (torch.Tensor): average tensors rather than sum
+                (default: False)
             group (torch.distributed.ProcessGroup): optional process group
                 to perform communication within
             symmetric (bool): communicate symmetric tensor using upper triangle
@@ -189,13 +192,16 @@ class TorchDistributedCommunicator:
             group=group,
             async_op=True,
         ).get_future()
-        if symmetric:
-            future = future.then(
-                lambda fut: fill_triu(shape, fut.value()[0]),
-            )
-        else:
-            future = future.then(lambda fut: fut.value()[0])
-        return future
+
+        def callback_(future_):
+            t = future_.value()[0]
+            if average:
+                t = (1 / dist.get_world_size(group)) * t
+            if symmetric:
+                t = fill_triu(shape, t)
+            return t
+
+        return future.then(callback_)
 
     def broadcast(
         self,
@@ -251,6 +257,7 @@ class TorchDistributedCommunicator:
     def allreduce_bucketed(
         self,
         tensor: torch.Tensor,
+        average: bool = False,
         group: dist.ProcessGroup = None,
         symmetric=False,
     ) -> torch._C.Future | torch.futures.Future | torch.Tensor:
@@ -269,6 +276,8 @@ class TorchDistributedCommunicator:
 
         Args:
             tensor (torch.Tensor): tensor to allreduce
+            average (torch.Tensor): average tensors rather than sum
+                (default: False)
             group (torch.distributed.ProcessGroup): optional process group
                 to perform communication within
             symmetric (bool): communicate symmetric tensor using upper triangle
@@ -309,9 +318,16 @@ class TorchDistributedCommunicator:
             bucket.allreduce()
             bucket = self._new_allreduce_bucket()
         future = bucket.add_tensor(tensor)
-        if symmetric:
-            future = future.then(lambda fut: fill_triu(shape, fut.value()))
-        return future
+
+        def callback_(future_):
+            t = future_.value()
+            if average:
+                t = (1 / dist.get_world_size(group)) * t
+            if symmetric:
+                t = fill_triu(shape, t)
+            return t
+
+        return future.then(callback_)
 
     def flush_allreduce_bucket(self) -> None:
         """Initiate the communication for the current allreduce bucket."""

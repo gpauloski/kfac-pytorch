@@ -235,6 +235,7 @@ class KFACBaseLayer:
             allreduce_fn = self.tdc.allreduce
         self.A = allreduce_fn(
             self.A,
+            average=True,
             symmetric=self.symmetric_factors and self.symmetry_aware,
         )
 
@@ -246,6 +247,7 @@ class KFACBaseLayer:
             allreduce_fn = self.tdc.allreduce
         self.G = allreduce_fn(
             self.G,
+            average=True,
             symmetric=self.symmetric_factors and self.symmetry_aware,
         )
 
@@ -273,14 +275,14 @@ class KFACBaseLayer:
 
     def sync_a_factor(self):
         if isinstance(self.A, Future):
-            self.A = (1 / dist.get_world_size()) * self.A.wait()
+            self.A = self.A.wait()
 
     def sync_a_inv(self):
         raise NotImplementedError
 
     def sync_g_factor(self):
         if isinstance(self.G, Future):
-            self.G = (1 / dist.get_world_size()) * self.G.wait()
+            self.G = self.G.wait()
 
     def sync_g_inv(self):
         raise NotImplementedError
