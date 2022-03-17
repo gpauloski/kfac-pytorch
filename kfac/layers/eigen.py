@@ -166,13 +166,13 @@ class KFACEigenLayer(KFACBaseLayer):
             return
 
         if self.QA is None:
-            self.QA = torch.empty_like(self.A, dtype=self.inv_dtype)
+            self.QA = torch.empty_like(self.A, dtype=torch.float32)
             if (
                 not self.prediv_eigenvalues or self.is_a_inv_worker
             ) and self.dA is None:
                 self.dA = self.A.new_empty(
                     self.A.shape[0],
-                    dtype=self.inv_dtype,
+                    dtype=torch.float32,
                 )
         if self.is_a_inv_worker:
             if self.symmetric_factors:
@@ -194,18 +194,18 @@ class KFACEigenLayer(KFACBaseLayer):
             return
 
         if self.QG is None:
-            self.QG = torch.empty_like(self.G, dtype=self.inv_dtype)
+            self.QG = torch.empty_like(self.G, dtype=torch.float32)
             if (
                 not self.prediv_eigenvalues or self.is_g_inv_worker
             ) and self.dG is None:
                 self.dG = self.G.new_empty(
                     self.G.shape[0],
-                    dtype=self.inv_dtype,
+                    dtype=torch.float32,
                 )
             elif self.dGdA is None:
                 self.dGdA = self.G.new_empty(
                     (self.G.shape[0], self.A.shape[0]),
-                    dtype=self.inv_dtype,
+                    dtype=torch.float32,
                 )
         if self.is_g_inv_worker:
             if self.symmetric_factors:

@@ -44,6 +44,7 @@ def get_cov(a, b=None, scale=None):
 
     if b is None:
         cov_a = a.t() @ (a / scale)
+        # TODO(gpauloski): is this redundant?
         return (cov_a + cov_a.t()) / 2.0
     else:
         return a.t() @ (b / scale)
