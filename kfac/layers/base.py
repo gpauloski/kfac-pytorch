@@ -36,6 +36,12 @@ class KFACBaseLayer:
         self.allreduce_method = allreduce_method
         self.broadcast_method = broadcast_method
         self.factor_dtype = factor_dtype
+        if isinstance(grad_scaler, torch.cuda.amp.GradScaler):
+            self.grad_scaler = grad_scaler.get_scale
+        elif callable(grad_scaler):
+            self.grad_scaler = grad_scaler
+        else:
+            self.grad_scaler = None
         self.grad_scaler = grad_scaler
         self.inv_dtype = inv_dtype
         self.symmetry_aware = symmetry_aware
@@ -197,6 +203,12 @@ class KFACBaseLayer:
             "g_factors": 0
             if self.G is None
             else self.G.nelement() * self.G.element_size(),
+            "a_temp": 0
+            if self.a is None
+            else self.a.nelement() * self.a.element_size(),
+            "g_temp": 0
+            if self.g is None
+            else self.g.nelement() * self.g.element_size(),
         }
 
     def broadcast_a_inv(self):
@@ -292,7 +304,8 @@ class KFACBaseLayer:
 
     def save_layer_input(self, input):
         """Save input for layer"""
-        a = self.module_helper.get_a_factor(input[0])
+        a = input[0]
+        a = self.module_helper.get_a_factor(a)
         if self.a is None:
             self.a = a
             self.a_count = 1
@@ -302,9 +315,12 @@ class KFACBaseLayer:
 
     def save_layer_grad_output(self, grad_output):
         """Save grad w.r.t outputs for layer"""
-        g = self.module_helper.get_g_factor(grad_output[0])
+        g = grad_output[0]
         if self.grad_scaler is not None:
-            g = g / self.grad_scaler.get_scale()
+            g = g / self.grad_scaler()
+        else:
+            assert False
+        g = self.module_helper.get_g_factor(g)
         if self.g is None:
             self.g = g
             self.g_count = 1

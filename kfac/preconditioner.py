@@ -118,9 +118,10 @@ class KFAC(optim.Optimizer):
       symmetry_aware (bool): communicate only the upper triangle of symmetric
           matrices. Can reduce communication time when factors are large
           (default: False).
-      grad_scaler (torch.cuda.amp.GradScaler): Gradient scaler used for Torch
-          AMP training. Used to unscale the G factors as they are accumulated
-          during the backward pass (default: None).
+      grad_scaler (torch.cuda.amp.GradScaler or callable): Gradient scaler
+          used for Torch AMP training. Used to unscale the G factors as they
+          are accumulated during the backward pass. Alternatively can be
+          a callable which will return the current scale (default: None).
       factor_dtype (torch.dtype): force data type for storing factors. If None,
           defaults to data type of intermediate values in forward/backward pass
           (default: None).
@@ -130,6 +131,10 @@ class KFAC(optim.Optimizer):
           layers. Passing the name of parent modules will prevent recursively
           registering child modules of the parent. Case-insensitive
           (default: []).
+      update_factors_in_hook (bool): If True, running average of factors is
+          updated in the module hook and the async commmunication is started.
+          Otherwise, this will be performed at the start of step() (default:
+          True).
       verbose (bool): print registered layers (default: False).
     """
 
@@ -159,10 +164,13 @@ class KFAC(optim.Optimizer):
         ] = DistributedStrategy.COMM_OPT,
         symmetry_aware: bool = False,
         # Optional other parameters
-        grad_scaler: Optional[torch.cuda.amp.GradScaler] = None,
+        grad_scaler: Optional[
+            Union[torch.cuda.amp.GradScaler, Callable]
+        ] = None,
         factor_dtype: Optional[torch.dtype] = None,
         inv_dtype: Optional[torch.dtype] = None,
         skip_layers: List[str] = [],
+        update_factors_in_hook: bool = True,
         verbose=False,
     ):
         if not 0 < factor_update_steps:
@@ -282,6 +290,7 @@ class KFAC(optim.Optimizer):
         self.factor_dtype = factor_dtype
         self.inv_dtype = inv_dtype
         self.skip_layers = skip_layers
+        self.update_factors_in_hook = update_factors_in_hook
         self.known_modules = known_modules
         self.verbose = verbose
 
@@ -317,6 +326,7 @@ class KFAC(optim.Optimizer):
             "inv_dtype": self.inv_dtype,
             "known_modules": self.known_modules,
             "skip_layers": self.skip_layers,
+            "update_factors_in_hook": self.update_factors_in_hook,
             "verbose": self.verbose,
             "registered_layers": len(self.layers),
         }
@@ -528,6 +538,17 @@ class KFAC(optim.Optimizer):
         if closure is not None:
             raise ValueError("KFAC does not support closures")
 
+        if (
+            not self.update_factors_in_hook
+            and self.steps % self.factor_update_steps == 0
+        ):
+            for module in reversed(self.layers):
+                self.mini_steps[module] = 0
+                self.layers[module].update_a_factor(alpha=self.factor_decay)
+                self.layers[module].reduce_a_factor()
+                self.layers[module].update_g_factor(alpha=self.factor_decay)
+                self.layers[module].reduce_g_factor()
+
         # Flush last allreduce bucket from forward/backward pass.
         # Will be a no-op if bucketing was not used
         self.tdc.flush_allreduce_buckets()
@@ -572,6 +593,14 @@ class KFAC(optim.Optimizer):
         self.steps += 1
         self.mini_steps = defaultdict(int)
 
+    def reset_batch(self):
+        """Reset all KFAC data from last batch."""
+        for layer in self.layers.values():
+            self.a = None
+            self.g = None
+            self.a_count = None
+            self.g_count = None
+
     def memory_usage(self):
         """Returns current approximate memory usage for KFAC on this worker
 
@@ -580,12 +609,7 @@ class KFAC(optim.Optimizer):
             store the factors and second-order information as well as the
             total.
         """
-        sizes = {
-            "a_factors": 0,
-            "g_factors": 0,
-            "a_inverses": 0,
-            "g_inverses": 0,
-        }
+        sizes = defaultdict(int)
 
         # Need to flush buffered communication operations in case user
         # calls this method at a strange time (e.g., in the middle of
@@ -683,7 +707,10 @@ class KFAC(optim.Optimizer):
             # Update mini_step here because forward pass should always
             # happen before backward pass
             self.mini_steps[module] += 1
-            if self.mini_steps[module] % self.accumulation_steps == 0:
+            if (
+                self.update_factors_in_hook
+                and self.mini_steps[module] % self.accumulation_steps == 0
+            ):
                 self.layers[module].update_a_factor(alpha=self.factor_decay)
                 self.layers[module].reduce_a_factor()
 
@@ -693,6 +720,9 @@ class KFAC(optim.Optimizer):
             return
         if self.steps % self.factor_update_steps == 0:
             self.layers[module].save_layer_grad_output(grad_output)
-            if self.mini_steps[module] % self.accumulation_steps == 0:
+            if (
+                self.update_factors_in_hook
+                and self.mini_steps[module] % self.accumulation_steps == 0
+            ):
                 self.layers[module].update_g_factor(alpha=self.factor_decay)
                 self.layers[module].reduce_g_factor()

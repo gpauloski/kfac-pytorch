@@ -8,9 +8,23 @@ from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.modules import Conv2dModuleHelper
 from kfac.layers.modules import LinearModuleHelper
 
+try:
+    from megatron.mpu.layers import ColumnParallelLinear
+    from megatron.mpu.layers import RowParallelLinear
+
+    megatron = True
+except ImportError:
+    megatron = False
+
 __all__ = ["KNOWN_MODULES", "get_kfac_layers", "module_requires_grad"]
 
 KNOWN_MODULES = {"linear", "conv2d"}
+LINEAR_TYPES = (nn.Linear,)
+CONV2D_TYPES = (nn.Conv2d,)
+
+if megatron:
+    KNOWN_MODULES |= {"columnparallellinear", "rowparallellinear"}
+    LINEAR_TYPES = LINEAR_TYPES + (ColumnParallelLinear, RowParallelLinear)
 
 
 def get_kfac_layers(module, method, **kwargs):
@@ -24,9 +38,9 @@ def get_kfac_layers(module, method, **kwargs):
     Returns:
       list of tuples where each tuple is (module, KFACLayer)
     """
-    if isinstance(module, nn.Linear):
+    if isinstance(module, LINEAR_TYPES):
         Helper = LinearModuleHelper
-    elif isinstance(module, nn.Conv2d):
+    elif isinstance(module, CONV2D_TYPES):
         Helper = Conv2dModuleHelper
     else:
         raise NotImplementedError(
