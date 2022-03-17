@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import kfac.allocator as allocator
 import kfac.distributed as distributed
 import kfac.tracing as tracing
@@ -8,4 +10,4 @@ from kfac.preconditioner import DistributedStrategy
 from kfac.preconditioner import KFAC
 from kfac.scheduler import KFACParamScheduler
 
-__version__ = "0.4.0"
+__version__ = '0.4.0'

@@ -1,11 +1,11 @@
+from __future__ import annotations
+
 import enum
 import math
 import warnings
 from collections import defaultdict
+from typing import Any
 from typing import Callable
-from typing import List
-from typing import Optional
-from typing import Union
 
 import torch
 import torch.distributed as dist
@@ -16,6 +16,7 @@ from kfac.allocator import WorkerAllocator
 from kfac.distributed import TorchDistributedCommunicator
 from kfac.layers.base import AllreduceMethod
 from kfac.layers.base import BroadcastMethod
+from kfac.layers.base import KFACBaseLayer
 
 
 class AssignmentStrategy(enum.Enum):
@@ -144,60 +145,58 @@ class KFAC(optim.Optimizer):
         factor_update_steps: int,
         inv_update_steps: int,
         # KFAC hyperparameters
-        damping: Union[Callable, float] = 0.001,
-        factor_decay: Union[Callable, float] = 0.95,
-        kl_clip: Union[Callable, float] = 0.001,
-        lr: Union[Callable, float] = 0.1,
+        damping: Callable[[], float] | float = 0.001,
+        factor_decay: Callable[[], float] | float = 0.95,
+        kl_clip: Callable[[], float] | float = 0.001,
+        lr: Callable[[], float] | float = 0.1,
         # Distribution strategy
         accumulation_steps: int = 1,
         allreduce_bucket_cap_mb: float = 25.0,
-        assignment_strategy: Union[
-            AssignmentStrategy,
-            str,
-        ] = AssignmentStrategy.COMPUTE,
+        assignment_strategy: (
+            AssignmentStrategy | str
+        ) = AssignmentStrategy.COMPUTE,
         colocate_factors: bool = True,
-        compute_method: Union[ComputeMethod, str] = ComputeMethod.EIGEN,
+        compute_method: ComputeMethod | str = ComputeMethod.EIGEN,
         compute_eigenvalue_outer_product: bool = True,
-        grad_worker_fraction: Union[
-            DistributedStrategy,
-            float,
-        ] = DistributedStrategy.COMM_OPT,
+        grad_worker_fraction: (
+            DistributedStrategy | float
+        ) = DistributedStrategy.COMM_OPT,
         symmetry_aware: bool = False,
         # Optional other parameters
-        grad_scaler: Optional[
-            Union[torch.cuda.amp.GradScaler, Callable]
-        ] = None,
-        factor_dtype: Optional[torch.dtype] = None,
-        inv_dtype: Optional[torch.dtype] = None,
-        skip_layers: List[str] = [],
+        grad_scaler: (
+            torch.cuda.amp.GradScaler | Callable[[], float] | None
+        ) = None,
+        factor_dtype: torch.dtype | None = None,
+        inv_dtype: torch.dtype | None = None,
+        skip_layers: list[str] | None = None,
         update_factors_in_hook: bool = True,
-        verbose=False,
-    ):
+        verbose: bool = False,
+    ) -> None:
         if not 0 < factor_update_steps:
-            raise ValueError("factor_update_steps must be > 0")
+            raise ValueError('factor_update_steps must be > 0')
         if not 0 < inv_update_steps:
-            raise ValueError("inv_update_steps must be > 0")
+            raise ValueError('inv_update_steps must be > 0')
         if not callable(damping) and not 0.0 < damping:
-            raise ValueError("damping must be > 0")
-        if not callable(damping) and not 0.0 < factor_decay <= 1:
-            raise ValueError("factor_decay must be in (0, 1]")
+            raise ValueError('damping must be > 0')
+        if not callable(factor_decay) and not 0.0 < factor_decay <= 1:
+            raise ValueError('factor_decay must be in (0, 1]')
         if not callable(kl_clip) and not 0.0 < kl_clip:
-            raise ValueError("kl_clip must be > 0")
+            raise ValueError('kl_clip must be > 0')
         if not callable(lr) and not 0.0 <= lr:
-            raise ValueError("lr be > 0")
+            raise ValueError('lr be > 0')
         if not 0 < accumulation_steps:
-            raise ValueError("accumulation_steps must be > 0")
+            raise ValueError('accumulation_steps must be > 0')
         if not 0 <= allreduce_bucket_cap_mb:
-            raise ValueError("allreduce_bucket_cap_mb must be >= 0")
+            raise ValueError('allreduce_bucket_cap_mb must be >= 0')
         if not 0 == inv_update_steps % factor_update_steps:
             warnings.warn(
-                "It is suggested that inv_update_steps be an integer multiple "
-                "of factor_update_steps",
+                'It is suggested that inv_update_steps be an integer multiple '
+                'of factor_update_steps',
             )
         if compute_eigenvalue_outer_product and not colocate_factors:
             raise ValueError(
-                "colocate_factors must be True to use "
-                "compute_eigenvalue_outer_product",
+                'colocate_factors must be True to use '
+                'compute_eigenvalue_outer_product',
             )
         if isinstance(assignment_strategy, str):
             assignment_strategy = AssignmentStrategy[
@@ -209,23 +208,23 @@ class KFAC(optim.Optimizer):
         size = dist.get_world_size()
         if isinstance(grad_worker_fraction, DistributedStrategy):
             distributed_strategy = grad_worker_fraction
-            if grad_worker_fraction == DistributedStrategy.COMM_OPT:
+            if distributed_strategy == DistributedStrategy.COMM_OPT:
                 grad_worker_fraction = 1.0
-            elif grad_worker_fraction == DistributedStrategy.HYBRID_OPT:
+            elif distributed_strategy == DistributedStrategy.HYBRID_OPT:
                 grad_worker_fraction = 0.5
-            elif grad_worker_fraction == DistributedStrategy.MEM_OPT:
+            elif distributed_strategy == DistributedStrategy.MEM_OPT:
                 grad_worker_fraction = 1 / size
             else:
-                raise ValueError(f"Unknown enum {grad_worker_fraction}")
+                raise ValueError(f'Unknown enum {grad_worker_fraction}')
         else:
             if not 0 <= grad_worker_fraction or not 1 >= grad_worker_fraction:
-                raise ValueError("grad_worker_fraction must in [0, 1]")
+                raise ValueError('grad_worker_fraction must in [0, 1]')
             if grad_worker_fraction == 0:
                 grad_worker_fraction = 1 / size
             if size % min(1, round(size * grad_worker_fraction)) != 0:
                 raise ValueError(
-                    "grad_worker_fraction must produce groups of "
-                    "equal size",
+                    'grad_worker_fraction must produce groups of '
+                    'equal size',
                 )
             if grad_worker_fraction == 1:
                 distributed_strategy = DistributedStrategy.COMM_OPT
@@ -233,14 +232,15 @@ class KFAC(optim.Optimizer):
                 distributed_strategy = DistributedStrategy.MEM_OPT
             else:
                 distributed_strategy = DistributedStrategy.HYBRID_OPT
+        assert isinstance(grad_worker_fraction, float)
 
         if (
             not colocate_factors
             and distributed_strategy is DistributedStrategy.MEM_OPT
         ):
             warnings.warn(
-                "grad_worker_frac=1/world_size (MEM_OPT) requires "
-                "colocate_factors=True. Enabling colocate_factors.",
+                'grad_worker_frac=1/world_size (MEM_OPT) requires '
+                'colocate_factors=True. Enabling colocate_factors.',
             )
             colocate_factors = True
 
@@ -269,7 +269,10 @@ class KFAC(optim.Optimizer):
         # We count the mini_steps (forward/backward passes between optimization
         # steps on a per-layer basis so the key for the dict is the module
         # registered with KFAC
-        self.mini_steps = defaultdict(int)
+        self.mini_steps: dict[
+            torch._C.Module | torch.nn.Module,
+            int,
+        ] = defaultdict(int)
 
         # KFAC does not register parameters so we pass fake tensor
         # to satisfy torch.optim.Optimizer parameter checks.
@@ -305,64 +308,67 @@ class KFAC(optim.Optimizer):
         self.broadcast_method = BroadcastMethod.BROADCAST
 
         # key: nn.Module, value: KFACLayer
-        self.layers = {}
+        self.layers: dict[
+            torch._C.Module | torch.nn.Module,
+            KFACBaseLayer,
+        ] = {}
         self.register_model(model)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         extra_params = {
-            "accumulation_steps": self.accumulation_steps,
-            "allreduce_bucket_cap_mb": self.allreduce_bucket_cap_mb,
-            "allreduce_method": self.allreduce_method,
-            "assignment_strategy": self.assignment_strategy,
-            "broadcast_method": self.broadcast_method,
-            "colocate_factors": self.colocate_factors,
-            "compute_method": self.compute_method,
-            "compute_eigenvalue_outer_product": self.compute_eigenvalue_outer_product,  # noqa: E501
-            "distributed_strategy": self.distributed_strategy,
-            "grad_worker_fraction": self.grad_worker_fraction,
-            "symmetry_aware": self.symmetry_aware,
-            "grad_scaler": True if self.grad_scaler is not None else False,
-            "factor_dtype": self.factor_dtype,
-            "inv_dtype": self.inv_dtype,
-            "known_modules": self.known_modules,
-            "skip_layers": self.skip_layers,
-            "update_factors_in_hook": self.update_factors_in_hook,
-            "verbose": self.verbose,
-            "registered_layers": len(self.layers),
+            'accumulation_steps': self.accumulation_steps,
+            'allreduce_bucket_cap_mb': self.allreduce_bucket_cap_mb,
+            'allreduce_method': self.allreduce_method,
+            'assignment_strategy': self.assignment_strategy,
+            'broadcast_method': self.broadcast_method,
+            'colocate_factors': self.colocate_factors,
+            'compute_method': self.compute_method,
+            'compute_eigenvalue_outer_product': self.compute_eigenvalue_outer_product,  # noqa: E501
+            'distributed_strategy': self.distributed_strategy,
+            'grad_worker_fraction': self.grad_worker_fraction,
+            'symmetry_aware': self.symmetry_aware,
+            'grad_scaler': True if self.grad_scaler is not None else False,
+            'factor_dtype': self.factor_dtype,
+            'inv_dtype': self.inv_dtype,
+            'known_modules': self.known_modules,
+            'skip_layers': self.skip_layers,
+            'update_factors_in_hook': self.update_factors_in_hook,
+            'verbose': self.verbose,
+            'registered_layers': len(self.layers),
         }
-        format_string = self.__class__.__name__ + " ("
+        format_string = self.__class__.__name__ + ' ('
         for i, group in enumerate(self.param_groups + [extra_params]):
-            format_string += "\n"
-            format_string += f"Parameter Group {i}\n"
+            format_string += '\n'
+            format_string += f'Parameter Group {i}\n'
             for key in sorted(group.keys()):
-                if key != "params":
-                    format_string += f"    {key}: {group[key]}\n"
-        format_string += ")"
+                if key != 'params':
+                    format_string += f'    {key}: {group[key]}\n'
+        format_string += ')'
         return format_string
 
     @property
-    def damping(self):
-        damping = self.param_groups[0]["damping"]
+    def damping(self) -> float:
+        damping = self.param_groups[0]['damping']
         return damping() if callable(damping) else damping
 
     @property
-    def factor_decay(self):
-        factor_decay = self.param_groups[0]["factor_decay"]
+    def factor_decay(self) -> float:
+        factor_decay = self.param_groups[0]['factor_decay']
         return factor_decay() if callable(factor_decay) else factor_decay
 
     @property
-    def kl_clip(self):
-        kl_clip = self.param_groups[0]["kl_clip"]
+    def kl_clip(self) -> float:
+        kl_clip = self.param_groups[0]['kl_clip']
         return kl_clip() if callable(kl_clip) else kl_clip
 
     @property
-    def lr(self):
-        lr = self.param_groups[0]["lr"]
+    def lr(self) -> float:
+        lr = self.param_groups[0]['lr']
         return lr() if callable(lr) else lr
 
     @property
-    def factor_update_steps(self):
-        factor_update_steps = self.param_groups[0]["factor_update_steps"]
+    def factor_update_steps(self) -> int:
+        factor_update_steps = self.param_groups[0]['factor_update_steps']
         return (
             factor_update_steps()
             if callable(factor_update_steps)
@@ -370,8 +376,8 @@ class KFAC(optim.Optimizer):
         )
 
     @property
-    def inv_update_steps(self):
-        inv_update_steps = self.param_groups[0]["inv_update_steps"]
+    def inv_update_steps(self) -> int:
+        inv_update_steps = self.param_groups[0]['inv_update_steps']
         return (
             inv_update_steps()
             if callable(inv_update_steps)
@@ -379,14 +385,14 @@ class KFAC(optim.Optimizer):
         )
 
     @property
-    def steps(self):
-        return self.param_groups[0]["steps"]
+    def steps(self) -> int:
+        return self.param_groups[0]['steps']
 
     @steps.setter
-    def steps(self, value):
-        self.param_groups[0]["steps"] = value
+    def steps(self, value: int) -> None:
+        self.param_groups[0]['steps'] = value
 
-    def state_dict(self, include_factors=True):
+    def state_dict(self, include_factors: bool = True) -> dict[str, Any]:
         """Returns KFAC state dict.
 
         Args:
@@ -406,12 +412,16 @@ class KFAC(optim.Optimizer):
             if not callable(value)
         }
         if include_factors:
-            state_dict["layers"] = [
+            state_dict['layers'] = [
                 layer.state_dict() for layer in self.layers.values()
             ]
         return state_dict
 
-    def load_state_dict(self, state_dict, compute_inverses=True):
+    def load_state_dict(
+        self,
+        state_dict: dict[str, Any],
+        compute_inverses: bool = True,
+    ) -> None:
         """Loads the KFAC state.
 
         Args:
@@ -422,23 +432,23 @@ class KFAC(optim.Optimizer):
               when loading from a checkpoint will only work if the first
               iteration is a KFAC update step (default: True).
         """
-        if "layers" in state_dict:
-            if len(state_dict["layers"]) != len(self.layers):
+        if 'layers' in state_dict:
+            if len(state_dict['layers']) != len(self.layers):
                 raise ValueError(
-                    "loaded state dict contains a different "
-                    "number of layers",
+                    'loaded state dict contains a different '
+                    'number of layers',
                 )
             for layer, layer_state in zip(
                 self.layers.values(),
-                state_dict["layers"],
+                state_dict['layers'],
             ):
                 layer.load_state_dict(layer_state)
-            del state_dict["layers"]
+            del state_dict['layers']
         else:
             warnings.warn(
-                "Layer factors are not included in the state_dict so "
-                "inverses cannot be computed. Skipping inverse "
-                "computation.",
+                'Layer factors are not included in the state_dict so '
+                'inverses cannot be computed. Skipping inverse '
+                'computation.',
             )
             compute_inverses = False  # Cannot be computed if no layers
         super().load_state_dict(state_dict)
@@ -455,7 +465,11 @@ class KFAC(optim.Optimizer):
                     layer.broadcast_a_inv()
                     layer.broadcast_g_inv()
 
-    def register_module(self, module, name=None):
+    def register_module(
+        self,
+        module: torch.nn.Module,
+        name: str | None = None,
+    ) -> None:
         """Create and register a KFAC layer for a module.
 
         Note: For a single module, there may be multiple KFAC layers
@@ -464,16 +478,16 @@ class KFAC(optim.Optimizer):
           Layer.
         """
         kwargs = {
-            "allreduce_method": self.allreduce_method,
-            "broadcast_method": self.broadcast_method,
-            "factor_dtype": self.factor_dtype,
-            "grad_scaler": self.grad_scaler,
-            "inv_dtype": self.inv_dtype,
-            "symmetry_aware": self.symmetry_aware,
+            'allreduce_method': self.allreduce_method,
+            'broadcast_method': self.broadcast_method,
+            'factor_dtype': self.factor_dtype,
+            'grad_scaler': self.grad_scaler,
+            'inv_dtype': self.inv_dtype,
+            'symmetry_aware': self.symmetry_aware,
         }
         if self.compute_method == ComputeMethod.EIGEN:
             kwargs[
-                "prediv_eigenvalues"
+                'prediv_eigenvalues'
             ] = self.compute_eigenvalue_outer_product
 
         layer_list = kfac.layers.get_kfac_layers(
@@ -485,8 +499,8 @@ class KFAC(optim.Optimizer):
         for module, kfac_layer in layer_list:
             if dist.get_rank() == 0 and self.verbose:
                 print(
-                    "Registered {}: {}".format(
-                        name if name is not None else "",
+                    'Registered {}: {}'.format(
+                        name if name is not None else '',
                         kfac_layer.__class__.__name__,
                     ),
                 )
@@ -494,10 +508,14 @@ class KFAC(optim.Optimizer):
             module.register_forward_pre_hook(self._save_input)
             module.register_full_backward_hook(self._save_grad_output)
 
-    def register_submodules(self, parent_module, prefix=""):
+    def register_submodules(
+        self,
+        parent_module: torch.nn.Module,
+        prefix: str = '',
+    ) -> None:
         """Iterate over and register submodules that KFAC supports."""
         for name, module in parent_module.named_children():
-            name = prefix + ("." if prefix != "" else "") + name
+            name = prefix + ('.' if prefix != '' else '') + name
             module_name = module.__class__.__name__.lower()
             if module_name in self.skip_layers:
                 pass
@@ -509,7 +527,7 @@ class KFAC(optim.Optimizer):
             ):
                 self.register_module(module, name)
 
-    def register_model(self, model):
+    def register_model(self, model: torch.nn.Module) -> None:
         """Registers a model to KFAC."""
         if len(list(model.children())) == 0:  # Handle if model is a module
             if (
@@ -521,7 +539,7 @@ class KFAC(optim.Optimizer):
             self.register_submodules(model)
 
     @torch.no_grad()
-    def step(self, closure=None):
+    def step(self, closure: Callable[..., Any] | None = None) -> None:
         """Perform one K-FAC step
 
         Note:
@@ -536,7 +554,7 @@ class KFAC(optim.Optimizer):
           closure: for compatibility with the base optimizer class
         """
         if closure is not None:
-            raise ValueError("KFAC does not support closures")
+            raise ValueError('KFAC does not support closures')
 
         if (
             not self.update_factors_in_hook
@@ -593,15 +611,12 @@ class KFAC(optim.Optimizer):
         self.steps += 1
         self.mini_steps = defaultdict(int)
 
-    def reset_batch(self):
+    def reset_batch(self) -> None:
         """Reset all KFAC data from last batch."""
         for layer in self.layers.values():
-            self.a = None
-            self.g = None
-            self.a_count = None
-            self.g_count = None
+            layer.reset_batch()
 
-    def memory_usage(self):
+    def memory_usage(self) -> dict[str, int]:
         """Returns current approximate memory usage for KFAC on this worker
 
         Returns:
@@ -609,7 +624,7 @@ class KFAC(optim.Optimizer):
             store the factors and second-order information as well as the
             total.
         """
-        sizes = defaultdict(int)
+        sizes: dict[str, int] = defaultdict(int)
 
         # Need to flush buffered communication operations in case user
         # calls this method at a strange time (e.g., in the middle of
@@ -620,10 +635,10 @@ class KFAC(optim.Optimizer):
             for key, size in layer_sizes.items():
                 sizes[key] += size
 
-        sizes["total"] = sum(sizes.values())
+        sizes['total'] = sum(sizes.values())
         return sizes
 
-    def _assign_workers(self):
+    def _assign_workers(self) -> None:
         """Assigns workers to minimize max load on any worker.
 
         Approximates load by estimating inverse computation time as O(n^3)
@@ -639,12 +654,17 @@ class KFAC(optim.Optimizer):
             dist.new_group,
         )
 
-        sizes = {}
+        sizes: dict[Any, list[float]] = {}
         for module, layer in self.layers.items():
+            if layer.a_factor is None or layer.g_factor is None:
+                raise RuntimeError(
+                    'A and G factors must be computed once for each layer '
+                    'before assignments can be made',
+                )
             if self.colocate_factors:
-                x = [layer.A.shape[0] + layer.G.shape[0]]
+                x = [layer.a_factor.shape[0] + layer.g_factor.shape[0]]
             else:
-                x = [layer.A.shape[0], layer.G.shape[0]]
+                x = [layer.a_factor.shape[0], layer.g_factor.shape[0]]
 
             if self.assignment_strategy == AssignmentStrategy.COMPUTE:
                 sizes[module] = list(map(lambda n: n**3, x))
@@ -652,7 +672,7 @@ class KFAC(optim.Optimizer):
                 sizes[module] = list(map(lambda n: n**2, x))
             else:
                 raise ValueError(
-                    "assignment_strategy must be COMPUTE or MEMORY",
+                    'assignment_strategy must be COMPUTE or MEMORY',
                 )
 
         assignments = allocator.assign_layer_work(
@@ -676,7 +696,7 @@ class KFAC(optim.Optimizer):
                 allocator.get_grad_receiver_group(),
             )
 
-    def _compute_grad_scale(self):
+    def _compute_grad_scale(self) -> float | None:
         """Computes scale factor for preconditioned gradients
 
         Returns:
@@ -684,6 +704,10 @@ class KFAC(optim.Optimizer):
         """
         vg_sum = 0.0
         for layer in reversed(self.layers.values()):
+            if layer.grad is None:
+                raise RuntimeError(
+                    'layer gradient has not been preconditioned',
+                )
             w = layer._get_weight_grad()
             if layer.has_bias:
                 b = layer._get_bias_grad()
@@ -699,7 +723,11 @@ class KFAC(optim.Optimizer):
         return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
     @torch.no_grad()
-    def _save_input(self, module, input):
+    def _save_input(
+        self,
+        module: torch.nn.Module,
+        input: list[torch.Tensor],
+    ) -> None:
         if not module.training:
             return
         if self.steps % self.factor_update_steps == 0:
@@ -715,10 +743,17 @@ class KFAC(optim.Optimizer):
                 self.layers[module].reduce_a_factor()
 
     @torch.no_grad()
-    def _save_grad_output(self, module, grad_input, grad_output):
+    def _save_grad_output(
+        self,
+        module: torch.nn.Module,
+        grad_input: tuple[torch.Tensor, ...] | torch.Tensor,
+        grad_output: tuple[torch.Tensor, ...] | torch.Tensor,
+    ) -> None:
         if not module.training:
             return
         if self.steps % self.factor_update_steps == 0:
+            if isinstance(grad_output, torch.Tensor):
+                grad_output = (grad_output,)
             self.layers[module].save_layer_grad_output(grad_output)
             if (
                 self.update_factors_in_hook

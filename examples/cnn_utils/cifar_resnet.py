@@ -26,32 +26,36 @@ Reference:
 Author: Yerlan Idelbayev
 Source: https://raw.githubusercontent.com/akamaster/pytorch_resnet_cifar10
 """
+from __future__ import annotations
+
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.nn.init as init
+from torch.nn.functional import avg_pool2d
+from torch.nn.functional import pad
+from torch.nn.functional import relu
 
 __all__ = [
-    "ResNet",
-    "resnet20",
-    "resnet32",
-    "resnet44",
-    "resnet56",
-    "resnet110",
-    "resnet1202",
-    "get_model",
+    'ResNet',
+    'resnet20',
+    'resnet32',
+    'resnet44',
+    'resnet56',
+    'resnet110',
+    'resnet1202',
+    'get_model',
 ]
 
 
 def get_model(model):
-    if model.lower() == "resnet20":
+    if model.lower() == 'resnet20':
         model = resnet20()
-    elif model.lower() == "resnet32":
+    elif model.lower() == 'resnet32':
         model = resnet32()
-    elif model.lower() == "resnet44":
+    elif model.lower() == 'resnet44':
         model = resnet44()
-    elif model.lower() == "resnet56":
+    elif model.lower() == 'resnet56':
         model = resnet56()
-    elif model.lower() == "resnet110":
+    elif model.lower() == 'resnet110':
         model = resnet110()
     return model
 
@@ -73,7 +77,7 @@ class LambdaLayer(nn.Module):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_planes, planes, stride=1, option="A"):
+    def __init__(self, in_planes, planes, stride=1, option='A'):
         super().__init__()
         self.conv1 = nn.Conv2d(
             in_planes,
@@ -96,19 +100,19 @@ class BasicBlock(nn.Module):
 
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != planes:
-            if option == "A":
+            if option == 'A':
                 """
                 For CIFAR10 ResNet paper uses option A.
                 """
                 self.shortcut = LambdaLayer(
-                    lambda x: F.pad(
+                    lambda x: pad(
                         x[:, :, ::2, ::2],
                         (0, 0, 0, 0, planes // 4, planes // 4),
-                        "constant",
+                        'constant',
                         0,
                     ),
                 )
-            elif option == "B":
+            elif option == 'B':
                 self.shortcut = nn.Sequential(
                     nn.Conv2d(
                         in_planes,
@@ -121,10 +125,10 @@ class BasicBlock(nn.Module):
                 )
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        out = relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
-        out = F.relu(out)
+        out = relu(out)
         return out
 
 
@@ -159,11 +163,11 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        out = relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = F.avg_pool2d(out, out.size()[3])
+        out = avg_pool2d(out, out.size()[3])
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
@@ -200,9 +204,9 @@ def test(net):
 
     for x in filter(lambda p: p.requires_grad, net.parameters()):
         total_params += np.prod(x.data.numpy().shape)
-    print("Total number of params", total_params)
+    print('Total number of params', total_params)
     print(
-        "Total layers",
+        'Total layers',
         len(
             list(
                 filter(
@@ -214,9 +218,9 @@ def test(net):
     )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     for net_name in __all__:
-        if net_name.startswith("resnet"):
+        if net_name.startswith('resnet'):
             print(net_name)
             test(globals()[net_name]())
             print()

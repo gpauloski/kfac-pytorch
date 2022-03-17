@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 
 import torch.distributed as dist
@@ -5,7 +7,7 @@ import torch.optim as optim
 
 import kfac
 
-sys.path.append("..")
+sys.path.append('..')
 from utils import create_lr_schedule  # noqa: E402
 
 
@@ -19,15 +21,15 @@ def get_optimizer(model, args):
         weight_decay=args.weight_decay,
     )
 
-    if args.kfac_strategy == "comm-opt":
+    if args.kfac_strategy == 'comm-opt':
         grad_worker_fraction = kfac.DistributedStrategy.COMM_OPT
-    elif args.kfac_strategy == "mem-opt":
+    elif args.kfac_strategy == 'mem-opt':
         grad_worker_fraction = kfac.DistributedStrategy.MEM_OPT
-    elif args.kfac_strategy == "hybrid-opt":
+    elif args.kfac_strategy == 'hybrid-opt':
         grad_worker_fraction = args.kfac_grad_worker_fraction
     else:
         raise ValueError(
-            f"Unknown KFAC Comm Method: {args.kfac_strategy}",
+            f'Unknown KFAC Comm Method: {args.kfac_strategy}',
         )
 
     if use_kfac:
@@ -46,7 +48,7 @@ def get_optimizer(model, args):
             if args.kfac_inv_method
             else kfac.ComputeMethod.EIGEN,
             grad_worker_fraction=grad_worker_fraction,
-            grad_scaler=args.grad_scaler if "grad_scaler" in args else None,
+            grad_scaler=args.grad_scaler if 'grad_scaler' in args else None,
             skip_layers=args.kfac_skip_layers,
         )
         kfac_param_scheduler = kfac.KFACParamScheduler(

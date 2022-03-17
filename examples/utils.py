@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
+from torch.nn.functional import log_softmax
 
 
 def accuracy(output, target):
@@ -10,12 +12,12 @@ def accuracy(output, target):
 
 def save_checkpoint(model, optimizer, preconditioner, schedulers, filepath):
     state = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "preconditioner": preconditioner.state_dict()
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'preconditioner': preconditioner.state_dict()
         if preconditioner is not None
         else None,
-        "schedulers": [s.state_dict() for s in schedulers]
+        'schedulers': [s.state_dict() for s in schedulers]
         if isinstance(schedulers, list)
         else None,
     }
@@ -28,7 +30,7 @@ class LabelSmoothLoss(torch.nn.Module):
         self.smoothing = smoothing
 
     def forward(self, input, target):
-        log_prob = F.log_softmax(input, dim=-1)
+        log_prob = log_softmax(input, dim=-1)
         weight = (
             input.new_ones(input.size())
             * self.smoothing
