@@ -1,4 +1,6 @@
 """Partition Workers Unit Tests"""
+from __future__ import annotations
+
 from pytest import raises
 
 from kfac.allocator import WorkerAllocator

@@ -1,53 +1,63 @@
+from __future__ import annotations
+
+from typing import cast
+
 import torch
 
 from kfac.layers import utils
 
 
 class ModuleHelper:
-    def __init__(self, module):
+    def __init__(self, module: torch.nn.Module):
         self.module = module
 
-    def get_a_factor(self, a):
+    def get_a_factor(self, a: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
-    def get_g_factor(self, g):
+    def get_g_factor(self, g: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
-    def get_grad(self):
+    def get_grad(self) -> torch.Tensor:
         """Get formated gradients (weight and bias) of module
 
         Returns:
             gradient of shape [ouput_dim, input_dim]. If bias != None,
             concats bias.
         """
-        g = self.module.weight.grad
+        g = cast(torch.Tensor, self.module.weight.grad)
         if self.has_bias:
-            g = torch.cat([g, self.module.bias.grad.view(-1, 1)], 1)
+            g = torch.cat(
+                [g, self.module.bias.grad.view(-1, 1)],  # type: ignore
+                1,
+            )
         return g
 
-    def has_bias(self):
-        return hasattr(self.module, "bias") and self.module.bias is not None
+    def has_bias(self) -> bool:
+        return hasattr(self.module, 'bias') and self.module.bias is not None
 
-    def has_symmetric_factors(self):
+    def has_symmetric_factors(self) -> bool:
         return True
 
 
 class LinearModuleHelper(ModuleHelper):
-    def get_a_factor(self, a):
+    def get_a_factor(self, a: torch.Tensor) -> torch.Tensor:
         # a: batch_size * in_dim
         a = a.view(-1, a.shape[-1])
         if self.has_bias():
             a = utils.append_bias_ones(a)
         return utils.get_cov(a)
 
-    def get_g_factor(self, g):
+    def get_g_factor(self, g: torch.Tensor) -> torch.Tensor:
         # g: batch_size * out_dim
         g = g.reshape(-1, g.shape[-1])
         return utils.get_cov(g)
 
 
 class Conv2dModuleHelper(ModuleHelper):
-    def get_a_factor(self, a):
+    def __init__(self, module: torch.nn.Conv2d):
+        self.module = module
+
+    def get_a_factor(self, a: torch.Tensor) -> torch.Tensor:
         a = self._extract_patches(a)
         spatial_size = a.size(1) * a.size(2)
         a = a.view(-1, a.size(-1))
@@ -56,7 +66,7 @@ class Conv2dModuleHelper(ModuleHelper):
         a = a / spatial_size
         return utils.get_cov(a)
 
-    def get_g_factor(self, g):
+    def get_g_factor(self, g: torch.Tensor) -> torch.Tensor:
         # g: batch_size * n_filters * out_h * out_w
         # n_filters is actually the output dimension
         # (analogous to Linear layer)
@@ -66,16 +76,22 @@ class Conv2dModuleHelper(ModuleHelper):
         g = g / spatial_size
         return utils.get_cov(g)
 
-    def get_grad(self):
-        grad = self.module.weight.grad.view(
-            self.module.weight.grad.size(0),
-            -1,
+    def get_grad(self) -> torch.Tensor:
+        grad = cast(
+            torch.Tensor,
+            self.module.weight.grad.view(
+                self.module.weight.grad.size(0),  # type: ignore
+                -1,
+            ),
         )
         if self.has_bias():
-            grad = torch.cat([grad, self.module.bias.grad.view(-1, 1)], 1)
+            grad = torch.cat(
+                [grad, self.module.bias.grad.view(-1, 1)],  # type: ignore
+                1,
+            )
         return grad
 
-    def _extract_patches(self, x):
+    def _extract_patches(self, x: torch.Tensor) -> torch.Tensor:
         """Extract patches from convolutional layer
 
         Args:
@@ -84,9 +100,9 @@ class Conv2dModuleHelper(ModuleHelper):
         Returns:
             Tensor of shape (batch_size, out_h, out_w, in_c*kh*kw)
         """
-        padding = self.module.padding
-        kernel_size = self.module.kernel_size
-        stride = self.module.stride
+        padding = cast(list[int], self.module.padding)
+        kernel_size = cast(list[int], self.module.kernel_size)
+        stride = cast(list[int], self.module.stride)
         if padding[0] + padding[1] > 0:
             x = torch.nn.functional.pad(
                 x,

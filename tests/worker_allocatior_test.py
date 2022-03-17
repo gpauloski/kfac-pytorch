@@ -1,4 +1,6 @@
 """Partition Workers Unit Tests"""
+from __future__ import annotations
+
 from pytest import raises
 
 from kfac.allocator import WorkerAllocator
@@ -50,36 +52,36 @@ def test_unconstrained_assignment() -> None:
             assert assignment1 == assignment2
 
     work = {
-        "layer1": [1, 100, 5, 2],
-        "layer2": [0.1, 0.1, 0.1, 0.1],
+        'layer1': [1, 100, 5, 2],
+        'layer2': [0.1, 0.1, 0.1, 0.1],
     }
     assignment = {
-        "layer1": [3, 0, 1, 2],
-        "layer2": [4, 5, 6, 7],
+        'layer1': [3, 0, 1, 2],
+        'layer2': [4, 5, 6, 7],
     }
     _check(8, work, assignment)
 
     work = {
-        "layer1": [1, 100, 5, 2],
-        "layer2": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+        'layer1': [1, 100, 5, 2],
+        'layer2': [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
     }
     assignment = {
-        "layer1": [3, 0, 1, 2],
-        "layer2": [4, 5, 6, 7, 4, 5, 6, 7, 4],
+        'layer1': [3, 0, 1, 2],
+        'layer2': [4, 5, 6, 7, 4, 5, 6, 7, 4],
     }
     _check(8, work, assignment)
     assignment = {
-        "layer1": [1, 0, 1, 1],
-        "layer2": [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        'layer1': [1, 0, 1, 1],
+        'layer2': [1, 1, 1, 1, 1, 1, 1, 1, 1],
     }
     _check(2, work, assignment)
 
-    _check(8, {"layer1": [1]}, {"layer1": [0]})
-    _check(8, {"layer1": [1, 1]}, {"layer1": [0, 1]})
-    _check(8, {"layer1": [1, 2]}, {"layer1": [1, 0]})
-    _check(8, {"layer1": []}, {"layer1": []})
-    _check(1, {"layer1": [1, 1, 1, 1]}, {"layer1": [0, 0, 0, 0]})
-    _check(2, {"layer1": [1, 1, 1, 1]}, {"layer1": [0, 1, 0, 1]})
+    _check(8, {'layer1': [1]}, {'layer1': [0]})
+    _check(8, {'layer1': [1, 1]}, {'layer1': [0, 1]})
+    _check(8, {'layer1': [1, 2]}, {'layer1': [1, 0]})
+    _check(8, {'layer1': []}, {'layer1': []})
+    _check(1, {'layer1': [1, 1, 1, 1]}, {'layer1': [0, 0, 0, 0]})
+    _check(2, {'layer1': [1, 1, 1, 1]}, {'layer1': [0, 1, 0, 1]})
 
 
 def test_constrained_assignment() -> None:
@@ -94,56 +96,56 @@ def test_constrained_assignment() -> None:
             assert assignment1 == assignment2
 
     work = {
-        "layer1": [1, 100, 5, 2],
-        "layer2": [0.1, 0.1, 0.1, 0.1],
+        'layer1': [1, 100, 5, 2],
+        'layer2': [0.1, 0.1, 0.1, 0.1],
     }
     group = [[0, 2, 4, 6], [1, 3, 5, 7]]
     assignment = {
-        "layer1": [6, 0, 2, 4],
-        "layer2": [1, 3, 5, 7],
+        'layer1': [6, 0, 2, 4],
+        'layer2': [1, 3, 5, 7],
     }
     _check(8, work, group, assignment)
 
     work = {
-        "layer1": [1, 100, 5, 2],
-        "layer2": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+        'layer1': [1, 100, 5, 2],
+        'layer2': [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
     }
     group = [[0, 2, 4, 6], [1, 3, 5, 7]]
     assignment = {
-        "layer1": [6, 0, 2, 4],
-        "layer2": [1, 3, 5, 7, 1, 3, 5, 7, 1],
+        'layer1': [6, 0, 2, 4],
+        'layer2': [1, 3, 5, 7, 1, 3, 5, 7, 1],
     }
     _check(8, work, group, assignment)
     group = [[0], [1]]
     assignment = {
-        "layer1": [0, 0, 0, 0],
-        "layer2": [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        'layer1': [0, 0, 0, 0],
+        'layer2': [1, 1, 1, 1, 1, 1, 1, 1, 1],
     }
     _check(2, work, group, assignment)
     group = [[0, 1]]
     assignment = {
-        "layer1": [1, 0, 1, 1],
-        "layer2": [1, 1, 1, 1, 1, 1, 1, 1, 1],
+        'layer1': [1, 0, 1, 1],
+        'layer2': [1, 1, 1, 1, 1, 1, 1, 1, 1],
     }
     _check(2, work, group, assignment)
 
-    _check(8, {"layer1": [1]}, [[0, 1, 2, 3, 4, 5, 6, 7]], {"layer1": [0]})
+    _check(8, {'layer1': [1]}, [[0, 1, 2, 3, 4, 5, 6, 7]], {'layer1': [0]})
     _check(
         8,
-        {"layer1": [1, 1]},
+        {'layer1': [1, 1]},
         [[0, 1, 2, 3, 4, 5, 6, 7]],
-        {"layer1": [0, 1]},
+        {'layer1': [0, 1]},
     )
     _check(
         8,
-        {"layer1": [1, 2]},
+        {'layer1': [1, 2]},
         [[0, 1, 2, 3, 4, 5, 6, 7]],
-        {"layer1": [1, 0]},
+        {'layer1': [1, 0]},
     )
-    _check(8, {"layer1": []}, [[0, 1, 2, 3, 4, 5, 6, 7]], {"layer1": []})
-    _check(1, {"layer1": [1, 1, 1, 1]}, [[0]], {"layer1": [0, 0, 0, 0]})
-    _check(2, {"layer1": [1, 1, 1, 1]}, [[0, 1]], {"layer1": [0, 1, 0, 1]})
-    _check(2, {"layer1": [1, 1, 1, 1]}, [[0], [1]], {"layer1": [0, 0, 0, 0]})
+    _check(8, {'layer1': []}, [[0, 1, 2, 3, 4, 5, 6, 7]], {'layer1': []})
+    _check(1, {'layer1': [1, 1, 1, 1]}, [[0]], {'layer1': [0, 0, 0, 0]})
+    _check(2, {'layer1': [1, 1, 1, 1]}, [[0, 1]], {'layer1': [0, 1, 0, 1]})
+    _check(2, {'layer1': [1, 1, 1, 1]}, [[0], [1]], {'layer1': [0, 0, 0, 0]})
 
 
 def test_get_groups_comm_opt() -> None:

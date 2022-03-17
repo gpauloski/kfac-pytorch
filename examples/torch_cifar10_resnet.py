@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import datetime
 import os
@@ -23,229 +25,229 @@ except ImportError:
 
 def parse_args():
     # General settings
-    parser = argparse.ArgumentParser(description="PyTorch CIFAR10 Example")
+    parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Example')
     parser.add_argument(
-        "--data-dir",
+        '--data-dir',
         type=str,
-        default="/tmp/cifar10",
-        metavar="D",
-        help="directory to download cifar10 dataset to",
+        default='/tmp/cifar10',
+        metavar='D',
+        help='directory to download cifar10 dataset to',
     )
     parser.add_argument(
-        "--log-dir",
-        default="./logs/torch_cifar10",
-        help="TensorBoard/checkpoint directory",
+        '--log-dir',
+        default='./logs/torch_cifar10',
+        help='TensorBoard/checkpoint directory',
     )
     parser.add_argument(
-        "--checkpoint-format",
-        default="checkpoint_{epoch}.pth.tar",
-        help="checkpoint file format",
+        '--checkpoint-format',
+        default='checkpoint_{epoch}.pth.tar',
+        help='checkpoint file format',
     )
     parser.add_argument(
-        "--no-cuda",
-        action="store_true",
+        '--no-cuda',
+        action='store_true',
         default=False,
-        help="disables CUDA training",
+        help='disables CUDA training',
     )
     parser.add_argument(
-        "--seed",
+        '--seed',
         type=int,
         default=42,
-        metavar="S",
-        help="random seed (default: 42)",
+        metavar='S',
+        help='random seed (default: 42)',
     )
     parser.add_argument(
-        "--fp16",
-        action="store_true",
+        '--fp16',
+        action='store_true',
         default=False,
-        help="use torch.cuda.amp for fp16 training (default: false)",
+        help='use torch.cuda.amp for fp16 training (default: false)',
     )
 
     # Training settings
     parser.add_argument(
-        "--model",
+        '--model',
         type=str,
-        default="resnet32",
-        help="ResNet model to use [20, 32, 56]",
+        default='resnet32',
+        help='ResNet model to use [20, 32, 56]',
     )
     parser.add_argument(
-        "--batch-size",
+        '--batch-size',
         type=int,
         default=128,
-        metavar="N",
-        help="input batch size for training (default: 128)",
+        metavar='N',
+        help='input batch size for training (default: 128)',
     )
     parser.add_argument(
-        "--val-batch-size",
+        '--val-batch-size',
         type=int,
         default=128,
-        help="input batch size for validation (default: 128)",
+        help='input batch size for validation (default: 128)',
     )
     parser.add_argument(
-        "--batches-per-allreduce",
+        '--batches-per-allreduce',
         type=int,
         default=1,
-        help="number of batches processed locally before "
-        "executing allreduce across workers; it multiplies "
-        "total batch size.",
+        help='number of batches processed locally before '
+        'executing allreduce across workers; it multiplies '
+        'total batch size.',
     )
     parser.add_argument(
-        "--epochs",
+        '--epochs',
         type=int,
         default=100,
-        metavar="N",
-        help="number of epochs to train (default: 100)",
+        metavar='N',
+        help='number of epochs to train (default: 100)',
     )
     parser.add_argument(
-        "--base-lr",
+        '--base-lr',
         type=float,
         default=0.1,
-        metavar="LR",
-        help="base learning rate (default: 0.1)",
+        metavar='LR',
+        help='base learning rate (default: 0.1)',
     )
     parser.add_argument(
-        "--lr-decay",
-        nargs="+",
+        '--lr-decay',
+        nargs='+',
         type=int,
         default=[35, 75, 90],
-        help="epoch intervals to decay lr (default: [35, 75, 90])",
+        help='epoch intervals to decay lr (default: [35, 75, 90])',
     )
     parser.add_argument(
-        "--warmup-epochs",
+        '--warmup-epochs',
         type=int,
         default=5,
-        metavar="WE",
-        help="number of warmup epochs (default: 5)",
+        metavar='WE',
+        help='number of warmup epochs (default: 5)',
     )
     parser.add_argument(
-        "--momentum",
+        '--momentum',
         type=float,
         default=0.9,
-        metavar="M",
-        help="SGD momentum (default: 0.9)",
+        metavar='M',
+        help='SGD momentum (default: 0.9)',
     )
     parser.add_argument(
-        "--weight-decay",
+        '--weight-decay',
         type=float,
         default=5e-4,
-        metavar="W",
-        help="SGD weight decay (default: 5e-4)",
+        metavar='W',
+        help='SGD weight decay (default: 5e-4)',
     )
     parser.add_argument(
-        "--checkpoint-freq",
+        '--checkpoint-freq',
         type=int,
         default=10,
-        help="epochs between checkpoints",
+        help='epochs between checkpoints',
     )
 
     # KFAC Parameters
     parser.add_argument(
-        "--kfac-inv-update-steps",
+        '--kfac-inv-update-steps',
         type=int,
         default=10,
-        help="iters between kfac inv ops (0 disables kfac) (default: 10)",
+        help='iters between kfac inv ops (0 disables kfac) (default: 10)',
     )
     parser.add_argument(
-        "--kfac-factor-update-steps",
+        '--kfac-factor-update-steps',
         type=int,
         default=1,
-        help="iters between kfac cov ops (default: 1)",
+        help='iters between kfac cov ops (default: 1)',
     )
     parser.add_argument(
-        "--kfac-update-steps-alpha",
+        '--kfac-update-steps-alpha',
         type=float,
         default=10,
-        help="KFAC update step multiplier (default: 10)",
+        help='KFAC update step multiplier (default: 10)',
     )
     parser.add_argument(
-        "--kfac-update-steps-decay",
-        nargs="+",
+        '--kfac-update-steps-decay',
+        nargs='+',
         type=int,
         default=None,
-        help="KFAC update step decay schedule (default None)",
+        help='KFAC update step decay schedule (default None)',
     )
     parser.add_argument(
-        "--kfac-inv-method",
-        action="store_true",
+        '--kfac-inv-method',
+        action='store_true',
         default=False,
-        help="Use inverse KFAC update instead of eigen (default False)",
+        help='Use inverse KFAC update instead of eigen (default False)',
     )
     parser.add_argument(
-        "--kfac-factor-decay",
+        '--kfac-factor-decay',
         type=float,
         default=0.95,
-        help="Alpha value for covariance accumulation (default: 0.95)",
+        help='Alpha value for covariance accumulation (default: 0.95)',
     )
     parser.add_argument(
-        "--kfac-damping",
+        '--kfac-damping',
         type=float,
         default=0.003,
-        help="KFAC damping factor (defaultL 0.003)",
+        help='KFAC damping factor (defaultL 0.003)',
     )
     parser.add_argument(
-        "--kfac-damping-alpha",
+        '--kfac-damping-alpha',
         type=float,
         default=0.5,
-        help="KFAC damping decay factor (default: 0.5)",
+        help='KFAC damping decay factor (default: 0.5)',
     )
     parser.add_argument(
-        "--kfac-damping-decay",
-        nargs="+",
+        '--kfac-damping-decay',
+        nargs='+',
         type=int,
         default=None,
-        help="KFAC damping decay schedule (default None)",
+        help='KFAC damping decay schedule (default None)',
     )
     parser.add_argument(
-        "--kfac-kl-clip",
+        '--kfac-kl-clip',
         type=float,
         default=0.001,
-        help="KL clip (default: 0.001)",
+        help='KL clip (default: 0.001)',
     )
     parser.add_argument(
-        "--kfac-skip-layers",
-        nargs="+",
+        '--kfac-skip-layers',
+        nargs='+',
         type=str,
         default=[],
-        help="Layer types to ignore registering with KFAC (default: [])",
+        help='Layer types to ignore registering with KFAC (default: [])',
     )
     parser.add_argument(
-        "--kfac-colocate-factors",
-        action="store_true",
+        '--kfac-colocate-factors',
+        action='store_true',
         default=True,
-        help="Compute A and G for a single layer on the same worker. ",
+        help='Compute A and G for a single layer on the same worker. ',
     )
     parser.add_argument(
-        "--kfac-strategy",
+        '--kfac-strategy',
         type=str,
-        default="comm-opt",
-        help="KFAC communication optimization strategy. One of comm-opt, "
-        "mem-opt, or hybrid_opt. (default: comm-opt)",
+        default='comm-opt',
+        help='KFAC communication optimization strategy. One of comm-opt, '
+        'mem-opt, or hybrid_opt. (default: comm-opt)',
     )
     parser.add_argument(
-        "--kfac-grad-worker-fraction",
+        '--kfac-grad-worker-fraction',
         type=float,
         default=0.25,
-        help="Fraction of workers to compute the gradients "
-        "when using HYBRID_OPT (default: 0.25)",
+        help='Fraction of workers to compute the gradients '
+        'when using HYBRID_OPT (default: 0.25)',
     )
 
     parser.add_argument(
-        "--backend",
+        '--backend',
         type=str,
-        default="nccl",
-        help="backend for distribute training (default: nccl)",
+        default='nccl',
+        help='backend for distribute training (default: nccl)',
     )
     # Set automatically by torch distributed launch
     parser.add_argument(
-        "--local_rank",
+        '--local_rank',
         type=int,
         default=0,
-        help="local rank for distributed training",
+        help='local rank for distributed training',
     )
 
     args = parser.parse_args()
-    if "LOCAL_RANK" in os.environ:
-        args.local_rank = int(os.environ["LOCAL_RANK"])
+    if 'LOCAL_RANK' in os.environ:
+        args.local_rank = int(os.environ['LOCAL_RANK'])
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
     return args
@@ -256,7 +258,7 @@ def main():
 
     torch.distributed.init_process_group(
         backend=args.backend,
-        init_method="env://",
+        init_method='env://',
     )
 
     if args.cuda:
@@ -266,7 +268,7 @@ def main():
         torch.backends.cudnn.deterministic = True
 
     print(
-        "rank = {}, world_size = {}, device_ids = {}".format(
+        'rank = {}, world_size = {}, device_ids = {}'.format(
             torch.distributed.get_rank(),
             torch.distributed.get_world_size(),
             args.local_rank,
@@ -282,7 +284,7 @@ def main():
     train_sampler, train_loader, _, val_loader = datasets.get_cifar(args)
     model = models.get_model(args.model)
 
-    device = "cpu" if not args.cuda else "cuda"
+    device = 'cpu' if not args.cuda else 'cuda'
     model.to(device)
 
     if args.verbose:
@@ -307,9 +309,9 @@ def main():
     if args.fp16:
         if not TORCH_FP16:
             raise ValueError(
-                "The installed version of torch does not "
-                "support torch.cuda.amp fp16 training. This "
-                "requires torch version >= 1.16",
+                'The installed version of torch does not '
+                'support torch.cuda.amp fp16 training. This '
+                'requires torch version >= 1.16',
             )
         scaler = GradScaler()
     args.grad_scaler = scaler
@@ -324,18 +326,18 @@ def main():
 
     if args.resume_from_epoch > 0:
         filepath = args.checkpoint_format.format(epoch=args.resume_from_epoch)
-        map_location = {"cuda:0": f"cuda:{args.local_rank}"}
+        map_location = {'cuda:0': f'cuda:{args.local_rank}'}
         checkpoint = torch.load(filepath, map_location=map_location)
-        model.module.load_state_dict(checkpoint["model"])
-        optimizer.load_state_dict(checkpoint["optimizer"])
-        if isinstance(checkpoint["schedulers"], list):
-            for sched, state in zip(lr_schedules, checkpoint["schedulers"]):
+        model.module.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        if isinstance(checkpoint['schedulers'], list):
+            for sched, state in zip(lr_schedules, checkpoint['schedulers']):
                 sched.load_state_dict(state)
         if (
-            checkpoint["preconditioner"] is not None
+            checkpoint['preconditioner'] is not None
             and preconditioner is not None
         ):
-            preconditioner.load_state_dict(checkpoint["preconditioner"])
+            preconditioner.load_state_dict(checkpoint['preconditioner'])
 
     start = time.time()
 
@@ -370,11 +372,11 @@ def main():
 
     if args.verbose:
         print(
-            "\nTraining time: {}".format(
+            '\nTraining time: {}'.format(
                 datetime.timedelta(seconds=time.time() - start),
             ),
         )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

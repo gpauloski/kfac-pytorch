@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import torch
 
 
-def append_bias_ones(tensor):
+def append_bias_ones(tensor: torch.Tensor) -> torch.Tensor:
     """Appends vector of ones to last dimension of tensor.
 
     For examples, if the input is of shape [4, 6], then the outputs has shape
@@ -11,7 +13,11 @@ def append_bias_ones(tensor):
     return torch.cat([tensor, tensor.new_ones(shape)], dim=-1)
 
 
-def get_cov(a, b=None, scale=None):
+def get_cov(
+    a: torch.Tensor,
+    b: torch.Tensor | None = None,
+    scale: float | None = None,
+) -> torch.Tensor:
     """Computes the empirical second moment of a 2D tensor
 
     Reference:
@@ -30,13 +36,13 @@ def get_cov(a, b=None, scale=None):
     """
     if len(a.shape) != 2:
         raise ValueError(
-            "Input tensor must have 2 dimensions. Got tensor with shape "
-            f"{a.shape}",
+            'Input tensor must have 2 dimensions. Got tensor with shape '
+            f'{a.shape}',
         )
     if b is not None and a.shape != b.shape:
         raise ValueError(
-            "Input tensors must have same shape. Got tensors of "
-            "shape {} and {}.".format(a.shape, b.shape),
+            'Input tensors must have same shape. Got tensors of '
+            'shape {} and {}.'.format(a.shape, b.shape),
         )
 
     if scale is None:
@@ -50,7 +56,10 @@ def get_cov(a, b=None, scale=None):
         return a.t() @ (b / scale)
 
 
-def get_elementwise_inverse(vector, damping=None):
+def get_elementwise_inverse(
+    vector: torch.Tensor,
+    damping: float | None = None,
+) -> torch.Tensor:
     """Computes the reciprocal of each non-zero element of v"""
     if damping is not None:
         vector = vector + damping
@@ -60,7 +69,11 @@ def get_elementwise_inverse(vector, damping=None):
     return reciprocal
 
 
-def reshape_data(data_list, batch_first=True, collapse_dims=False):
+def reshape_data(
+    data_list: list[torch.Tensor],
+    batch_first: bool = True,
+    collapse_dims: bool = False,
+) -> torch.Tensor:
     """Concat input/output data and clear buffers
 
     Args:
@@ -80,7 +93,11 @@ def reshape_data(data_list, batch_first=True, collapse_dims=False):
     return d
 
 
-def update_running_avg(new, current, alpha=1.0):
+def update_running_avg(
+    new: torch.Tensor,
+    current: torch.Tensor,
+    alpha: float = 1.0,
+) -> None:
     """Computes in-place running average
 
     current = alpha*current + (1-alpha)*new

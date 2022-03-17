@@ -19,14 +19,14 @@ def init_distributed(func: Callable, rank: int, world_size: int) -> Callable:
     def run(*args: list, **kwargs: dict) -> None:
         # Determine backend and initialize default distributed group
         if torch.cuda.is_available() and torch.distributed.is_nccl_available():
-            backend = "nccl"
+            backend = 'nccl'
         else:
-            backend = "gloo"
-        os.environ["MASTER_ADDR"] = "127.0.0.1"
-        os.environ["MASTER_PORT"] = "29500"
-        os.environ["RANK"] = str(rank)
-        os.environ["LOCAL_RANK"] = str(rank)
-        os.environ["WORLD_SIZE"] = str(world_size)
+            backend = 'gloo'
+        os.environ['MASTER_ADDR'] = '127.0.0.1'
+        os.environ['MASTER_PORT'] = '29500'
+        os.environ['RANK'] = str(rank)
+        os.environ['LOCAL_RANK'] = str(rank)
+        os.environ['WORLD_SIZE'] = str(world_size)
         torch.distributed.init_process_group(backend)
 
         result = func(*args, **kwargs)
@@ -66,7 +66,7 @@ def test_init_distributed() -> None:
 
     def assert_false() -> None:
         with raises(AssertionError):
-            assert False
+            raise AssertionError
 
     run_parallel(1, assert_init)
     run_parallel(4, assert_init)
@@ -221,14 +221,14 @@ def test_allreduce_bucketed() -> None:
         comm = TorchDistributedCommunicator(bucket_cap_mb)
 
         tensors = []
-        for i in range(tensor_count):
+        for _ in range(tensor_count):
             t = torch.ones(shape, dtype=torch.float32)
             tensors.append(
                 comm.allreduce_bucketed(t, symmetric=symmetric),
             )
         comm.flush_allreduce_buckets()
 
-        for i, tensor in enumerate(tensors):
+        for tensor in tensors:
             if isinstance(tensor, Future):
                 tensor = tensor.wait()
             assert torch.sum(tensor).item() == world_size * torch.numel(tensor)
@@ -268,7 +268,7 @@ def test_allreduce_bucketed_grouped() -> None:
         group_size = torch.distributed.get_world_size(group)
 
         tensors = []
-        for i in range(tensor_count):
+        for _ in range(tensor_count):
             t = torch.ones(shape, dtype=torch.float32)
             if group is None or rank > 0:
                 tensors.append(
@@ -280,7 +280,7 @@ def test_allreduce_bucketed_grouped() -> None:
                 )
         comm.flush_allreduce_buckets()
 
-        for i, tensor in enumerate(tensors):
+        for tensor in tensors:
             if isinstance(tensor, Future):
                 tensor = tensor.wait()
             if group is not None and rank == 0:

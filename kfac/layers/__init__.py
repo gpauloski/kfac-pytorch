@@ -1,33 +1,46 @@
-from enum import Enum
+from __future__ import annotations
 
-import torch.nn as nn
+from typing import Any
+from typing import cast
+from typing import Type
+
+import torch
 
 import kfac
+from kfac.layers.base import KFACBaseLayer
 from kfac.layers.eigen import KFACEigenLayer
 from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.modules import Conv2dModuleHelper
 from kfac.layers.modules import LinearModuleHelper
+from kfac.layers.modules import ModuleHelper
 
 try:
-    from megatron.mpu.layers import ColumnParallelLinear
+    from megatron.mpu.layers import ColumnParallelLinear  # type: ignore
     from megatron.mpu.layers import RowParallelLinear
 
     megatron = True
 except ImportError:
     megatron = False
 
-__all__ = ["KNOWN_MODULES", "get_kfac_layers", "module_requires_grad"]
+__all__ = ['KNOWN_MODULES', 'get_kfac_layers', 'module_requires_grad']
 
-KNOWN_MODULES = {"linear", "conv2d"}
-LINEAR_TYPES = (nn.Linear,)
-CONV2D_TYPES = (nn.Conv2d,)
+KNOWN_MODULES = {'linear', 'conv2d'}
+LINEAR_TYPES: tuple[type[torch.nn.Module], ...] = (torch.nn.Linear,)
+CONV2D_TYPES: tuple[type[torch.nn.Module], ...] = (torch.nn.Conv2d,)
 
 if megatron:
-    KNOWN_MODULES |= {"columnparallellinear", "rowparallellinear"}
-    LINEAR_TYPES = LINEAR_TYPES + (ColumnParallelLinear, RowParallelLinear)
+    KNOWN_MODULES |= {'columnparallellinear', 'rowparallellinear'}
+    LINEAR_TYPES = LINEAR_TYPES + (
+        cast(Type[torch.nn.Module], ColumnParallelLinear),
+        cast(Type[torch.nn.Module], RowParallelLinear),
+    )
 
 
-def get_kfac_layers(module, method, **kwargs):
+def get_kfac_layers(
+    module: torch.nn.Module,
+    method: kfac.ComputeMethod,
+    **kwargs: Any,
+) -> list[tuple[torch.nn.Module, KFACBaseLayer]]:
     """Instantiates KFACLayer(s) for module
 
     Args:
@@ -38,25 +51,31 @@ def get_kfac_layers(module, method, **kwargs):
     Returns:
       list of tuples where each tuple is (module, KFACLayer)
     """
+    helper: type[ModuleHelper]
     if isinstance(module, LINEAR_TYPES):
-        Helper = LinearModuleHelper
+        helper = LinearModuleHelper
     elif isinstance(module, CONV2D_TYPES):
-        Helper = Conv2dModuleHelper
+        helper = Conv2dModuleHelper
     else:
         raise NotImplementedError(
-            f"KFAC does not support layer {module.__class__.__name__}",
+            f'KFAC does not support layer {module.__class__.__name__}',
         )
 
+    layer: KFACBaseLayer
     if method == kfac.ComputeMethod.EIGEN:
-        layer = KFACEigenLayer(module, Helper(module), **kwargs)
+        layer = KFACEigenLayer(module, module_helper=helper(module), **kwargs)
     elif method == kfac.ComputeMethod.INVERSE:
-        layer = KFACInverseLayer(module, Helper(module), **kwargs)
+        layer = KFACInverseLayer(
+            module,
+            module_helper=helper(module),
+            **kwargs,
+        )
     else:
-        raise ValueError(f"Unknown KFAC method type: {method}")
+        raise ValueError(f'Unknown KFAC method type: {method}')
 
     return [(module, layer)]
 
 
-def module_requires_grad(module):
+def module_requires_grad(module: torch.nn.Module) -> bool:
     """Returns False if any module param has .requires_grad=False"""
     return all([p.requires_grad for p in module.parameters()])
