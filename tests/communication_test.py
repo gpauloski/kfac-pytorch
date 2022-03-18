@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from multiprocessing import Process
+from typing import Any
 from typing import Callable
 
 import torch
@@ -15,8 +16,12 @@ from kfac.distributed import NonSquareTensorError
 from kfac.distributed import TorchDistributedCommunicator
 
 
-def init_distributed(func: Callable, rank: int, world_size: int) -> Callable:
-    def run(*args: list, **kwargs: dict) -> None:
+def init_distributed(
+    func: Callable[..., None],
+    rank: int,
+    world_size: int,
+) -> Callable[..., None]:
+    def run(*args: Any, **kwargs: Any) -> None:
         # Determine backend and initialize default distributed group
         if torch.cuda.is_available() and torch.distributed.is_nccl_available():
             backend = 'nccl'
@@ -38,9 +43,9 @@ def init_distributed(func: Callable, rank: int, world_size: int) -> Callable:
 
 def run_parallel(
     workers: int,
-    func: Callable,
-    *args: list,
-    **kwargs: dict,
+    func: Callable[..., None],
+    *args: Any,
+    **kwargs: Any,
 ) -> None:
     funcs = []
     for rank in range(workers):
@@ -95,7 +100,7 @@ def test_allreduce() -> None:
     def simple_allreduce(
         shape: list[int],
         symmetric: bool = False,
-        expect_raises: Exception = None,
+        expect_raises: type[BaseException] | None = None,
     ) -> None:
         try:
             world_size = torch.distributed.get_world_size()
@@ -107,7 +112,7 @@ def test_allreduce() -> None:
                 t_res = t_res.wait()
             assert torch.sum(t_res).item() == torch.numel(t_res) * world_size
         except Exception as e:
-            if not isinstance(e, expect_raises):
+            if expect_raises is not None and not isinstance(e, expect_raises):
                 raise
 
     run_parallel(1, simple_allreduce, [2, 4])
@@ -130,7 +135,7 @@ def test_broadcast() -> None:
     def simple_broadcast(
         shape: list[int],
         symmetric: bool = False,
-        expect_raises: Exception = None,
+        expect_raises: type[BaseException] | None = None,
     ) -> None:
         try:
             rank = torch.distributed.get_rank()
@@ -143,7 +148,7 @@ def test_broadcast() -> None:
             # Rank 0 will broadcast and it should be all zeros
             assert torch.sum(t_res).item() == 0
         except Exception as e:
-            if not isinstance(e, expect_raises):
+            if expect_raises is not None and not isinstance(e, expect_raises):
                 raise
 
     run_parallel(1, simple_broadcast, [2, 4])
@@ -190,7 +195,8 @@ def test_allreduce_tensor_bucket() -> None:
 
         allreduce_future = bucket.allreduce()
 
-        allreduce_tensor = allreduce_future.wait()
+        if allreduce_future is not None:
+            allreduce_tensor = allreduce_future.wait()
 
         assert allreduce_tensor.nelement() == 12
 

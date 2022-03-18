@@ -338,7 +338,7 @@ class KFACPreconditioner(optim.Optimizer):
             'known_modules': self.known_modules,
             'skip_layers': self.skip_layers,
             'update_factors_in_hook': self.update_factors_in_hook,
-            'verbose': self.verbose,
+            'loglevel': self.loglevel,
             'registered_layers': len(self.layers),
         }
         format_string = self.__class__.__name__ + ' ('
@@ -502,7 +502,7 @@ class KFACPreconditioner(optim.Optimizer):
             **kwargs,
         )
         for module, kfac_layer in layer_list:
-            if dist.get_rank() == 0 and self.verbose:
+            if dist.get_rank() == 0:
                 logger.log(
                     self.loglevel,
                     'Registered {}: {}'.format(

@@ -30,10 +30,14 @@ def test_input_check() -> None:
 
 
 def test_partition_grad_workers() -> None:
-    def _check(world_size, grad_workers, expected):
-        expected = {frozenset(ranks) for ranks in expected}
+    def _check(
+        world_size: int,
+        grad_workers: int,
+        expected: list[list[int]],
+    ) -> None:
+        _expected = {frozenset(ranks) for ranks in expected}
         result = partition_grad_workers(world_size, grad_workers)
-        assert result == expected
+        assert result == _expected
 
     _check(16, 8, [[0, 2, 4, 6, 8, 10, 12, 14], [1, 3, 5, 7, 9, 11, 13, 15]])
     _check(
@@ -56,10 +60,14 @@ def test_partition_grad_workers() -> None:
 
 
 def test_partition_grad_receivers() -> None:
-    def _check(world_size, grad_workers, expected):
-        expected = {frozenset(ranks) for ranks in expected}
+    def _check(
+        world_size: int,
+        grad_workers: int,
+        expected: list[list[int]],
+    ) -> None:
+        _expected = {frozenset(ranks) for ranks in expected}
         result = partition_grad_receivers(world_size, grad_workers)
-        assert result == expected
+        assert result == _expected
 
     _check(
         16,

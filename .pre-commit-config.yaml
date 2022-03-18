@@ -48,4 +48,4 @@ repos:
     rev: v0.941
     hooks:
     -   id: mypy
-        files: 'kfac/'
+        exclude: ^examples/

@@ -4,8 +4,8 @@ from typing import cast
 
 import torch
 
-from kfac.layer.utils import get_cov
 from kfac.layers.utils import append_bias_ones
+from kfac.layers.utils import get_cov
 
 
 class ModuleHelper:
