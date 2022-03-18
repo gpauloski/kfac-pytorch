@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-import os
-from multiprocessing import Process
-from typing import Any
-from typing import Callable
-
+import pytest
 import torch
-from pytest import raises
 
 from kfac.distributed import AllreduceTensorBucket
 from kfac.distributed import fill_triu
@@ -14,68 +9,7 @@ from kfac.distributed import Future
 from kfac.distributed import get_triu
 from kfac.distributed import NonSquareTensorError
 from kfac.distributed import TorchDistributedCommunicator
-
-
-def init_distributed(
-    func: Callable[..., None],
-    rank: int,
-    world_size: int,
-) -> Callable[..., None]:
-    def run(*args: Any, **kwargs: Any) -> None:
-        # Determine backend and initialize default distributed group
-        if torch.cuda.is_available() and torch.distributed.is_nccl_available():
-            backend = 'nccl'
-        else:
-            backend = 'gloo'
-        os.environ['MASTER_ADDR'] = '127.0.0.1'
-        os.environ['MASTER_PORT'] = '29500'
-        os.environ['RANK'] = str(rank)
-        os.environ['LOCAL_RANK'] = str(rank)
-        os.environ['WORLD_SIZE'] = str(world_size)
-        torch.distributed.init_process_group(backend)
-
-        result = func(*args, **kwargs)
-        torch.distributed.destroy_process_group()
-        assert result is None
-
-    return run
-
-
-def run_parallel(
-    workers: int,
-    func: Callable[..., None],
-    *args: Any,
-    **kwargs: Any,
-) -> None:
-    funcs = []
-    for rank in range(workers):
-        funcs.append(init_distributed(func, rank, workers))
-
-    processes = []
-    for f in funcs:
-        p = Process(target=f, args=args, kwargs=kwargs)
-        p.start()
-        processes.append(p)
-
-    for p in processes:
-        p.join()
-        assert not p.exitcode
-
-
-def test_init_distributed() -> None:
-    """Test the distributed testing wrappers"""
-
-    def assert_init() -> None:
-        assert torch.distributed.is_initialized()
-        assert torch.distributed.get_rank() >= 0
-
-    def assert_false() -> None:
-        with raises(AssertionError):
-            raise AssertionError
-
-    run_parallel(1, assert_init)
-    run_parallel(4, assert_init)
-    run_parallel(4, assert_false)
+from testing.distributed import distributed_test
 
 
 def test_triu() -> None:
@@ -94,9 +28,24 @@ def test_triu() -> None:
     check([4, 4])
 
 
-def test_allreduce() -> None:
+@pytest.mark.parametrize(
+    'world_size,shape,symmetric,expect_raises',
+    [
+        (1, [2, 4], False, None),
+        (4, [2, 4], False, None),
+        (4, [4, 4], True, None),
+        (4, [4, 2], True, NonSquareTensorError),
+    ],
+)
+def test_allreduce(
+    world_size: int,
+    shape: list[int],
+    symmetric: bool,
+    expect_raises: None,
+) -> None:
     """Test allreduce"""
 
+    @distributed_test(world_size)
     def simple_allreduce(
         shape: list[int],
         symmetric: bool = False,
@@ -115,23 +64,27 @@ def test_allreduce() -> None:
             if expect_raises is not None and not isinstance(e, expect_raises):
                 raise
 
-    run_parallel(1, simple_allreduce, [2, 4])
-    run_parallel(4, simple_allreduce, [2, 4])
-    run_parallel(4, simple_allreduce, [4, 4], symmetric=True)
-
-    # not square for symmetric comms
-    run_parallel(
-        4,
-        simple_allreduce,
-        [4, 2],
-        symmetric=True,
-        expect_raises=NonSquareTensorError,
-    )
+    simple_allreduce(shape, symmetric, expect_raises)
 
 
-def test_broadcast() -> None:
+@pytest.mark.parametrize(
+    'world_size,shape,symmetric,expect_raises',
+    [
+        (1, [2, 4], False, None),
+        (4, [2, 4], False, None),
+        (4, [4, 4], True, None),
+        (4, [4, 2], True, NonSquareTensorError),
+    ],
+)
+def test_broadcast(
+    world_size: int,
+    shape: list[int],
+    symmetric: bool,
+    expect_raises: None,
+) -> None:
     """Test broadcast"""
 
+    @distributed_test(world_size)
     def simple_broadcast(
         shape: list[int],
         symmetric: bool = False,
@@ -151,23 +104,14 @@ def test_broadcast() -> None:
             if expect_raises is not None and not isinstance(e, expect_raises):
                 raise
 
-    run_parallel(1, simple_broadcast, [2, 4])
-    run_parallel(4, simple_broadcast, [2, 4])
-    run_parallel(4, simple_broadcast, [4, 4], symmetric=True)
-
-    # not square for symmetric comms
-    run_parallel(
-        4,
-        simple_broadcast,
-        [4, 2],
-        symmetric=True,
-        expect_raises=NonSquareTensorError,
-    )
+    simple_broadcast(shape, symmetric, expect_raises)
 
 
-def test_allreduce_tensor_bucket() -> None:
+@pytest.mark.parametrize('world_size', [1, 4])
+def test_allreduce_tensor_bucket(world_size: int) -> None:
     """Test AllreduceTensorBucket."""
 
+    @distributed_test(world_size)
     def allreduce() -> None:
         bucket = AllreduceTensorBucket()
 
@@ -175,7 +119,7 @@ def test_allreduce_tensor_bucket() -> None:
         assert not bucket.communicated()
         bucket.allreduce()
         assert bucket.communicated()
-        with raises(RuntimeError):
+        with pytest.raises(RuntimeError):
             bucket.allreduce()
 
         bucket = AllreduceTensorBucket()
@@ -197,6 +141,8 @@ def test_allreduce_tensor_bucket() -> None:
 
         if allreduce_future is not None:
             allreduce_tensor = allreduce_future.wait()
+        else:
+            allreduce_tensor = allreduce_future
 
         assert allreduce_tensor.nelement() == 12
 
@@ -210,13 +156,32 @@ def test_allreduce_tensor_bucket() -> None:
         assert f2.done()
         assert torch.equal(s * t2, f2.value())
 
-    run_parallel(1, allreduce)
-    run_parallel(4, allreduce)
+    allreduce()
 
 
-def test_allreduce_bucketed() -> None:
+@pytest.mark.parametrize(
+    'world_size,shape,tensor_count,bucket_cap_mb,symmetric',
+    [
+        # Test sum of all tensors less than bucket
+        (1, [2, 2], 4, 1, False),
+        (4, [100, 100], 4, 1, False),
+        # Test each tensor larger than bucket
+        (4, [100, 100], 4, 0.001, False),
+        # Test symmetric
+        (1, [4, 4], 4, 1, True),
+        (4, [100, 100], 4, 0.001, True),
+    ],
+)
+def test_allreduce_bucketed(
+    world_size: int,
+    shape: list[int],
+    tensor_count: int,
+    bucket_cap_mb: float,
+    symmetric: bool,
+) -> None:
     """Test bucketed allreduce."""
 
+    @distributed_test(world_size)
     def allreduce(
         shape: list[int],
         tensor_count: int,
@@ -239,21 +204,32 @@ def test_allreduce_bucketed() -> None:
                 tensor = tensor.wait()
             assert torch.sum(tensor).item() == world_size * torch.numel(tensor)
 
-    # Test sum of all tensors less than bucket
-    run_parallel(1, allreduce, [2, 2], 4, 1)
-    run_parallel(4, allreduce, [100, 100], 4, 1)
-
-    # Test each tensor larger than bucket
-    run_parallel(4, allreduce, [100, 100], 4, 0.001)
-
-    # Test symmetric
-    run_parallel(1, allreduce, [4, 4], 4, 1, True)
-    run_parallel(4, allreduce, [100, 100], 4, 0.001, True)
+    allreduce(shape, tensor_count, bucket_cap_mb, symmetric)
 
 
-def test_allreduce_bucketed_grouped() -> None:
+@pytest.mark.parametrize(
+    'world_size,shape,tensor_count,bucket_cap_mb,symmetric',
+    [
+        # Test sum of all tensors less than bucket
+        (1, [2, 2], 4, 1, False),
+        (4, [100, 100], 4, 1, False),
+        # Test each tensor larger than bucket
+        (4, [100, 100], 4, 0.001, False),
+        # Test symmetric
+        (1, [4, 4], 4, 1, True),
+        (4, [100, 100], 4, 0.001, True),
+    ],
+)
+def test_allreduce_bucketed_grouped(
+    world_size: int,
+    shape: list[int],
+    tensor_count: int,
+    bucket_cap_mb: float,
+    symmetric: bool,
+) -> None:
     """Test bucketed allreduce with communication groups."""
 
+    @distributed_test(world_size)
     def allreduce(
         shape: list[int],
         tensor_count: int,
@@ -296,13 +272,4 @@ def test_allreduce_bucketed_grouped() -> None:
                     tensor,
                 )
 
-    # Test sum of all tensors less than bucket
-    run_parallel(1, allreduce, [2, 2], 4, 1)
-    run_parallel(4, allreduce, [100, 100], 4, 1)
-
-    # Test each tensor larger than bucket
-    run_parallel(4, allreduce, [100, 100], 4, 0.001)
-
-    # Test symmetric
-    run_parallel(1, allreduce, [4, 4], 4, 1, True)
-    run_parallel(4, allreduce, [100, 100], 4, 0.001, True)
+    allreduce(shape, tensor_count, bucket_cap_mb, symmetric)
