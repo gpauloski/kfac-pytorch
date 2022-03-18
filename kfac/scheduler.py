@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from typing import Callable
 
-from kfac import KFAC
+from kfac.preconditioner import KFACPreconditioner
 
 
 class KFACParamScheduler:
@@ -31,7 +31,7 @@ class KFACParamScheduler:
 
     def __init__(
         self,
-        kfac: KFAC,
+        preconditioner: KFACPreconditioner,
         damping_alpha: float = 1,
         damping_schedule: list[int] | None = None,
         update_freq_alpha: float = 1,
@@ -39,8 +39,8 @@ class KFACParamScheduler:
         start_step: int = 0,
     ) -> None:
 
-        self.kfac = kfac
-        params = self.kfac.param_groups[0]
+        self.preconditioner = preconditioner
+        params = self.preconditioner.param_groups[0]
 
         if damping_schedule is not None and callable(params['damping']):
             raise ValueError(
@@ -110,7 +110,7 @@ class KFACParamScheduler:
         else:
             self._step += 1
 
-        params = self.kfac.param_groups[0]
+        params = self.preconditioner.param_groups[0]
 
         params['damping'] = self.damping_base * self.damping_factor_func(
             self._step,

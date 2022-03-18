@@ -11,9 +11,11 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 
-import kfac
 from kfac.allocator import WorkerAllocator
 from kfac.distributed import TorchDistributedCommunicator
+from kfac.layers import get_kfac_layers
+from kfac.layers import KNOWN_MODULES
+from kfac.layers import module_requires_grad
 from kfac.layers.base import AllreduceMethod
 from kfac.layers.base import BroadcastMethod
 from kfac.layers.base import KFACBaseLayer
@@ -61,7 +63,7 @@ class DistributedStrategy(enum.Enum):
     HYBRID_OPT = 3
 
 
-class KFAC(optim.Optimizer):
+class KFACPreconditioner(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
 
     Preconditions the gradients of a model with a layer-wise FIM approximation.
@@ -244,7 +246,7 @@ class KFAC(optim.Optimizer):
             )
             colocate_factors = True
 
-        known_modules = {m.lower() for m in kfac.layers.KNOWN_MODULES}
+        known_modules = {m.lower() for m in KNOWN_MODULES}
         if skip_layers is not None:
             if isinstance(skip_layers, str):
                 skip_layers = [skip_layers.lower()]
@@ -490,7 +492,7 @@ class KFAC(optim.Optimizer):
                 'prediv_eigenvalues'
             ] = self.compute_eigenvalue_outer_product
 
-        layer_list = kfac.layers.get_kfac_layers(
+        layer_list = get_kfac_layers(
             module,
             method=self.compute_method,
             tdc=self.tdc,
@@ -521,10 +523,7 @@ class KFAC(optim.Optimizer):
                 pass
             elif module_name not in self.known_modules:
                 self.register_submodules(module, prefix=name)
-            elif (
-                kfac.layers.module_requires_grad(module)
-                and module not in self.layers
-            ):
+            elif module_requires_grad(module) and module not in self.layers:
                 self.register_module(module, name)
 
     def register_model(self, model: torch.nn.Module) -> None:
