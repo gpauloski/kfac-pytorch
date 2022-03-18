@@ -4,7 +4,8 @@ from typing import cast
 
 import torch
 
-from kfac.layers import utils
+from kfac.layer.utils import get_cov
+from kfac.layers.utils import append_bias_ones
 
 
 class ModuleHelper:
@@ -44,13 +45,13 @@ class LinearModuleHelper(ModuleHelper):
         # a: batch_size * in_dim
         a = a.view(-1, a.shape[-1])
         if self.has_bias():
-            a = utils.append_bias_ones(a)
-        return utils.get_cov(a)
+            a = append_bias_ones(a)
+        return get_cov(a)
 
     def get_g_factor(self, g: torch.Tensor) -> torch.Tensor:
         # g: batch_size * out_dim
         g = g.reshape(-1, g.shape[-1])
-        return utils.get_cov(g)
+        return get_cov(g)
 
 
 class Conv2dModuleHelper(ModuleHelper):
@@ -62,9 +63,9 @@ class Conv2dModuleHelper(ModuleHelper):
         spatial_size = a.size(1) * a.size(2)
         a = a.view(-1, a.size(-1))
         if self.has_bias():
-            a = utils.append_bias_ones(a)
+            a = append_bias_ones(a)
         a = a / spatial_size
-        return utils.get_cov(a)
+        return get_cov(a)
 
     def get_g_factor(self, g: torch.Tensor) -> torch.Tensor:
         # g: batch_size * n_filters * out_h * out_w
@@ -74,7 +75,7 @@ class Conv2dModuleHelper(ModuleHelper):
         g = g.transpose(1, 2).transpose(2, 3)
         g = g.reshape(-1, g.size(-1))
         g = g / spatial_size
-        return utils.get_cov(g)
+        return get_cov(g)
 
     def get_grad(self) -> torch.Tensor:
         grad = cast(

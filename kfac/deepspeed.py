@@ -4,7 +4,10 @@ from typing import Callable
 
 import torch
 
-import kfac
+from kfac.preconditioner import AssignmentStrategy
+from kfac.preconditioner import ComputeMethod
+from kfac.preconditioner import DistributedStrategy
+from kfac.preconditioner import KFACPreconditioner
 
 try:
     import deepspeed  # type: ignore
@@ -13,7 +16,7 @@ except ImportError as e:
     deepspeed = e
 
 
-class KFAC(kfac.KFAC):
+class KFACDeepSpeedPreconditioner(KFACPreconditioner):
     """KFAC DeepSpeed Integration"""
 
     def __init__(
@@ -30,14 +33,14 @@ class KFAC(kfac.KFAC):
         accumulation_steps: int = 1,
         allreduce_bucket_cap_mb: float = 25.0,
         assignment_strategy: (
-            kfac.AssignmentStrategy | str
-        ) = kfac.AssignmentStrategy.COMPUTE,
+            AssignmentStrategy | str
+        ) = AssignmentStrategy.COMPUTE,
         colocate_factors: bool = True,
-        compute_method: (kfac.ComputeMethod | str) = kfac.ComputeMethod.EIGEN,
+        compute_method: ComputeMethod | str = ComputeMethod.EIGEN,
         compute_eigenvalue_outer_product: bool = True,
         grad_worker_fraction: (
-            kfac.DistributedStrategy | float
-        ) = kfac.DistributedStrategy.COMM_OPT,
+            DistributedStrategy | float
+        ) = DistributedStrategy.COMM_OPT,
         symmetry_aware: bool = False,
         # Optional other parameters
         grad_scaler: (
