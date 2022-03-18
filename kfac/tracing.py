@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 from typing import Callable
@@ -10,6 +11,7 @@ import torch
 RT = TypeVar('RT')
 
 _func_traces: dict[str, list[float]] = {}
+logger = logging.getLogger(__name__)
 
 
 def clear_trace() -> None:
@@ -30,8 +32,12 @@ def get_trace(
     return out
 
 
-def print_trace(average: bool = True, max_history: int | None = None) -> None:
-    """Print function execution times recorded with @trace
+def log_trace(
+    average: bool = True,
+    max_history: int | None = None,
+    loglevel: int = logging.INFO,
+) -> None:
+    """Log function execution times recorded with @trace
 
     To trace function execution times, use the @kfac.utils.trace()
     decorator on all functions to be traced. Then to get the average
@@ -46,7 +52,7 @@ def print_trace(average: bool = True, max_history: int | None = None) -> None:
     if len(_func_traces) == 0:
         return
     for fname, times in get_trace(average, max_history).items():
-        print(f'{fname}: {times}')
+        logger.log(loglevel, f'{fname}: {times}')
 
 
 def trace(
