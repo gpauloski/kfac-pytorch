@@ -26,7 +26,7 @@ class ModuleHelper:
             concats bias.
         """
         g = cast(torch.Tensor, self.module.weight.grad)
-        if self.has_bias:
+        if self.has_bias():
             g = torch.cat(
                 [g, self.module.bias.grad.view(-1, 1)],  # type: ignore
                 1,
