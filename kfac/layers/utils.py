@@ -56,19 +56,6 @@ def get_cov(
         return a.t() @ (b / scale)
 
 
-def get_elementwise_inverse(
-    vector: torch.Tensor,
-    damping: float | None = None,
-) -> torch.Tensor:
-    """Computes the reciprocal of each non-zero element of v"""
-    if damping is not None:
-        vector = vector + damping
-    mask = vector != 0.0
-    reciprocal = vector.clone()
-    reciprocal[mask] = torch.reciprocal(reciprocal[mask])
-    return reciprocal
-
-
 def reshape_data(
     data_list: list[torch.Tensor],
     batch_first: bool = True,
@@ -91,24 +78,3 @@ def reshape_data(
     if collapse_dims and len(d.shape) > 2:
         d = d.view(-1, d.shape[-1])
     return d
-
-
-def update_running_avg(
-    new: torch.Tensor,
-    current: torch.Tensor,
-    alpha: float = 1.0,
-) -> None:
-    """Computes in-place running average
-
-    current = alpha*current + (1-alpha)*new
-
-    Args:
-      new (tensor): tensor to add to current average
-      current (tensor): tensor containing current average. Result will be
-          saved in place to this tensor.
-      alpha (float, optional): (default: 1.0)
-    """
-    if alpha != 1:
-        current *= alpha / (1 - alpha)
-        current += new
-        current *= 1 - alpha
