@@ -186,11 +186,14 @@ class WorkerAllocator:
     ) -> dict[Any, list[int]]:
         """Helper for constrained layer work assignments"""
         summed_work = {k: sum(v) for k, v in work.items()}
-        sorted_groups = sorted(
-            summed_work.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )
+        sorted_groups = [
+            key
+            for key, value in sorted(
+                summed_work.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        ]
         assignments = {key: [-1] * len(value) for key, value in work.items()}
 
         for group_key in sorted_groups:

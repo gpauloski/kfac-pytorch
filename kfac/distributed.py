@@ -30,7 +30,7 @@ class NonSquareTensorError(Exception):
 
 
 class AllreduceTensorBucket:
-    def __init__(self, group: dist.ProcessGroup | None) -> None:
+    def __init__(self, group: dist.ProcessGroup | None = None) -> None:
         self._group = group
         self._tensors: list[torch.Tensor] = []
         self._futures: list[FutureType] = []
