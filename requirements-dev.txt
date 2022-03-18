@@ -4,6 +4,7 @@ coverage
 flake8
 flake8-bugbear
 mypy
+numpy
 pep8-naming
 pre-commit
 pytest
