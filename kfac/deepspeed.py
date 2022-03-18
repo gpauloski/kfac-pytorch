@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 import torch
@@ -14,6 +15,8 @@ try:
     from deepspeed.runtime.engine import DeepSpeedEngine  # type: ignore
 except ImportError as e:
     deepspeed = e
+
+logger = logging.getLogger(__name__)
 
 
 class KFACDeepSpeedPreconditioner(KFACPreconditioner):
@@ -50,7 +53,7 @@ class KFACDeepSpeedPreconditioner(KFACPreconditioner):
         inv_dtype: torch.dtype | None = None,
         skip_layers: list[str] | None = None,
         update_factors_in_hook: bool = True,
-        verbose: bool = False,
+        loglevel: int = logging.DEBUG,
     ) -> None:
         if isinstance(deepspeed, ImportError):
             raise deepspeed
@@ -83,5 +86,5 @@ class KFACDeepSpeedPreconditioner(KFACPreconditioner):
             inv_dtype=inv_dtype,
             skip_layers=skip_layers,
             update_factors_in_hook=update_factors_in_hook,
-            verbose=verbose,
+            loglevel=loglevel,
         )

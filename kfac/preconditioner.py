@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import logging
 import math
 import warnings
 from collections import defaultdict
@@ -19,6 +20,8 @@ from kfac.layers import module_requires_grad
 from kfac.layers.base import AllreduceMethod
 from kfac.layers.base import BroadcastMethod
 from kfac.layers.base import KFACBaseLayer
+
+logger = logging.getLogger(__name__)
 
 
 class AssignmentStrategy(enum.Enum):
@@ -138,7 +141,7 @@ class KFACPreconditioner(optim.Optimizer):
           updated in the module hook and the async commmunication is started.
           Otherwise, this will be performed at the start of step() (default:
           True).
-      verbose (bool): print registered layers (default: False).
+      loglevel (int): logging level (default: logging.DEBUG).
     """
 
     def __init__(
@@ -172,7 +175,7 @@ class KFACPreconditioner(optim.Optimizer):
         inv_dtype: torch.dtype | None = None,
         skip_layers: list[str] | None = None,
         update_factors_in_hook: bool = True,
-        verbose: bool = False,
+        loglevel: int = logging.DEBUG,
     ) -> None:
         if not 0 < factor_update_steps:
             raise ValueError('factor_update_steps must be > 0')
@@ -297,7 +300,7 @@ class KFACPreconditioner(optim.Optimizer):
         self.skip_layers = skip_layers
         self.update_factors_in_hook = update_factors_in_hook
         self.known_modules = known_modules
-        self.verbose = verbose
+        self.loglevel = loglevel
 
         self.workers_assigned = False
         self.tdc = TorchDistributedCommunicator(
@@ -500,7 +503,8 @@ class KFACPreconditioner(optim.Optimizer):
         )
         for module, kfac_layer in layer_list:
             if dist.get_rank() == 0 and self.verbose:
-                print(
+                logger.log(
+                    self.loglevel,
                     'Registered {}: {}'.format(
                         name if name is not None else '',
                         kfac_layer.__class__.__name__,
