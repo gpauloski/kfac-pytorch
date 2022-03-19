@@ -27,6 +27,15 @@ def test_triu() -> None:
     check([2, 2])
     check([4, 4])
 
+    with pytest.raises(ValueError):
+        get_triu(torch.rand([4, 2]))
+    with pytest.raises(ValueError):
+        get_triu(torch.rand([2, 2, 2]))
+    with pytest.raises(ValueError):
+        x = torch.rand([4, 4])
+        t = get_triu(x)
+        fill_triu((2, 2, 2), t)
+
 
 @pytest.mark.parametrize(
     'world_size,shape,symmetric,expect_raises',
@@ -41,7 +50,7 @@ def test_allreduce(
     world_size: int,
     shape: list[int],
     symmetric: bool,
-    expect_raises: None,
+    expect_raises: type[BaseException] | None,
 ) -> None:
     """Test allreduce"""
 
@@ -80,7 +89,7 @@ def test_broadcast(
     world_size: int,
     shape: list[int],
     symmetric: bool,
-    expect_raises: None,
+    expect_raises: type[BaseException] | None,
 ) -> None:
     """Test broadcast"""
 
@@ -159,16 +168,17 @@ def test_allreduce_tensor_bucket(world_size: int) -> None:
 
 
 @pytest.mark.parametrize(
-    'world_size,shape,tensor_count,bucket_cap_mb,symmetric',
+    'world_size,shape,tensor_count,bucket_cap_mb,symmetric,expect_raises',
     [
         # Test sum of all tensors less than bucket
-        (1, [2, 2], 4, 1, False),
-        (4, [100, 100], 4, 1, False),
+        (1, [2, 2], 4, 1, False, None),
+        (4, [100, 100], 4, 1, False, None),
         # Test each tensor larger than bucket
-        (4, [100, 100], 4, 0.001, False),
+        (4, [100, 100], 4, 0.001, False, None),
         # Test symmetric
-        (1, [4, 4], 4, 1, True),
-        (4, [100, 100], 4, 0.001, True),
+        (1, [4, 4], 4, 1, True, None),
+        (4, [100, 100], 4, 0.001, True, None),
+        (4, [100, 4], 4, 1, True, NonSquareTensorError),
     ],
 )
 def test_allreduce_bucketed(
@@ -177,6 +187,7 @@ def test_allreduce_bucketed(
     tensor_count: int,
     bucket_cap_mb: float,
     symmetric: bool,
+    expect_raises: type[BaseException] | None,
 ) -> None:
     """Test bucketed allreduce."""
 
@@ -186,22 +197,32 @@ def test_allreduce_bucketed(
         tensor_count: int,
         bucket_cap_mb: float,
         symmetric: bool = False,
+        expect_raises: type[BaseException] | None = None,
     ) -> None:
-        world_size = torch.distributed.get_world_size()
-        comm = TorchDistributedCommunicator(bucket_cap_mb)
+        try:
+            world_size = torch.distributed.get_world_size()
+            comm = TorchDistributedCommunicator(bucket_cap_mb)
 
-        tensors = []
-        for _ in range(tensor_count):
-            t = torch.ones(shape, dtype=torch.float32)
-            tensors.append(
-                comm.allreduce_bucketed(t, symmetric=symmetric),
-            )
-        comm.flush_allreduce_buckets()
+            tensors = []
+            for _ in range(tensor_count):
+                t = torch.ones(shape, dtype=torch.float32)
+                tensors.append(
+                    comm.allreduce_bucketed(t, symmetric=symmetric),
+                )
+            if world_size > 1:
+                with pytest.raises(RuntimeError):
+                    comm._new_allreduce_bucket(None)
+            comm.flush_allreduce_buckets()
 
-        for tensor in tensors:
-            if isinstance(tensor, Future):
-                tensor = tensor.wait()
-            assert torch.sum(tensor).item() == world_size * torch.numel(tensor)
+            for tensor in tensors:
+                if isinstance(tensor, Future):
+                    tensor = tensor.wait()
+                assert torch.sum(tensor).item() == world_size * torch.numel(
+                    tensor,
+                )
+        except Exception as e:
+            if expect_raises is not None and not isinstance(e, expect_raises):
+                raise
 
     allreduce(shape, tensor_count, bucket_cap_mb, symmetric)
 
@@ -259,6 +280,9 @@ def test_allreduce_bucketed_grouped(
                         group=group,
                     ),
                 )
+        comm.flush_allreduce_buckets()
+        # All buckets should be removed now so calling again shouldn't be
+        # an issue
         comm.flush_allreduce_buckets()
 
         for tensor in tensors:
