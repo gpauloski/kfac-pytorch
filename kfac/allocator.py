@@ -50,11 +50,8 @@ class WorkerAllocator:
                 f'value. Found {world_size}*{grad_worker_fraction}'
                 f'={grad_workers}.',
             )
-        grad_workers = max(1, round(world_size * grad_worker_fraction))
-        if world_size % grad_workers != 0:
-            raise ValueError(
-                'compute_grad_fraction must produce equally size groups',
-            )
+        else:
+            grad_workers = int(grad_workers)
         if local_rank >= world_size:
             raise ValueError(
                 'local_rank={local_rank} larger than world_size={world_size}',
@@ -77,8 +74,13 @@ class WorkerAllocator:
         if self.group_func is not None:
             # TODO(gpauloski): skip making communication groups of size 1?
             for group in self.grad_worker_groups | self.grad_receiver_groups:
-                if group not in self._comm_groups:
-                    self._comm_groups[group] = self.group_func(list(group))
+                assert group not in self._comm_groups
+                _group = self.group_func(list(group))
+                # TODO(gpauloski): some group configurations resulted in
+                # dist.new_group returning the same handle for distinct
+                # rank groups
+                # assert _group not in self._comm_groups.values()
+                self._comm_groups[group] = _group
 
     @staticmethod
     def partition_grad_workers(
@@ -283,7 +285,7 @@ class WorkerAllocator:
         for group in self.grad_receiver_groups:
             if self.local_rank in group:
                 return group
-        raise ValueError(f'{self.local_rank=} not found in any group.')
+        raise AssertionError(f'{self.local_rank=} not found in any group.')
 
     def get_grad_receiver_group(self) -> Group:
         """Get gradient broadcast group for this rank"""
