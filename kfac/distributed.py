@@ -10,8 +10,8 @@ import torch.distributed as dist
 try:
     import apex_C  # type: ignore
 
-    flatten = apex_C.flatten
-    unflatten = apex_C.unflatten
+    flatten = apex_C.flatten  # pragma: no cover
+    unflatten = apex_C.unflatten  # pragma: no cover
 except ImportError:
     warnings.warn(
         'apex is not installed or was not installed wit --cpp_ext. '

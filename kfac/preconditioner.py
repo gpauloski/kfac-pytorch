@@ -12,13 +12,12 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 
-from kfac.allocator import WorkerAllocator
 from kfac.distributed import TorchDistributedCommunicator
+from kfac.enums import AllreduceMethod
+from kfac.enums import DistributedStrategy
 from kfac.layers import get_kfac_layers
 from kfac.layers import KNOWN_MODULES
 from kfac.layers import module_requires_grad
-from kfac.layers.base import AllreduceMethod
-from kfac.layers.base import BroadcastMethod
 from kfac.layers.base import KFACBaseLayer
 
 logger = logging.getLogger(__name__)
@@ -47,23 +46,6 @@ class ComputeMethod(enum.Enum):
 
     EIGEN = 1
     INVERSE = 2
-
-
-class DistributedStrategy(enum.Enum):
-    """KFAC Distribution Strategy
-
-    Shortcuts for common grad_worker_fractions.
-      - COMM_OPT: grad_worker_fraction = 1
-      - HYBRID_OPT: grad_worker_fraction = 0.5
-      - MEM-OPT: grad_worker_fraction = 1 / world_size
-
-    See https://arxiv.org/pdf/2107.01739.pdf for more details on distribution
-    strategies.
-    """
-
-    COMM_OPT = 1
-    MEM_OPT = 2
-    HYBRID_OPT = 3
 
 
 class KFACPreconditioner(optim.Optimizer):
@@ -132,7 +114,7 @@ class KFACPreconditioner(optim.Optimizer):
           defaults to data type of intermediate values in forward/backward pass
           (default: None).
       inv_dtype (torch.dtype): force data type for storing second-order data
-          (e.g., inverses or eigen decompositions) (default: None).
+          (e.g., inverses or eigen decompositions) (default: torch.float32).
       skip_layers (list): list of module names to ignore when registering
           layers. Passing the name of parent modules will prevent recursively
           registering child modules of the parent. Case-insensitive
@@ -172,7 +154,7 @@ class KFACPreconditioner(optim.Optimizer):
             torch.cuda.amp.GradScaler | Callable[[], float] | None
         ) = None,
         factor_dtype: torch.dtype | None = None,
-        inv_dtype: torch.dtype | None = None,
+        inv_dtype: torch.dtype = torch.float32,
         skip_layers: list[str] | None = None,
         update_factors_in_hook: bool = True,
         loglevel: int = logging.DEBUG,
@@ -302,7 +284,6 @@ class KFACPreconditioner(optim.Optimizer):
         self.known_modules = known_modules
         self.loglevel = loglevel
 
-        self.workers_assigned = False
         self.tdc = TorchDistributedCommunicator(
             bucket_cap_mb=self.allreduce_bucket_cap_mb,
         )
@@ -310,7 +291,6 @@ class KFACPreconditioner(optim.Optimizer):
             self.allreduce_method = AllreduceMethod.ALLREDUCE_BUCKETED
         else:
             self.allreduce_method = AllreduceMethod.ALLREDUCE
-        self.broadcast_method = BroadcastMethod.BROADCAST
 
         # key: nn.Module, value: KFACLayer
         self.layers: dict[
@@ -325,7 +305,6 @@ class KFACPreconditioner(optim.Optimizer):
             'allreduce_bucket_cap_mb': self.allreduce_bucket_cap_mb,
             'allreduce_method': self.allreduce_method,
             'assignment_strategy': self.assignment_strategy,
-            'broadcast_method': self.broadcast_method,
             'colocate_factors': self.colocate_factors,
             'compute_method': self.compute_method,
             'compute_eigenvalue_outer_product': self.compute_eigenvalue_outer_product,  # noqa: E501
@@ -467,8 +446,8 @@ class KFACPreconditioner(optim.Optimizer):
                     DistributedStrategy.COMM_OPT,
                     DistributedStrategy.HYBRID_OPT,
                 ]:
-                    layer.broadcast_a_inv()
-                    layer.broadcast_g_inv()
+                    layer.broadcast_a_inv(src=0)
+                    layer.broadcast_g_inv(src=0)
 
     def register_module(
         self,
@@ -484,7 +463,6 @@ class KFACPreconditioner(optim.Optimizer):
         """
         kwargs = {
             'allreduce_method': self.allreduce_method,
-            'broadcast_method': self.broadcast_method,
             'factor_dtype': self.factor_dtype,
             'grad_scaler': self.grad_scaler,
             'inv_dtype': self.inv_dtype,
@@ -574,13 +552,6 @@ class KFACPreconditioner(optim.Optimizer):
         # Will be a no-op if bucketing was not used
         self.tdc.flush_allreduce_buckets()
 
-        # We do this after compute_factors() because the buffers
-        # are not instantiated until this point and we use the size of the
-        # buffers to approximate the time each layer will take to compute.
-        if not self.workers_assigned:
-            self._assign_workers()
-            self.workers_assigned = True
-
         # Compute Inverses
         if self.steps % self.inv_update_steps == 0:
             for layer in reversed(self.layers.values()):
@@ -589,20 +560,20 @@ class KFACPreconditioner(optim.Optimizer):
                     self.distributed_strategy
                     is not DistributedStrategy.MEM_OPT
                 ):
-                    layer.broadcast_a_inv()
+                    layer.broadcast_a_inv(src=0)
                 layer.compute_g_inv(damping=self.damping)
                 if (
                     self.distributed_strategy
                     is not DistributedStrategy.MEM_OPT
                 ):
-                    layer.broadcast_g_inv()
+                    layer.broadcast_g_inv(src=0)
             self.tdc.flush_allreduce_buckets()
 
         # Compute Preconditioned Gradients
         for layer in reversed(self.layers.values()):
             layer.preconditioned_grad(damping=self.damping)
             if self.distributed_strategy is not DistributedStrategy.COMM_OPT:
-                layer.broadcast_grad()
+                layer.broadcast_grad(src=0)
         self.tdc.flush_allreduce_buckets()
 
         scale = None if self.kl_clip is None else self._compute_grad_scale()
@@ -641,64 +612,6 @@ class KFACPreconditioner(optim.Optimizer):
         sizes['total'] = sum(sizes.values())
         return sizes
 
-    def _assign_workers(self) -> None:
-        """Assigns workers to minimize max load on any worker.
-
-        Approximates load by estimating inverse computation time as O(n^3)
-        for each n x n factor.
-        """
-        if len(self.layers) == 0:
-            return
-
-        allocator = WorkerAllocator(
-            self.grad_worker_fraction,
-            dist.get_rank(),
-            dist.get_world_size(),
-            dist.new_group,
-        )
-
-        sizes: dict[Any, list[float]] = {}
-        for module, layer in self.layers.items():
-            if layer.a_factor is None or layer.g_factor is None:
-                raise RuntimeError(
-                    'A and G factors must be computed once for each layer '
-                    'before assignments can be made',
-                )
-            if self.colocate_factors:
-                x = [layer.a_factor.shape[0] + layer.g_factor.shape[0]]
-            else:
-                x = [layer.a_factor.shape[0], layer.g_factor.shape[0]]
-
-            if self.assignment_strategy == AssignmentStrategy.COMPUTE:
-                sizes[module] = list(map(lambda n: n**3, x))
-            elif self.assignment_strategy == AssignmentStrategy.MEMORY:
-                sizes[module] = list(map(lambda n: n**2, x))
-            else:
-                raise ValueError(
-                    'assignment_strategy must be COMPUTE or MEMORY',
-                )
-
-        assignments = allocator.assign_layer_work(
-            sizes,
-            allocator.grad_worker_groups,
-        )
-
-        for module, layer in self.layers.items():
-            if self.colocate_factors:
-                a_inv_rank = g_inv_rank = assignments[module][0]
-            else:
-                a_inv_rank = assignments[module][0]
-                g_inv_rank = assignments[module][1]
-            layer.assign_workers(
-                a_inv_rank,
-                g_inv_rank,
-                allocator.get_grad_src_rank(a_inv_rank),
-                allocator.get_grad_worker_ranks(a_inv_rank),
-                allocator.get_grad_worker_group(a_inv_rank),
-                allocator.get_grad_receiver_ranks(),
-                allocator.get_grad_receiver_group(),
-            )
-
     def _compute_grad_scale(self) -> float | None:
         """Computes scale factor for preconditioned gradients
 
@@ -711,15 +624,15 @@ class KFACPreconditioner(optim.Optimizer):
                 raise RuntimeError(
                     'layer gradient has not been preconditioned',
                 )
-            w = layer._get_weight_grad()
-            if layer.has_bias:
-                b = layer._get_bias_grad()
+            w = layer.module.get_weight_grad()
+            if layer.module.has_bias():
+                b = layer.module.get_bias_grad()
                 v1 = layer.grad[:, :-1].view(w.size())
                 v2 = layer.grad[:, -1:].view(b.size())
             else:
                 v1 = layer.grad.view(w.size())
             vg_sum += (v1 * w * self.lr**2).sum().item()
-            if layer.has_bias:
+            if layer.module.has_bias():
                 vg_sum += (v2 * b * self.lr**2).sum().item()
         if vg_sum == 0.0:
             return None

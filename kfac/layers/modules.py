@@ -12,6 +12,21 @@ class ModuleHelper:
     def __init__(self, module: torch.nn.Module):
         self.module = module
 
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({repr(self.module)})'
+
+    @property
+    def a_factor_shape(self) -> tuple[int, int]:
+        raise NotImplementedError
+
+    @property
+    def g_factor_shape(self) -> tuple[int, int]:
+        raise NotImplementedError
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.module.parameters()).device
+
     def get_a_factor(self, a: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
@@ -33,14 +48,42 @@ class ModuleHelper:
             )
         return g
 
+    def get_bias_grad(self) -> torch.Tensor:
+        return self.module.bias.grad
+
+    def get_weight_grad(self) -> torch.Tensor:
+        return self.module.weight.grad
+
     def has_bias(self) -> bool:
         return hasattr(self.module, 'bias') and self.module.bias is not None
 
     def has_symmetric_factors(self) -> bool:
         return True
 
+    def set_grad(self, grad: torch.Tensor) -> None:
+        if self.has_bias():
+            weight_grad = grad[:, :-1].view(self.get_weight_grad().size())
+            bias_grad = grad[:, -1:].view(self.get_bias_grad().size())
+        else:
+            weight_grad = grad.view(self.get_weight_grad().size())
+
+        if self.has_bias():
+            self.module.bias.grad = bias_grad.contiguous()
+        self.module.weight.grad = weight_grad.contiguous()
+
 
 class LinearModuleHelper(ModuleHelper):
+    @property
+    def a_factor_shape(self) -> tuple[int, int]:
+        # A shape = (in_features + int(has_bias), in_features + int(has_bias))
+        x = self.module.weight.shape[1] + int(self.has_bias())
+        return (x, x)
+
+    @property
+    def g_factor_shape(self) -> tuple[int, int]:
+        # G shape = (out_features, out_features)
+        return (self.module.weight.shape[0], self.module.weight.shape[0])
+
     def get_a_factor(self, a: torch.Tensor) -> torch.Tensor:
         # a: batch_size * in_dim
         a = a.view(-1, a.shape[-1])
@@ -57,6 +100,17 @@ class LinearModuleHelper(ModuleHelper):
 class Conv2dModuleHelper(ModuleHelper):
     def __init__(self, module: torch.nn.Conv2d):
         self.module = module
+
+    @property
+    def a_factor_shape(self) -> tuple[int, int]:
+        x = self.module.in_channels * self.module.kernel_size[
+            0
+        ] * self.module.kernel_size[1] + int(self.has_bias())
+        return (x, x)
+
+    @property
+    def g_factor_shape(self) -> tuple[int, int]:
+        return (self.module.out_channels, self.module.out_channels)
 
     def get_a_factor(self, a: torch.Tensor) -> torch.Tensor:
         a = self._extract_patches(a)

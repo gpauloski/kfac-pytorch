@@ -63,13 +63,9 @@ def get_kfac_layers(
 
     layer: KFACBaseLayer
     if method == kfac.preconditioner.ComputeMethod.EIGEN:
-        layer = KFACEigenLayer(module, module_helper=helper(module), **kwargs)
+        layer = KFACEigenLayer(module=helper(module), **kwargs)
     elif method == kfac.preconditioner.ComputeMethod.INVERSE:
-        layer = KFACInverseLayer(
-            module,
-            module_helper=helper(module),
-            **kwargs,
-        )
+        layer = KFACInverseLayer(module=helper(module), **kwargs)
     else:
         raise ValueError(f'Unknown KFAC method type: {method}')
 
