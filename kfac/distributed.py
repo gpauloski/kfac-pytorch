@@ -1,3 +1,11 @@
+"""Unit tests for kfac/distributed.py.
+
+Note:
+    A number of lambda expressions and non-top level functions
+    are marked with pragma: no cover because coverage does not
+    seem to be able to detect them as run when they are executed
+    as a callback to a future.
+"""
 from __future__ import annotations
 
 import warnings
@@ -84,15 +92,15 @@ class AllreduceTensorBucket:
         if len(self._tensors) == 0:
             return None
         tensor = flatten(self._tensors)
-        future = dist.all_reduce(
+        _future = dist.all_reduce(
             tensor,
             group=self._group,
             async_op=True,
         ).get_future()
         # future.value is a list of one tensor so unpack it to be cleaner
-        future = future.then(lambda f: f.value()[0])
+        _future = _future.then(lambda f: f.value()[0])  # pragma: no cover
 
-        def _callback(future: FutureType) -> None:
+        def _callback(future: FutureType) -> None:  # pragma: no cover
             tensors = unflatten(future.value(), self._tensors)
             for sub_tensor, sub_future in zip(tensors, self._futures):
                 sub_future.set_result(sub_tensor)
@@ -100,9 +108,9 @@ class AllreduceTensorBucket:
             self._tensors.clear()
             self._futures.clear()
 
-        future.add_done_callback(_callback)
+        _future.add_done_callback(_callback)
 
-        return future
+        return _future
 
 
 class TorchDistributedCommunicator:
@@ -218,7 +226,7 @@ class TorchDistributedCommunicator:
             async_op=True,
         ).get_future()
 
-        def callback_(future_: FutureType) -> torch.Tensor:
+        def callback_(future_: FutureType) -> torch.Tensor:  # pragma: no cover
             t = future_.value()[0]
             if average:
                 t = (1 / dist.get_world_size(group)) * t
@@ -275,9 +283,13 @@ class TorchDistributedCommunicator:
             async_op=True,
         ).get_future()
         if symmetric:
-            future = future.then(lambda fut: fill_triu(shape, fut.value()[0]))
+            future = future.then(  # pragma: no cover
+                lambda fut: fill_triu(shape, fut.value()[0]),
+            )
         else:
-            future = future.then(lambda fut: fut.value()[0])
+            future = future.then(  # pragma: no cover
+                lambda fut: fut.value()[0],
+            )
         return future
 
     def allreduce_bucketed(
@@ -340,7 +352,7 @@ class TorchDistributedCommunicator:
             bucket = self._new_allreduce_bucket(group)
         future = bucket.add_tensor(tensor)
 
-        def callback_(future_: FutureType) -> torch.Tensor:
+        def callback_(future_: FutureType) -> torch.Tensor:  # pragma: no cover
             t = future_.value()
             if average:
                 t = (1 / dist.get_world_size(group)) * t
