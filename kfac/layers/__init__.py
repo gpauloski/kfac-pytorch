@@ -6,13 +6,13 @@ from typing import Type
 
 import torch
 
+import kfac
 from kfac.layers.base import KFACBaseLayer
 from kfac.layers.eigen import KFACEigenLayer
 from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.modules import Conv2dModuleHelper
 from kfac.layers.modules import LinearModuleHelper
 from kfac.layers.modules import ModuleHelper
-from kfac.preconditioner import ComputeMethod
 
 try:
     from megatron.mpu.layers import ColumnParallelLinear  # type: ignore
@@ -38,7 +38,7 @@ if megatron:
 
 def get_kfac_layers(
     module: torch.nn.Module,
-    method: ComputeMethod,
+    method: kfac.preconditioner.ComputeMethod,
     **kwargs: Any,
 ) -> list[tuple[torch.nn.Module, KFACBaseLayer]]:
     """Instantiates KFACLayer(s) for module
@@ -62,9 +62,9 @@ def get_kfac_layers(
         )
 
     layer: KFACBaseLayer
-    if method == ComputeMethod.EIGEN:
+    if method == kfac.preconditioner.ComputeMethod.EIGEN:
         layer = KFACEigenLayer(module, module_helper=helper(module), **kwargs)
-    elif method == ComputeMethod.INVERSE:
+    elif method == kfac.preconditioner.ComputeMethod.INVERSE:
         layer = KFACInverseLayer(
             module,
             module_helper=helper(module),

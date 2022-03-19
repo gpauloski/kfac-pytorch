@@ -1,6 +1,8 @@
 """Partition Workers Unit Tests"""
 from __future__ import annotations
 
+from typing import Sequence
+
 from pytest import raises
 
 from kfac.allocator import WorkerAllocator
@@ -38,6 +40,14 @@ def test_initialize() -> None:
         # We did not pass group_func to WorkerAllocator so the communication
         # groups should not have been initialized and this should fail.
         allocator1.comm_group({0, 1})
+
+    # Test some methods that raise ValueError for rank values that exceed
+    # the world size
+    allocator = WorkerAllocator(1, 0, 4, lambda x: x)
+    with raises(ValueError):
+        allocator.comm_group([5, 6, 7, 8])
+    with raises(ValueError):
+        allocator.get_grad_worker_ranks(5)
 
 
 def test_unconstrained_assignment() -> None:
@@ -92,7 +102,7 @@ def test_constrained_assignment() -> None:
     def _check(
         world_size: int,
         work: dict[str, list[float]],
-        groups: list[list[int]],
+        groups: list[Sequence[int]],
         assignment: dict[str, list[int]],
     ) -> None:
         allocator1 = WorkerAllocator(1, 0, world_size)
@@ -108,6 +118,7 @@ def test_constrained_assignment() -> None:
         'layer1': [1, 100, 5, 2],
         'layer2': [0.1, 0.1, 0.1, 0.1],
     }
+    group: list[Sequence[int]]
     group = [[0, 2, 4, 6], [1, 3, 5, 7]]
     assignment: dict[str, list[int]] = {
         'layer1': [6, 0, 2, 4],
@@ -119,7 +130,7 @@ def test_constrained_assignment() -> None:
         'layer1': [1, 100, 5, 2],
         'layer2': [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
     }
-    group = [[0, 2, 4, 6], [1, 3, 5, 7]]
+    group = [(0, 2, 4, 6), (1, 3, 5, 7)]
     assignment = {
         'layer1': [6, 0, 2, 4],
         'layer2': [1, 3, 5, 7, 1, 3, 5, 7, 1],

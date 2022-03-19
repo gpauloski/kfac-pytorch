@@ -117,7 +117,8 @@ def test_allreduce_tensor_bucket(world_size: int) -> None:
 
         # Communication operation can only be called once
         assert not bucket.communicated()
-        bucket.allreduce()
+        res = bucket.allreduce()
+        assert res is None
         assert bucket.communicated()
         with pytest.raises(RuntimeError):
             bucket.allreduce()
@@ -139,10 +140,8 @@ def test_allreduce_tensor_bucket(world_size: int) -> None:
 
         allreduce_future = bucket.allreduce()
 
-        if allreduce_future is not None:
-            allreduce_tensor = allreduce_future.wait()
-        else:
-            allreduce_tensor = allreduce_future
+        assert allreduce_future is not None
+        allreduce_tensor = allreduce_future.wait()
 
         assert allreduce_tensor.nelement() == 12
 
@@ -265,11 +264,8 @@ def test_allreduce_bucketed_grouped(
         for tensor in tensors:
             if isinstance(tensor, Future):
                 tensor = tensor.wait()
-            if group is not None and rank == 0:
-                assert torch.sum(tensor).item() == torch.numel(tensor)
-            else:
-                assert torch.sum(tensor).item() == group_size * torch.numel(
-                    tensor,
-                )
+            assert torch.sum(tensor).item() == group_size * torch.numel(
+                tensor,
+            )
 
     allreduce(shape, tensor_count, bucket_cap_mb, symmetric)
