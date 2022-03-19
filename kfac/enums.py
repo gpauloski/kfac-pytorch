@@ -8,6 +8,31 @@ class AllreduceMethod(Enum):
     ALLREDUCE_BUCKETED = 2
 
 
+class AssignmentStrategy(Enum):
+    """KFAC Factor Distribution Method
+
+    KFAC assigns factors for second-order computation using a heuristic-based
+    longest-processing time greedy algorithm. AssignmentStrategy.COMPUTE
+    uses an estimation of the second-order computation time as the heuristic
+    and AssignmentStrategy.MEMORY uses the memory requirements of storing
+    the second-order results as the heuristic.
+    """
+
+    COMPUTE = 1
+    MEMORY = 2
+
+
+class ComputeMethod(Enum):
+    """KFAC Second Order Computation Method
+
+    Controls if eigen decompositions or inverse of the factors will be used
+    to precondition the gradients.
+    """
+
+    EIGEN = 1
+    INVERSE = 2
+
+
 class DistributedStrategy(Enum):
     """KFAC Distribution Strategy
 

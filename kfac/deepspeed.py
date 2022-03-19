@@ -5,9 +5,9 @@ from typing import Callable
 
 import torch
 
-from kfac.preconditioner import AssignmentStrategy
-from kfac.preconditioner import ComputeMethod
-from kfac.preconditioner import DistributedStrategy
+from kfac.enums import AssignmentStrategy
+from kfac.enums import ComputeMethod
+from kfac.enums import DistributedStrategy
 from kfac.preconditioner import KFACPreconditioner
 
 try:

@@ -6,7 +6,7 @@ from typing import Type
 
 import torch
 
-import kfac
+from kfac.enums import ComputeMethod
 from kfac.layers.base import KFACBaseLayer
 from kfac.layers.eigen import KFACEigenLayer
 from kfac.layers.inverse import KFACInverseLayer
@@ -38,7 +38,7 @@ if megatron:
 
 def get_kfac_layers(
     module: torch.nn.Module,
-    method: kfac.preconditioner.ComputeMethod,
+    method: ComputeMethod,
     **kwargs: Any,
 ) -> list[tuple[torch.nn.Module, KFACBaseLayer]]:
     """Instantiates KFACLayer(s) for module
@@ -62,9 +62,9 @@ def get_kfac_layers(
         )
 
     layer: KFACBaseLayer
-    if method == kfac.preconditioner.ComputeMethod.EIGEN:
+    if method == ComputeMethod.EIGEN:
         layer = KFACEigenLayer(module=helper(module), **kwargs)
-    elif method == kfac.preconditioner.ComputeMethod.INVERSE:
+    elif method == ComputeMethod.INVERSE:
         layer = KFACInverseLayer(module=helper(module), **kwargs)
     else:
         raise ValueError(f'Unknown KFAC method type: {method}')

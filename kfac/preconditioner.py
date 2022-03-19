@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import enum
 import logging
 import math
 import warnings
@@ -14,6 +13,8 @@ import torch.optim as optim
 
 from kfac.distributed import TorchDistributedCommunicator
 from kfac.enums import AllreduceMethod
+from kfac.enums import AssignmentStrategy
+from kfac.enums import ComputeMethod
 from kfac.enums import DistributedStrategy
 from kfac.layers import get_kfac_layers
 from kfac.layers import KNOWN_MODULES
@@ -21,31 +22,6 @@ from kfac.layers import module_requires_grad
 from kfac.layers.base import KFACBaseLayer
 
 logger = logging.getLogger(__name__)
-
-
-class AssignmentStrategy(enum.Enum):
-    """KFAC Factor Distribution Method
-
-    KFAC assigns factors for second-order computation using a heuristic-based
-    longest-processing time greedy algorithm. AssignmentStrategy.COMPUTE
-    uses an estimation of the second-order computation time as the heuristic
-    and AssignmentStrategy.MEMORY uses the memory requirements of storing
-    the second-order results as the heuristic.
-    """
-
-    COMPUTE = 1
-    MEMORY = 2
-
-
-class ComputeMethod(enum.Enum):
-    """KFAC Second Order Computation Method
-
-    Controls if eigen decompositions or inverse of the factors will be used
-    to precondition the gradients.
-    """
-
-    EIGEN = 1
-    INVERSE = 2
 
 
 class KFACPreconditioner(optim.Optimizer):
