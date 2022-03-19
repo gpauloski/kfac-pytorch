@@ -34,27 +34,41 @@ def test_conv2d_module(
         bias=bias,
     )
     helper = Conv2dModuleHelper(conv2d)
+    assert isinstance(repr(helper), str)
+    assert conv2d.weight.device == helper.device
 
     data = torch.rand((batch_size, in_ch, hin, win))
     target = torch.rand((batch_size, out_ch, hout, wout))
     loss = (conv2d(data) - target).sum()
     loss.backward()
 
-    if bias:
-        grad_shape = (out_ch, in_ch * kernel_size * kernel_size + 1)
-    else:
-        grad_shape = (out_ch, in_ch * kernel_size * kernel_size)
+    grad_shape = (out_ch, in_ch * kernel_size * kernel_size + int(bias))
     assert helper.get_grad().shape == grad_shape
     assert helper.has_bias() == bias
     assert helper.has_symmetric_factors()
 
+    old_weight_grad = helper.get_weight_grad()
+    if bias:
+        old_bias_grad = helper.get_bias_grad()
+    merged_grad = helper.get_grad()
+
+    # Test set_grad() sets weight and bias (if exists)
+    helper.set_grad(merged_grad)
+    assert torch.equal(old_weight_grad, helper.get_weight_grad())
+    if bias:
+        assert torch.equal(old_bias_grad, helper.get_bias_grad())
+
     a = helper.get_a_factor(data)
     g = helper.get_g_factor(target)
-    assert a.shape == (
-        in_ch * kernel_size * kernel_size + int(bias),
-        in_ch * kernel_size * kernel_size + int(bias),
+    assert (
+        a.shape
+        == helper.a_factor_shape
+        == (
+            in_ch * kernel_size * kernel_size + int(bias),
+            in_ch * kernel_size * kernel_size + int(bias),
+        )
     )
-    assert g.shape == (out_ch, out_ch)
+    assert g.shape == helper.g_factor_shape == (out_ch, out_ch)
 
 
 @pytest.mark.parametrize('bias', [True, False])
@@ -65,21 +79,35 @@ def test_linear_module(bias: bool) -> None:
 
     linear = torch.nn.Linear(in_shape, out_shape, bias=bias)
     helper = LinearModuleHelper(linear)
+    assert isinstance(repr(helper), str)
+    assert linear.weight.device == helper.device
 
     data = torch.rand(in_shape)
     target = torch.rand(out_shape)
     loss = (linear(data) - target).sum()
     loss.backward()
 
-    if bias:
-        grad_shape = (out_shape, in_shape + 1)
-    else:
-        grad_shape = (out_shape, in_shape)
+    grad_shape = (out_shape, in_shape + int(bias))
     assert helper.get_grad().shape == grad_shape
     assert helper.has_bias() == bias
     assert helper.has_symmetric_factors()
 
+    old_weight_grad = helper.get_weight_grad()
+    if bias:
+        old_bias_grad = helper.get_bias_grad()
+    merged_grad = helper.get_grad()
+
+    # Test set_grad() sets weight and bias (if exists)
+    helper.set_grad(merged_grad)
+    assert torch.equal(old_weight_grad, helper.get_weight_grad())
+    if bias:
+        assert torch.equal(old_bias_grad, helper.get_bias_grad())
+
     a = helper.get_a_factor(torch.rand([batch_size, in_shape]))
     g = helper.get_g_factor(torch.rand([batch_size, out_shape]))
-    assert a.shape == (in_shape + int(bias), in_shape + int(bias))
-    assert g.shape == (out_shape, out_shape)
+    assert (
+        a.shape
+        == helper.a_factor_shape
+        == (in_shape + int(bias), in_shape + int(bias))
+    )
+    assert g.shape == helper.g_factor_shape == (out_shape, out_shape)
