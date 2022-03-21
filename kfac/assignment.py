@@ -5,9 +5,8 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any
 from typing import Callable
-from typing import TypeVar
 
-CommunicationGroup = TypeVar('CommunicationGroup')
+import torch.distributed as dist
 
 
 @dataclass(frozen=True)
@@ -43,6 +42,14 @@ class WorkAssignment(metaclass=ABCMeta):
         return f'{self.__class__.__name__}(\n{s}\n)'
 
     @abstractmethod
+    def broadcast_gradients(self) -> bool:
+        """Return if gradients need to be broadcast."""
+
+    @abstractmethod
+    def broadcast_inverses(self) -> bool:
+        """Return if inverses need to be broadcast."""
+
+    @abstractmethod
     def get_layers(self) -> tuple[str, ...]:
         """Return tuple of layers assigned."""
         raise NotImplementedError
@@ -74,7 +81,7 @@ class WorkAssignment(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def grad_worker_group(self, layer: str) -> CommunicationGroup:
+    def grad_worker_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for inverse factor broadcast.
 
         This communication group is used for the broadcasts of the inverses
@@ -84,7 +91,7 @@ class WorkAssignment(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def grad_receiver_group(self, layer: str) -> CommunicationGroup:
+    def grad_receiver_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for preconditioned gradient broadcast.
 
         This communication group is used for the broadcasts of the inverses
@@ -104,7 +111,7 @@ class KAISAAssignment(WorkAssignment):
         local_rank: int,
         world_size: int,
         grad_worker_fraction: float,
-        group_func: Callable[[list[int]], CommunicationGroup],
+        group_func: Callable[[list[int]], dist.ProcessGroup | None],
         colocate_factors: bool = True,
     ) -> None:
         """Init KAISAAssignment.
@@ -168,7 +175,7 @@ class KAISAAssignment(WorkAssignment):
 
         ranks_to_communication_group: dict[
             frozenset[int],
-            CommunicationGroup,
+            dist.ProcessGroup | None,
         ] = {}
         for ranks in grad_worker_ranks | grad_receiver_ranks:
             # TODO(gpauloski): skip making communication groups of size 1?
@@ -338,6 +345,22 @@ class KAISAAssignment(WorkAssignment):
             for i in range(grad_workers)
         }
 
+    def broadcast_gradients(self) -> bool:
+        """Return if gradients need to be broadcast.
+
+        In KAISA, this is True when the gradient worker count is less than
+        world size (i.e., not the COMM-OPT case).
+        """
+        return self.grad_workers < self.world_size
+
+    def broadcast_inverses(self) -> bool:
+        """Return if inverses need to be broadcast.
+
+        In KAISA, this is True when the gradient worker count is greater than
+        1 (i.e., not the MEM-OPT case).
+        """
+        return self.grad_workers > 1
+
     def get_layers(self) -> tuple[str, ...]:
         """Return tuple of layers assigned."""
         return tuple(self._inv_assignments.keys())
@@ -367,7 +390,7 @@ class KAISAAssignment(WorkAssignment):
             & self._grad_receiver_groups[layer].ranks,
         ).pop()
 
-    def grad_worker_group(self, layer: str) -> CommunicationGroup:
+    def grad_worker_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for inverse factor broadcast.
 
         This communication group is used for the broadcasts of the inverses
@@ -376,7 +399,7 @@ class KAISAAssignment(WorkAssignment):
         """
         return self._grad_worker_groups[layer].group
 
-    def grad_receiver_group(self, layer: str) -> CommunicationGroup:
+    def grad_receiver_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for preconditioned gradient broadcast.
 
         This communication group is used for the broadcasts of the inverses

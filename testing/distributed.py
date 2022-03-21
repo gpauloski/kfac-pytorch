@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import multiprocessing
+import os
 import time
 from typing import Any
 from typing import Callable
@@ -9,9 +9,7 @@ from typing import cast
 from typing import TypeVar
 
 import pytest
-import torch
 import torch.distributed as dist
-from torch.multiprocessing import Process
 
 # Worker timeout *after* the first worker has completed.
 UNIT_WORKER_TIMEOUT = 30
@@ -63,9 +61,6 @@ def distributed_test(
             os.environ['WORLD_SIZE'] = str(num_procs)
 
             dist.init_process_group(backend)
-
-            if torch.cuda.is_available():
-                torch.cuda.set_device(local_rank)
 
             run_func(*func_args, **func_kwargs)
 

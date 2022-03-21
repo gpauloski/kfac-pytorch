@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from typing import Any
+from typing import cast
+from typing import Sized
 
 import pytest
 
@@ -471,6 +473,12 @@ def test_kaisa_assignment_mem_opt(
         # Check repr: one line for each layer + one prefix and postfix line
         assert repr(assignment).count('\n') + 1 == layer_count + 2
 
+        # Check broadcast decisions are correct
+        broadcast_gradients = grad_worker_group_size < world_size
+        assert assignment.broadcast_gradients() == broadcast_gradients
+        broadcast_inverses = grad_worker_group_size > 1
+        assert assignment.broadcast_inverses() == broadcast_inverses
+
     for layer in TEST_WORK:
         # Check all ranks have the same inv worker for each factor
         assert len({a.inv_worker(layer, 'A') for a in assignments}) == 1
@@ -499,10 +507,10 @@ def test_kaisa_assignment_mem_opt(
             assert 0 <= assignment.inv_worker(layer, 'G') < world_size
             assert 0 <= assignment.src_grad_worker(layer) < world_size
             assert (
-                len(assignment.grad_worker_group(layer))
+                len(cast(Sized, assignment.grad_worker_group(layer)))
                 == grad_worker_group_size
             )
             assert (
-                len(assignment.grad_receiver_group(layer))
+                len(cast(Sized, assignment.grad_receiver_group(layer)))
                 == grad_receiver_group_size
             )

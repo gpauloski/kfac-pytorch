@@ -8,6 +8,7 @@ import torch.distributed as dist
 
 from kfac.distributed import Future
 from kfac.distributed import FutureType
+from kfac.distributed import get_rank
 from kfac.distributed import TorchDistributedCommunicator
 from kfac.enums import AllreduceMethod
 from kfac.layers.base import KFACBaseLayer
@@ -84,7 +85,7 @@ class KFACInverseLayer(KFACBaseLayer):
         group: dist.ProcessGroup | None = None,
     ) -> None:
         if self.a_inv is None:
-            if dist.get_rank() == src:
+            if get_rank() == src:
                 raise RuntimeError(
                     f'Attempt to broadcast A inv from {src=} but this rank '
                     'has not computed A inv yet.',
@@ -109,7 +110,7 @@ class KFACInverseLayer(KFACBaseLayer):
         group: dist.ProcessGroup | None = None,
     ) -> None:
         if self.g_inv is None:
-            if dist.get_rank() == src:
+            if get_rank() == src:
                 raise RuntimeError(
                     f'Attempt to broadcast G inv from {src=} but this rank '
                     'has not computed G inv yet.',

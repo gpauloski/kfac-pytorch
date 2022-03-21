@@ -6,10 +6,17 @@ import torch
 from kfac.distributed import AllreduceTensorBucket
 from kfac.distributed import fill_triu
 from kfac.distributed import Future
+from kfac.distributed import get_rank
 from kfac.distributed import get_triu
+from kfac.distributed import get_world_size
 from kfac.distributed import NonSquareTensorError
 from kfac.distributed import TorchDistributedCommunicator
 from testing.distributed import distributed_test
+
+
+def test_distributed_not_initialized() -> None:
+    assert get_rank() == 0
+    assert get_world_size() == 1
 
 
 def test_triu() -> None:
