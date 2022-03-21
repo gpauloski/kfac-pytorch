@@ -25,6 +25,33 @@ class _LayerFactors:
 class WorkAssignment(metaclass=ABCMeta):
     """Abstract Interface to a Work Assignment Class."""
 
+    def __repr__(self) -> str:
+        """String representation of the work assignment."""
+        layer_strs = []
+        for layer in self.get_layers():
+            factors = self.get_factors(layer)
+            invs = {
+                factor: self.inv_worker(layer, factor) for factor in factors
+            }
+            layer_strs.append(
+                f'  layer="{layer}": '
+                f'is_grad_worker={self.is_grad_worker(layer)}, '
+                f'src_grad_worker={self.src_grad_worker(layer)}, '
+                f'inv_workers={invs}',
+            )
+        s = ',\n'.join(layer_strs)
+        return f'{self.__class__.__name__}(\n{s}\n)'
+
+    @abstractmethod
+    def get_layers(self) -> tuple[str, ...]:
+        """Return tuple of layers assigned."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_factors(self, layer: str) -> tuple[str, ...]:
+        """Return tuple of factors associated with the layer."""
+        raise NotImplementedError
+
     @abstractmethod
     def inv_worker(self, layer: str, factor: str) -> int:
         """Return rank that computes inverse factor for this layer."""
@@ -310,6 +337,14 @@ class KAISAAssignment(WorkAssignment):
             frozenset(range(i * partitions, i * partitions + partitions))
             for i in range(grad_workers)
         }
+
+    def get_layers(self) -> tuple[str, ...]:
+        """Return tuple of layers assigned."""
+        return tuple(self._inv_assignments.keys())
+
+    def get_factors(self, layer: str) -> tuple[str, ...]:
+        """Return tuple of factors associated with the layer."""
+        return tuple(self._inv_assignments[layer].keys())
 
     def inv_worker(self, layer: str, factor: str) -> int:
         """Return rank that computes inverse factor for this layer."""
