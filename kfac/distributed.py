@@ -22,7 +22,7 @@ try:
     unflatten = apex_C.unflatten  # pragma: no cover
 except ImportError:
     warnings.warn(
-        'apex is not installed or was not installed wit --cpp_ext. '
+        'NVIDIA Apex is not installed or was not installed with --cpp_ext. '
         'Falling back to PyTorch flatten and unflatten.',
     )
     flatten = torch._utils._flatten_dense_tensors
