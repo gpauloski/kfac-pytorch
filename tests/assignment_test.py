@@ -460,6 +460,17 @@ def test_kaisa_assignment_mem_opt(
         for rank in range(world_size)
     ]
 
+    layer_count = len(TEST_WORK)
+    for assignment in assignments:
+        # Check assigned layers and factors are correct
+        layers = assignment.get_layers()
+        assert len(set(layers)) == layer_count
+        for layer in layers:
+            assert len(set(assignment.get_factors(layer))) == 2
+
+        # Check repr: one line for each layer + one prefix and postfix line
+        assert repr(assignment).count('\n') + 1 == layer_count + 2
+
     for layer in TEST_WORK:
         # Check all ranks have the same inv worker for each factor
         assert len({a.inv_worker(layer, 'A') for a in assignments}) == 1
