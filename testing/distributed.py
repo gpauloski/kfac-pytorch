@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import multiprocessing
 import time
 from typing import Any
 from typing import Callable
@@ -77,11 +78,17 @@ def distributed_test(
             **func_kwargs: dict[str, Any],
         ) -> None:
             """Launch processes and gracefully handle failures."""
+            # Set multiprocessing to use fork because on MacOS/Windows, the
+            # default in Python 3.8 and later is "spawn" which cannot
+            # pickle lambda functions.
+            # NOTE: fork does not work with CUDA tensors but that is okay
+            # because the test suite does not use CUDA
+            ctx = multiprocessing.get_context('fork')
 
             # Spawn all workers on subprocesses.
             processes = []
             for local_rank in range(num_procs):
-                p = Process(
+                p = ctx.Process(
                     target=dist_init,
                     args=(local_rank, num_procs, *func_args),
                     kwargs=func_kwargs,
