@@ -68,6 +68,9 @@ def distributed_test(
 
             run_func(*func_args, **func_kwargs)
 
+            # Keep faster ranks from exiting and breaking process group
+            dist.barrier()
+
         def dist_launcher(
             num_procs: int,
             *func_args: list[Any],
