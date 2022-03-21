@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import kfac.allocator as allocator
+import kfac.assignment as assignment
 import kfac.deepspeed as deepspeed
 import kfac.distributed as distributed
 import kfac.enums as enums
