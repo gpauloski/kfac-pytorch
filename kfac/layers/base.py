@@ -8,6 +8,7 @@ import torch.distributed as dist
 
 from kfac.distributed import Future
 from kfac.distributed import FutureType
+from kfac.distributed import get_rank
 from kfac.distributed import TorchDistributedCommunicator
 from kfac.enums import AllreduceMethod
 from kfac.layers.modules import ModuleHelper
@@ -192,7 +193,7 @@ class KFACBaseLayer:
             all ranks must enter this function
         """
         if self.grad is None:
-            if dist.get_rank() == src:
+            if get_rank() == src:
                 raise RuntimeError(
                     f'Attempt to broadcast gradient from {src=} but this rank '
                     'has not computed the preconditioned gradient yet.',

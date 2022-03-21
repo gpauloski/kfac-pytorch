@@ -209,7 +209,7 @@ class TorchDistributedCommunicator:
             NonSquareTensorError:
                 if symmetric is True and tensor is not a 2D square tensor.
         """
-        if dist.get_world_size(group) == 1:
+        if get_world_size(group) == 1:
             return tensor
         shape = tensor.size()
         if symmetric:
@@ -229,7 +229,7 @@ class TorchDistributedCommunicator:
         def callback_(future_: FutureType) -> torch.Tensor:  # pragma: no cover
             t = future_.value()[0]
             if average:
-                t = (1 / dist.get_world_size(group)) * t
+                t = (1 / get_world_size(group)) * t
             if symmetric:
                 t = fill_triu(shape, t)
             return t
@@ -265,7 +265,7 @@ class TorchDistributedCommunicator:
             NonSquareTensorError:
                 if symmetric is True and tensor is not a 2D square tensor.
         """
-        if dist.get_world_size(group) == 1:
+        if get_world_size(group) == 1:
             return tensor
         shape = tensor.size()
         if symmetric:
@@ -333,7 +333,7 @@ class TorchDistributedCommunicator:
             NonSquareTensorError:
                 if symmetric is True and tensor is not a 2D square tensor.
         """
-        if dist.get_world_size(group) == 1:
+        if get_world_size(group) == 1:
             return tensor
         shape = tensor.size()
         if symmetric:
@@ -355,7 +355,7 @@ class TorchDistributedCommunicator:
         def callback_(future_: FutureType) -> torch.Tensor:  # pragma: no cover
             t = future_.value()
             if average:
-                t = (1 / dist.get_world_size(group)) * t
+                t = (1 / get_world_size(group)) * t
             if symmetric:
                 t = fill_triu(shape, t)
             return t
@@ -364,7 +364,7 @@ class TorchDistributedCommunicator:
 
     def group_ranks(self, group: dist.ProcessGroup | None) -> frozenset[int]:
         """Get frozenset of ranks in group."""
-        return frozenset(range(dist.get_world_size(group)))
+        return frozenset(range(get_world_size(group)))
 
     def flush_allreduce_buckets(self) -> None:
         """Initiate the communication for the current allreduce bucket."""
@@ -372,6 +372,20 @@ class TorchDistributedCommunicator:
             if bucket is not None:
                 bucket.allreduce()
                 self._allreduce_buckets[group] = None
+
+
+def get_rank(group: dist.ProcessGroup | None = None) -> int:
+    if dist.is_initialized():
+        return dist.get_rank()
+    else:
+        return 0
+
+
+def get_world_size(group: dist.Process | None = None) -> int:
+    if dist.is_initialized():
+        return dist.get_world_size()
+    else:
+        return 1
 
 
 def get_triu(tensor: torch.Tensor) -> torch.Tensor:

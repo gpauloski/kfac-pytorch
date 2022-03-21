@@ -8,6 +8,7 @@ import torch.distributed as dist
 
 from kfac.distributed import Future
 from kfac.distributed import FutureType
+from kfac.distributed import get_rank
 from kfac.distributed import TorchDistributedCommunicator
 from kfac.enums import AllreduceMethod
 from kfac.layers.base import KFACBaseLayer
@@ -142,7 +143,7 @@ class KFACEigenLayer(KFACBaseLayer):
         if self.qa is None or (
             not self.prediv_eigenvalues and self.da is None
         ):
-            if dist.get_rank() == src:
+            if get_rank() == src:
                 raise RuntimeError(
                     f'Attempt to broadcast A inv from {src=} but this rank '
                     'has not computed A inv yet.',
@@ -173,7 +174,7 @@ class KFACEigenLayer(KFACBaseLayer):
             or (not self.prediv_eigenvalues and self.dg is None)
             or (self.prediv_eigenvalues and self.dgda is None)
         ):
-            if dist.get_rank() == src:
+            if get_rank() == src:
                 raise RuntimeError(
                     f'Attempt to broadcast G inv from {src=} but this rank '
                     'has not computed G inv yet.',
