@@ -178,7 +178,6 @@ class KAISAAssignment(WorkAssignment):
             dist.ProcessGroup | None,
         ] = {}
         for ranks in grad_worker_ranks | grad_receiver_ranks:
-            # TODO(gpauloski): skip making communication groups of size 1?
             # TODO(gpauloski): some group configurations resulted in
             #   dist.new_group returning the same handle for distinct
             #   rank groups

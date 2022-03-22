@@ -229,7 +229,7 @@ class KFACPreconditioner(BaseKFACPreconditioner):
         for name, kfac_layer in kfac_layers.values():
             logger.log(
                 loglevel,
-                f'Registered layer name="{name}": {repr(kfac_layer)}',
+                f'Registered name="{name}": {repr(kfac_layer)}',
             )
 
         if self.assignment_strategy == AssignmentStrategy.COMPUTE:
