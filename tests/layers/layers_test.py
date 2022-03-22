@@ -96,6 +96,8 @@ def test_preconditioning_step(
         y = torch.rand([batch_size, out_features])
         loss = (module(x) - y).sum()
         loss.backward()
+        weight_grad = module.weight.grad
+        bias_grad = module.bias.grad
 
         # Stage 1: save intermediate variables
         layer.save_layer_input([x])
@@ -133,6 +135,10 @@ def test_preconditioning_step(
 
         # Stage 7: update gradient
         layer.update_grad()
+
+        # Make sure gradient changed due to preconditioning
+        assert not torch.equal(weight_grad, module.weight.grad)
+        assert not torch.equal(bias_grad, module.bias.grad)
 
     precondition()
 
