@@ -91,16 +91,6 @@ def distributed_test(
                 p.start()
                 processes.append(p)
 
-            # Now loop and wait for a test to complete. The spin-wait here
-            # isn't a big deal because the number of processes will be
-            # O(#GPUs) << O(#CPUs).
-            any_done = False
-            while not any_done:
-                for p in processes:
-                    if not p.is_alive():
-                        any_done = True
-                        break
-
             # Wait for all other processes to complete
             for p in processes:
                 p.join(UNIT_WORKER_TIMEOUT)
