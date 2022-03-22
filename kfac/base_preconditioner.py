@@ -332,7 +332,6 @@ class BaseKFACPreconditioner:
             not self._update_factors_in_hook
             and self.steps % self.factor_update_steps == 0
         ):
-            # TODO(gpauloski): check order of reverseds
             for name, layer in reversed(self._layers.values()):
                 self._mini_steps[name] = 0
                 layer.update_a_factor(alpha=self.factor_decay)
