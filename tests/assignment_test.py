@@ -1,4 +1,4 @@
-"""Work Assignment Unit Tests"""
+"""Unit Tests for kfac/assignment.py."""
 from __future__ import annotations
 
 from typing import Any
@@ -33,6 +33,7 @@ partition_grad_receivers = KAISAAssignment.partition_grad_receivers
 
 
 def identity(x: Any) -> Any:
+    """Identity function."""
     return x
 
 
@@ -41,6 +42,7 @@ def test_partition_grad_workers_input_check(
     world_size: int,
     grad_workers: int,
 ) -> None:
+    """Test partition_grad_workers raises."""
     with pytest.raises(ValueError):
         partition_grad_workers(world_size, grad_workers)
 
@@ -50,6 +52,7 @@ def test_partition_grad_receivers_input_check(
     world_size: int,
     grad_workers: int,
 ) -> None:
+    """Test partition_grad_receivers raises."""
     with pytest.raises(ValueError):
         partition_grad_receivers(world_size, grad_workers)
 
@@ -89,6 +92,7 @@ def test_partition_grad_workers(
     grad_workers: int,
     expected: list[list[int]],
 ) -> None:
+    """Test partition_grad_workers."""
     _expected = {frozenset(ranks) for ranks in expected}
     result = partition_grad_workers(world_size, grad_workers)
     assert result == _expected
@@ -131,6 +135,7 @@ def test_partition_grad_receivers(
     grad_workers: int,
     expected: list[list[int]],
 ) -> None:
+    """Test partition_grad_receivers."""
     _expected = {frozenset(ranks) for ranks in expected}
     result = partition_grad_receivers(world_size, grad_workers)
     assert result == _expected
@@ -145,6 +150,7 @@ def test_kaisa_assignment_input_check(
     local_rank: int,
     world_size: int,
 ) -> None:
+    """Test KAISAAssignment raises."""
     with pytest.raises(ValueError):
         KAISAAssignment(
             {},
@@ -172,6 +178,7 @@ def test_kaisa_assignment_initialize(
     grad_worker_fraction: float,
     expected_grad_workers: int,
 ) -> None:
+    """Test KAISAAssignment grad worker group sizes."""
     for i in range(world_size):
         assignment = KAISAAssignment(
             {},
@@ -412,6 +419,7 @@ def test_kaisa_assignment_greedy_assignment(
     colocate_factors: bool,
     expected: dict[str, dict[str, int]],
 ) -> None:
+    """Test KAISAAssignment greedy assignment."""
     assert expected == KAISAAssignment.greedy_assignment(
         work,
         worker_groups,
@@ -443,13 +451,14 @@ def test_kaisa_assignment_greedy_assignment(
         (16, 1, False, 16, 1),
     ),
 )
-def test_kaisa_assignment_mem_opt(
+def test_kaisa_assignment_group_sizes(
     world_size: int,
     grad_worker_fraction: float,
     colocate_factors: bool,
     grad_worker_group_size: int,
     grad_receiver_group_size: int,
 ) -> None:
+    """Test KAISAAssignment grad_worker_fraction group sizes."""
     assignments = [
         KAISAAssignment(
             TEST_WORK,

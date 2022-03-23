@@ -1,3 +1,4 @@
+"""Unit Tests for kfac/preconditioner.py."""
 from __future__ import annotations
 
 import pytest
@@ -12,6 +13,7 @@ from testing.models import TinyModel
 
 
 def test_preconditioner_init_raises() -> None:
+    """Test KFACPreconditioner argument validation."""
     with pytest.raises(ValueError):
         KFACPreconditioner(TinyModel(), allreduce_bucket_cap_mb=-1)
 
@@ -52,6 +54,7 @@ def test_preconditioner_init_raises() -> None:
 
 
 def test_preconditioner_init() -> None:
+    """Test KFACPreconditioner initialization."""
     p1 = KFACPreconditioner(TinyModel(), assignment_strategy='memory')
     p2 = KFACPreconditioner(
         TinyModel(),

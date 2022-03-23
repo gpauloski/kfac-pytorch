@@ -1,3 +1,4 @@
+"""Decorator for running tests in simulated distributed environments."""
 from __future__ import annotations
 
 import multiprocessing
@@ -19,7 +20,6 @@ FuncT = TypeVar('FuncT', bound=Callable[..., Any])
 
 def distributed_test(
     world_size: int | list[int] = 2,
-    backend: str = 'gloo',
 ) -> Callable[[FuncT], FuncT]:
     """Decorator for running tests in distributed environment.
 
@@ -29,17 +29,16 @@ def distributed_test(
 
     This function is copied from: https://github.com/EleutherAI/DeeperSpeed/blob/24026e5bb37c528a222b8635c46256b1e1825d2e/tests/unit/common.py#L16  # noqa
 
-    Usage example:
-        @distributed_test(worker_size=[2,3])
-        def my_test():
-            rank = dist.get_rank()
-            world_size = dist.get_world_size()
-            assert(rank < world_size)
+    Example:
+        >>> @distributed_test(worker_size=[2,3])
+        >>> def my_test():
+        >>>     rank = dist.get_rank()
+        >>>     world_size = dist.get_world_size()
+        >>>     assert(rank < world_size)
 
-    Arguments:
-        world_size (int or list): number of ranks to spawn. Can be a list to
-            spawn to run tests multiple times
-        multiple tests.
+    Args:
+        world_size (int, list[int]): number of ranks to spawn. Can be a list to
+            spawn to run tests multiple times.
     """
 
     def dist_wrap(run_func: FuncT) -> FuncT:
@@ -60,7 +59,7 @@ def distributed_test(
             os.environ['RANK'] = str(local_rank)
             os.environ['WORLD_SIZE'] = str(num_procs)
 
-            dist.init_process_group(backend)
+            dist.init_process_group('gloo')
 
             run_func(*func_args, **func_kwargs)
 
@@ -121,7 +120,6 @@ def distributed_test(
             **func_kwargs: dict[str, Any],
         ) -> Any:
             """Entry point for @distributed_test()."""
-
             if isinstance(world_size, int):
                 dist_launcher(world_size, *func_args, **func_kwargs)
             elif isinstance(world_size, list):

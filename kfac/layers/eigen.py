@@ -1,3 +1,4 @@
+"""Eigen decomposition preconditioning implementation."""
 from __future__ import annotations
 
 from typing import Callable
@@ -16,6 +17,8 @@ from kfac.layers.modules import ModuleHelper
 
 
 class KFACEigenLayer(KFACBaseLayer):
+    """KFAC layer that preconditions gradients with eigen decomposition."""
+
     def __init__(
         self,
         module: ModuleHelper,
@@ -30,6 +33,31 @@ class KFACEigenLayer(KFACBaseLayer):
         symmetry_aware: bool = False,
         prediv_eigenvalues: bool = False,
     ) -> None:
+        """Init KFACEigenLayer.
+
+        Args:
+            module (ModuleHelper): module helper that exposes interfaces for
+                getting the factors and gradients of a PyTorch module.
+            tdc (TorchDistributedCommunicator): communicator object. Typically
+                the communicator object should be shared by all KFACBaseLayers.
+            allreduce_method (AllreduceMethod): allreduce method (default:
+                AllreduceMethod.ALLREDUCE).
+            factor_dtype (torch.dtype): data format to store factors in. If
+                None, factors are stored in the format used in training
+                (default: None).
+            grad_scaler (optional): optional GradScaler or callable that
+                returns the scale factor used in AMP training (default: None).
+            inv_dtype (torch.dtype): data format to store inverses in.
+                Inverses (or eigen decompositions) may be unstable in half-
+                precision (default: torch.float32).
+            symmetry_aware (bool): use symmetry aware communication method.
+                This is typically more helpful when the factors are very
+                large (default: False).
+            prediv_eigenvalues (bool): precompute the outerproduct of eigen
+                values on the worker that eigen decomposes G. This reduces
+                the cost of the preconditioning stage but uses more memory
+                (default: False).
+        """
         super().__init__(
             module=module,
             tdc=tdc,
@@ -56,55 +84,66 @@ class KFACEigenLayer(KFACBaseLayer):
 
     @property
     def qa(self) -> torch.Tensor | None:
+        """Get eigen vectors of A."""
         if isinstance(self._qa, Future):
             self._qa = cast(torch.Tensor, self._qa.wait())
         return self._qa
 
     @qa.setter
     def qa(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set eigen vectors of A."""
         self._qa = value
 
     @property
     def qg(self) -> torch.Tensor | None:
+        """Get eigen vectors of G."""
         if isinstance(self._qg, Future):
             self._qg = cast(torch.Tensor, self._qg.wait())
         return self._qg
 
     @qg.setter
     def qg(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set eigen vectors of G."""
         self._qg = value
 
     @property
     def da(self) -> torch.Tensor | None:
+        """Get eigen values of A."""
         if isinstance(self._da, Future):
             self._da = cast(torch.Tensor, self._da.wait())
         return self._da
 
     @da.setter
     def da(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set eigen values of A."""
         self._da = value
 
     @property
     def dg(self) -> torch.Tensor | None:
+        """Get eigen values of G."""
         if isinstance(self._dg, Future):
             self._dg = cast(torch.Tensor, self._dg.wait())
         return self._dg
 
     @dg.setter
     def dg(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set eigen values of G."""
         self._dg = value
 
     @property
     def dgda(self) -> torch.Tensor | None:
+        """Get precomputed eigen values for preconditioning."""
         if isinstance(self._dgda, Future):
             self._dgda = cast(torch.Tensor, self._dgda.wait())
         return self._dgda
 
     @dgda.setter
     def dgda(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set precomputed eigen values for preconditioning."""
         self._dgda = value
 
     def memory_usage(self) -> dict[str, int]:
+        """Get memory usage for all variables in the layer."""
         sizes = super().memory_usage()
         a_size = (
             self.qa.nelement() * self.qa.element_size()
@@ -140,6 +179,18 @@ class KFACEigenLayer(KFACBaseLayer):
         src: int,
         group: dist.ProcessGroup | None = None,
     ) -> None:
+        """Initiate A inv broadcast and store future to result.
+
+        Note:
+            all ranks must enter this function even if the rank is not
+            a part of the inverse broadcast group.
+
+        Args:
+            src (int): src rank that computed A inverse.
+            group (ProcessGroup): process group to which src should broadcast
+                A inv. All ranks in group should enter this function.
+                Defaults to None, the default process group.
+        """
         if self.qa is None or (
             not self.prediv_eigenvalues and self.da is None
         ):
@@ -169,6 +220,18 @@ class KFACEigenLayer(KFACBaseLayer):
         src: int,
         group: dist.ProcessGroup | None = None,
     ) -> None:
+        """Initiate G inv broadcast and store future to result.
+
+        Note:
+            all ranks must enter this function even if the rank is not
+            a part of the inverse broadcast group.
+
+        Args:
+            src (int): src rank that computed G inverse.
+            group (ProcessGroup): process group to which src should broadcast
+                G inv. All ranks in group should enter this function.
+                Defaults to None, the default process group.
+        """
         if (
             self.qg is None
             or (not self.prediv_eigenvalues and self.dg is None)
@@ -206,6 +269,14 @@ class KFACEigenLayer(KFACBaseLayer):
             self.dgda = self.tdc.broadcast(self.dgda, src=src, group=group)
 
     def compute_a_inv(self, damping: float = 0.001) -> None:
+        """Compute A inverse on assigned rank.
+
+        update_a_factor() must be called at least once before this function.
+
+        Args:
+            damping (float, optional): damping value to condition inverse
+                (default: 0.001).
+        """
         if not isinstance(self.a_factor, torch.Tensor):
             raise RuntimeError(
                 'Cannot eigendecompose A before A has been computed',
@@ -224,6 +295,7 @@ class KFACEigenLayer(KFACBaseLayer):
         self.da = torch.clamp(self.da, min=0.0)
 
     def compute_g_inv(self, damping: float = 0.001) -> None:
+        """See `compute_g_inv`."""
         if not isinstance(self.g_factor, torch.Tensor):
             raise RuntimeError(
                 'Cannot eigendecompose G before G has been computed',
@@ -246,6 +318,16 @@ class KFACEigenLayer(KFACBaseLayer):
             self.da = None
 
     def preconditioned_grad(self, damping: float = 0.001) -> None:
+        """Compute precondition gradient of each weight in module.
+
+        Preconditioned gradients can be applied to the actual gradients with
+        `update_gradient()`. Note the steps are separate in the event that
+        intermediate steps will be applied to the preconditioned gradient.
+
+        Args:
+            damping (float, optional): damping to use if preconditioning using
+                the eigendecomposition method (default: 0.001).
+        """
         if (
             self.qa is None
             or self.qg is None

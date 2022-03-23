@@ -1,3 +1,4 @@
+"""Base KFAC preconditioner."""
 from __future__ import annotations
 
 import logging
@@ -17,81 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 class BaseKFACPreconditioner:
-    """Base KFAC Distributed Gradient Preconditioner
+    """Base KFAC Distributed Gradient Preconditioner.
 
     Preconditions the gradients of a model with a layer-wise FIM approximation.
     Layer computations are distributed across workers using torch.distributed.
-
-    Example:
-    >>> model = torch.nn.parallel.DistributedDataParallel(model, ...)
-    >>> optimizer = optim.SGD(model.parameters(), ...)
-    >>> preconditioner = KFAC(model, ...)
-    >>>
-    >>> for i, (data, target) in enumerate(train_loader):
-    >>>     optimizer.zero_grad()
-    >>>     output = model(data)
-    >>>     loss = criterion(output, target)
-    >>>     loss.backward()
-    >>>     preconditioner.step()
-    >>>     optimizer.step()
-
-    Args:
-      model (torch.nn.Module): model to register and perform KFAC updates on.
-      factor_update_steps (int): steps between computing and updating the
-          running average of the Kronecker factors.
-      inv_update_steps (int): steps between recomputing and communicating
-          the second-order information.
-      damping (Callable, float): Tikhonov damping parameter or a callable
-          that will return the damping parameter as a float (default: 0.001).
-      factor_decay (Callable, float): running average coefficient for Kronecker
-          factors or callable that will return the factor_decay
-          (default: 0.95).
-      kl_clip (Callable, float): clipping parameter for gradient scaling or
-          a callable that returns a float. If None, no scaling/clipping
-          will be applied (default: 0.001).
-      lr (Callable, float): learning rate or callable that will return learning
-          rate (default: 0.1).
-      accumulation_steps (int): number of forward/backward passes
-          between optimization steps (default: 1).
-      allreduce_bucket_cap_mb (float): maximum size in megabytes for allreduce
-          bucketing. If zero, bucketing is not used (default: 25).
-      assignment_strategy (AssignmentStrategy, str): See `AssignmentStrategy`
-          for more details (default: AssignmentStrategy.COMPUTE).
-      colocate_factors (bool): assign both factors for a single layer to the
-          same worker. Reccomended when num_layers < world_size
-          (default: True).
-      compute_method (ComputeMethod, str): See `ComputeMethod` for more
-          details (default: ComputeMethod.EIGEN).
-      compute_eigenvalue_outer_product (bool): when using the eigen compute
-          method, precompute the element-wise inverse of the outer product of
-          eigenvectors on the eigen decomposition worker rather to reduce
-          computation in the gradient preconditioning stage.
-          `colocate_factors` must be True (default: True).
-      grad_worker_fraction (DistributedStrategy, float): controls the fraction
-          of workers assigned as gradient workers for each layer. Optionally,
-          predefined configurations can be passed using the
-          DistributedStrategy enum (default: DistributedStrategy.COMM_OPT).
-      symmetry_aware (bool): communicate only the upper triangle of symmetric
-          matrices. Can reduce communication time when factors are large
-          (default: False).
-      grad_scaler (torch.cuda.amp.GradScaler or callable): Gradient scaler
-          used for Torch AMP training. Used to unscale the G factors as they
-          are accumulated during the backward pass. Alternatively can be
-          a callable which will return the current scale (default: None).
-      factor_dtype (torch.dtype): force data type for storing factors. If None,
-          defaults to data type of intermediate values in forward/backward pass
-          (default: None).
-      inv_dtype (torch.dtype): force data type for storing second-order data
-          (e.g., inverses or eigen decompositions) (default: torch.float32).
-      skip_layers (list): list of module names to ignore when registering
-          layers. Passing the name of parent modules will prevent recursively
-          registering child modules of the parent. Case-insensitive
-          (default: []).
-      update_factors_in_hook (bool): If True, running average of factors is
-          updated in the module hook and the async commmunication is started.
-          Otherwise, this will be performed at the start of step() (default:
-          True).
-      loglevel (int): logging level (default: logging.DEBUG).
     """
 
     def __init__(
@@ -114,6 +44,44 @@ class BaseKFACPreconditioner:
         defaults: dict[str, Any] | None = None,
         loglevel: int = logging.DEBUG,
     ) -> None:
+        """Init KFACBasePreconditioner.
+
+        Args:
+            layers (dict): dict mapping PyTorch modules to tuples of the
+                module name and the corresponding KFAC layer.
+            assignment (WorkAssignment): assignment initialized with the
+                corresponding layers passed in.
+            tdc (TorchDistributedCommunicator): communicator instance.
+            factor_update_steps (Callable, int): steps between computing and
+                updating the running average of the Kronecker factors or
+                callable that returns the value.
+            inv_update_steps (Callble, int): steps between recomputing and
+                communicating the second-order information or callable that
+                returns the value.
+            damping (Callable, float): Tikhonov damping parameter or a callable
+                that will return the damping parameter as a float
+                (default: 0.001).
+            factor_decay (Callable, float): running average coefficient for
+                Kronecker factors or callable that will return the factor_decay
+                (default: 0.95).
+            kl_clip (Callable, float): clipping parameter for gradient scaling
+                or a callable that returns a float. If None, no
+                scaling/clipping will be applied (default: 0.001).
+            lr (Callable, float): learning rate or callable that will return
+                learning rate (default: 0.1).
+            accumulation_steps (int): number of forward/backward passes
+                between optimization steps (default: 1).
+            update_factors_in_hook (bool): If True, running average of factors
+                is updated in the module hook and the async commmunication is
+                started. Otherwise, this will be performed at the start of
+                step() (default: True).
+            defaults (dict): dictionary of default values to include in the
+                representation of the preconditioner instance. The default
+                values will not be used for anything but are passed by
+                subclasses of KFACBasePreconditioner for bookkeeping
+                (default: None).
+            loglevel (int): logging level (default: logging.DEBUG).
+        """
         if not callable(factor_update_steps) and not 0 < factor_update_steps:
             raise ValueError('factor_update_steps must be > 0')
         if not callable(inv_update_steps) and not 0 < inv_update_steps:
@@ -164,6 +132,7 @@ class BaseKFACPreconditioner:
             module.register_full_backward_hook(self._save_grad_output)
 
     def __repr__(self) -> str:
+        """Return representation of the preconditioner instance."""
         params = [
             ('accumulation_steps', self._accumulation_steps),
             ('assignment', self._assignment.__class__.__name__),
@@ -187,10 +156,12 @@ class BaseKFACPreconditioner:
 
     @property
     def damping(self) -> float:
+        """Get damping value."""
         return self._damping() if callable(self._damping) else self._damping
 
     @property
     def factor_decay(self) -> float:
+        """Get factor decay value."""
         return (
             self._factor_decay()
             if callable(self._factor_decay)
@@ -199,14 +170,17 @@ class BaseKFACPreconditioner:
 
     @property
     def kl_clip(self) -> float:
+        """Get kl clip value."""
         return self._kl_clip() if callable(self._kl_clip) else self._kl_clip
 
     @property
     def lr(self) -> float:
+        """Get lr value."""
         return self._lr() if callable(self._lr) else self._lr
 
     @property
     def factor_update_steps(self) -> int:
+        """Get factor update steps."""
         return (
             self._factor_update_steps()
             if callable(self._factor_update_steps)
@@ -215,6 +189,7 @@ class BaseKFACPreconditioner:
 
     @property
     def inv_update_steps(self) -> int:
+        """Get inverse update steps."""
         return (
             self._inv_update_steps()
             if callable(self._inv_update_steps)
@@ -223,17 +198,22 @@ class BaseKFACPreconditioner:
 
     @property
     def steps(self) -> int:
+        """Get current steps."""
         return self._steps
 
     def state_dict(self, include_factors: bool = True) -> dict[str, Any]:
         """Returns KFAC state dict.
 
         Args:
-          include_factors (optional, bool): include tensors with factors
-              for all registered KFACLayers as a part of the state_dict. Note:
-              can make the state_dict fairly large, but not saving the factors
-              can cause issues if the first iteration when resuming from a
-              checkpoint is not a KFAC update step (default: True).
+            include_factors (optional, bool): include tensors with factors
+                for all registered KFACLayers as a part of the state_dict.
+                Note: can make the state_dict fairly large, but not saving the
+                factors can cause issues if the first iteration when resuming
+                from a checkpoint is not a KFAC update step (default: True).
+
+        Return:
+            dict containing state that can be passed to torch.save() or
+            load_state_dict().
         """
         state_dict: dict[str, Any] = {'steps': self.steps}
         if not callable(self._factor_update_steps):
@@ -263,12 +243,12 @@ class BaseKFACPreconditioner:
         """Loads the KFAC state.
 
         Args:
-          state_dict (dict): KFAC state. Should be an object returned from a
-              call to `state_dict`.
-          compute_inverses (bool, optional): if True, compute the inverses
-              from the loaded factors. Note that not computing the inverses
-              when loading from a checkpoint will only work if the first
-              iteration is a KFAC update step (default: True).
+            state_dict (dict): KFAC state. Should be an object returned from a
+                call to `state_dict`.
+            compute_inverses (bool, optional): if True, compute the inverses
+                from the loaded factors. Note that not computing the inverses
+                when loading from a checkpoint will only work if the first
+                iteration is a KFAC update step (default: True).
         """
         self._steps = state_dict['steps']
         if 'factor_update_steps' in state_dict:
@@ -318,15 +298,17 @@ class BaseKFACPreconditioner:
 
     @torch.no_grad()
     def step(self) -> None:
-        """Perform one K-FAC step
+        """Perform one K-FAC step.
 
         Note:
-        - This function should always be called before `optimizer.step()` as
-          it modifies the gradients and does not modify the weights.
-        - Gradients must be averaged across ranks before calling `step()`.
-          This condition is guarenteed to be true if using the
-          `DistributedDataParallel` model wrapper as gradients are
-          communicated during `loss.backward()`.
+            This function should always be called before `optimizer.step()` as
+            it modifies the gradients and does not modify the weights.
+
+        Note:
+            Gradients must be averaged across ranks before calling `step()`.
+            This condition is guarenteed to be true if using the
+            `DistributedDataParallel` model wrapper as gradients are
+            communicated during `loss.backward()`.
         """
         if (
             not self._update_factors_in_hook
@@ -385,7 +367,7 @@ class BaseKFACPreconditioner:
             layer.reset_batch()
 
     def memory_usage(self) -> dict[str, int]:
-        """Returns current approximate memory usage for KFAC on this worker
+        """Returns current approximate memory usage for KFAC on this worker.
 
         Returns:
             dict containing bytes used across all layers on this worker to
@@ -406,11 +388,11 @@ class BaseKFACPreconditioner:
         sizes['total'] = sum(sizes.values())
         return sizes
 
-    def _compute_grad_scale(self) -> float | None:
-        """Computes scale factor for preconditioned gradients
+    def _compute_grad_scale(self) -> float:
+        """Computes scale factor for preconditioned gradients.
 
         Returns:
-          sum_{layers} (sum_{gradients} precon_grad * grad * lr^2)
+            sum_{layers} (sum_{gradients} precon_grad * grad * lr^2)
         """
         vg_sum = 0.0
         for _, layer in reversed(self._layers.values()):
@@ -436,6 +418,7 @@ class BaseKFACPreconditioner:
         module: torch.nn.Module,
         input: list[torch.Tensor],
     ) -> None:
+        """Hook for saving the input during the forward pass of a module."""
         if not module.training:
             return
         if self.steps % self.factor_update_steps == 0:
@@ -458,6 +441,7 @@ class BaseKFACPreconditioner:
         grad_input: tuple[torch.Tensor, ...] | torch.Tensor,
         grad_output: tuple[torch.Tensor, ...] | torch.Tensor,
     ) -> None:
+        """Hook for saving the gradient w.r.t. output in the backward pass."""
         if not module.training:
             return
         if self.steps % self.factor_update_steps == 0:

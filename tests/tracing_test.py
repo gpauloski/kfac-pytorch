@@ -1,3 +1,4 @@
+"""Unit Tests for kfac/tracing.py."""
 from __future__ import annotations
 
 import time
@@ -10,6 +11,8 @@ from testing.distributed import distributed_test
 
 
 def test_trace() -> None:
+    """Test tracing function execution times."""
+
     @trace()
     def a(t: float) -> None:
         time.sleep(t)
@@ -51,6 +54,8 @@ def test_trace() -> None:
 
 @distributed_test(world_size=2)
 def test_synced_trace() -> None:
+    """Test syncing function executions in distributed training."""
+
     @trace(sync=True)
     def a(t: float) -> None:
         time.sleep(t)

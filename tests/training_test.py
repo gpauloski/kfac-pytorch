@@ -1,4 +1,7 @@
+"""End-to-end training test for KFACPreconditoner."""
 from __future__ import annotations
+
+from multiprocessing import Process
 
 import pytest
 import torch
@@ -9,6 +12,7 @@ from testing.models import TinyModel
 
 
 def train() -> None:
+    """Train TinyModel with KFAC on random data."""
     batch_size = 4
     in_features = 10
     out_features = 10
@@ -46,15 +50,18 @@ def train() -> None:
 
 @pytest.mark.parametrize(
     'distributed,world_size',
-    # Note: distributed tests must occur before the non-distributed test
-    # because torch does not allow forking if autograd has been used
-    # in the parent process. See
-    # https://github.com/pytorch/pytorch/issues/69839#issuecomment-993686048
-    ((True, 1), (True, 2), (True, 4), (False, 1)),
+    ((False, 1), (True, 1), (True, 2), (True, 4)),
 )
 def test_training(distributed: bool, world_size: int) -> None:
+    """Test end-to-end training with KFACPreconditioner."""
     if not distributed:
-        train()
+        # Note: torch does not allow forking if autograd has been used
+        # in the parent process. So we perform the training is a separate
+        # process to keep this parent process "clean". See
+        # https://github.com/pytorch/pytorch/issues/69839#issuecomment-993686048
+        p = Process(target=train)
+        p.start()
+        p.join()
     else:
         _train = distributed_test(world_size=world_size)(train)
         _train()

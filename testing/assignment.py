@@ -1,3 +1,4 @@
+"""Lazy WorkAssignment implementation for testing."""
 from __future__ import annotations
 
 import torch.distributed as dist
@@ -6,7 +7,20 @@ from kfac.assignment import WorkAssignment
 
 
 class LazyAssignment(WorkAssignment):
-    def __init__(self, rank: int = 0, broadcast: bool = False):
+    """Lazy assignment where every worker is an inverse worker.
+
+    Used in unit tests force a KFACPreconditioner to execute all options
+    in the distibuted control flow.
+    """
+
+    def __init__(self, rank: int = 0, broadcast: bool = False) -> None:
+        """Init LazyAssignment.
+
+        Args:
+            rank (int): process rank to simulate (default: 0).
+            broadcast (bool): value to return by broadcast_gradients() and
+                broadcast_inverses() (default: False).
+        """
         self.rank = rank
         self.broadcast = broadcast
 
@@ -55,6 +69,7 @@ class LazyAssignment(WorkAssignment):
 
     def grad_receiver_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for preconditioned gradient broadcast.
+
         This communication group is used for the broadcasts of the inverses
         from the inverse worker to the remaining gradient workers for the
         layer.

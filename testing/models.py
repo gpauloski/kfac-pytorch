@@ -1,7 +1,7 @@
-"""PyTorch Model Classes for Testing.
+"""PyTorch Models for Testing.
 
-Mostly taken from:
-  https://pytorch.org/tutorials/beginner/introyt/modelsyt_tutorial.html
+Examples borrowed from:
+https://pytorch.org/tutorials/beginner/introyt/modelsyt_tutorial.html
 """
 from __future__ import annotations
 
@@ -10,7 +10,10 @@ from torch import functional
 
 
 class TinyModel(torch.nn.Module):
+    """Tiny model with two linear layers."""
+
     def __init__(self):
+        """Init TinyModel."""
         super().__init__()
 
         self.linear1 = torch.nn.Linear(10, 20, bias=False)
@@ -19,6 +22,7 @@ class TinyModel(torch.nn.Module):
         self.softmax = torch.nn.Softmax(dim=1)
 
     def forward(self, x):
+        """Forward pass."""
         x = self.linear1(x)
         x = self.activation(x)
         x = self.linear2(x)
@@ -27,7 +31,10 @@ class TinyModel(torch.nn.Module):
 
 
 class LeNet(torch.nn.Module):
+    """LeNet implementation."""
+
     def __init__(self):
+        """Init LeNet."""
         super().__init__()
         # 1 input image channel (black & white), 6 output channels,
         # 5x5 square convolution kernel
@@ -39,6 +46,7 @@ class LeNet(torch.nn.Module):
         self.fc3 = torch.nn.Linear(84, 10)
 
     def forward(self, x):
+        """Forward pass."""
         # Max pooling over a (2, 2) window
         x = functional.max_pool2d(functional.relu(self.conv1(x)), (2, 2))
         # If the size is a square you can only specify a single number
@@ -50,6 +58,7 @@ class LeNet(torch.nn.Module):
         return x
 
     def num_flat_features(self, x):
+        """Return number of flat features in x."""
         size = x.size()[1:]  # all dimensions except the batch dimension
         num_features = 1
         for s in size:

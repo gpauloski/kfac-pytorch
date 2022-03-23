@@ -1,3 +1,4 @@
+"""Utilities for registering PyTorch modules to KFAC layers."""
 from __future__ import annotations
 
 from typing import Callable
@@ -48,7 +49,7 @@ def get_flattened_modules(
 
 
 def requires_grad(module: torch.nn.Module) -> bool:
-    """Return False if any module param has .requires_grad=False"""
+    """Return False if any module param has requires_grad=False."""
     return all([p.requires_grad for p in module.parameters()])
 
 
@@ -75,8 +76,37 @@ def register_modules(
     symmetry_aware: bool,
     tdc: TorchDistributedCommunicator,
 ) -> dict[torch.nn.Module, tuple[str, KFACBaseLayer]]:
-    # TODO(gpauloski): note that skip layers can either match the name of the
-    # module instance or the name of the class and case insensitive
+    """Register supported modules in model with a KFACLayer.
+
+    Args:
+        model (torch.nn.Module): model to scan for modules to register.
+        compute_method (ComputeMethod): compute method to use for gradient
+            preconditioner (inverse or eigen).
+        allreduce_method (AllreduceMethod): allreduce method (default:
+            AllreduceMethod.ALLREDUCE).
+        compute_eigenvalue_outer_product (bool): precompute the outerproduct of
+            eigen values on the worker that eigen decomposes G. This reduces
+            the cost of the preconditioning stage but uses more memory
+            (default: False).
+        grad_scaler (optional): optional GradScaler or callable that
+            returns the scale factor used in AMP training (default: None).
+        factor_dtype (torch.dtype): data format to store factors in. If
+            None, factors are stored in the format used in training
+            (default: None).
+        inv_dtype (torch.dtype): data format to store inverses in.
+            Inverses (or eigen decompositions) may be unstable in half-
+            precision (default: torch.float32).
+        skip_layers (list[str]): names of layers to skip registering. Names
+            can either by the name of the attribute or the name of the
+            class of the layer. Matches are case insensitive.
+        symmetry_aware (bool): use symmetry aware communication method.
+            This is typically more helpful when the factors are very
+            large (default: False).
+        tdc (TorchDistributedCommunicator): communicator object. Typically
+            the communicator object should be shared by all KFACBaseLayers.
+    """
+    # TODO(gpauloski): maybe this function should take **kwargs that get
+    # passed to the KFAC layer.
     modules = get_flattened_modules(model)
     skip_layers = [s.lower() for s in skip_layers]
 

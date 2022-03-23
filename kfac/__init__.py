@@ -1,3 +1,4 @@
+"""Top-level module for K-FAC."""
 from __future__ import annotations
 
 import kfac.assignment as assignment

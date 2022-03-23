@@ -1,3 +1,4 @@
+"""Unit tests for kfac/layers/register.py."""
 from __future__ import annotations
 
 import pytest
@@ -18,7 +19,10 @@ from testing.models import TinyModel
 
 
 class NestedTinyModel(torch.nn.Module):
+    """Nested model for testing recursive module discovery."""
+
     def __init__(self) -> None:
+        """Init NestedTinyModel."""
         super().__init__()
 
         self.tiny1 = TinyModel()
@@ -71,6 +75,7 @@ def test_get_flattened_modules(
     module: torch.nn.Module,
     expected: list[tuple[str, type[torch.nn.Module]]],
 ) -> None:
+    """Test get_flattened_modules."""
     modules = get_flattened_modules(module)
     for (name, module), (exp_name, exp_type) in zip(modules, expected):
         assert name == exp_name
@@ -78,6 +83,7 @@ def test_get_flattened_modules(
 
 
 def test_requires_grad() -> None:
+    """Test requires_grad."""
     linear = torch.nn.Linear(1, 1)
     assert requires_grad(linear)
     linear.bias.requires_grad = False
@@ -96,6 +102,7 @@ def test_get_module_helper(
     module: torch.nn.Module,
     expected: type[ModuleHelper | None],
 ) -> None:
+    """Test get_module_helper."""
     assert isinstance(get_module_helper(module), expected)
 
 
@@ -123,6 +130,7 @@ def test_register_modules(
     skip_layers: list[str],
     expected_count: int,
 ) -> None:
+    """Test register_modules."""
     kfac_layers = register_modules(
         model,
         compute_method,

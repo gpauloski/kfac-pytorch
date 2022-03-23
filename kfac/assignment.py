@@ -1,3 +1,4 @@
+"""Work assignment interface and implementations."""
 from __future__ import annotations
 
 from abc import ABCMeta
@@ -11,12 +12,16 @@ import torch.distributed as dist
 
 @dataclass(frozen=True)
 class _Group:
+    """Dataclass for tracking ranks and group handle together."""
+
     ranks: frozenset[int]
     group: Any
 
 
 @dataclass(frozen=True)
 class _LayerFactors:
+    """Dataclass for tracking layer name and factors of the layer together."""
+
     layer: str
     factors: list[str]
 
@@ -214,7 +219,32 @@ class KAISAAssignment(WorkAssignment):
         world_size: int,
         colocate_factors: bool,
     ) -> dict[str, dict[str, int]]:
-        """Greedy constrained layer work assignments"""
+        """Greedy constrained layer work assignments.
+
+        Assigns work units to ranks in a lowest-current load greedy approach.
+
+        Args:
+            work: dict mapping layer names to a sub-dict that maps work for
+                the layer (e.g., factors) to the approximate cost of that
+                work object.
+            worker_groups: list of list of ranks where each sub-list of ranks
+                represents a worker group. All work (e.g., factor computations)
+                for a given layer will be constrained to be workers within
+                a worker group. For example, if the worker groups are
+                [[0, 1], [2, 3]], there will never be a case where the two
+                factors for a given layer are performed on worker in separate
+                groups.
+            world_size (int): world_size
+            colocate_factors (bool): if true, factors for a single layer will
+                be assigned to the same worker. Otherwise, factors for a single
+                layer can be computed on separate workers given those workers
+                are in the same group.
+
+        Returns:
+            dict matching the structure of the work inputs except the values
+            of the sub-dicts are the worker ranks that the corresponding factor
+            should be computed on.
+        """
         worker_loads = [0.0] * world_size
         assignments = {
             layer: {factor: -1 for factor in factors}
@@ -281,7 +311,7 @@ class KAISAAssignment(WorkAssignment):
         world_size: int,
         grad_workers: int,
     ) -> set[frozenset[int]]:
-        """Returns set of sets of unique gradient workers
+        """Returns set of sets of unique gradient workers.
 
         Constructs an m x n grid of the ranks in the world where m=grad_workers
         and and n=world_size/grad_workers with ranks ordered in ascending
@@ -299,8 +329,12 @@ class KAISAAssignment(WorkAssignment):
 
             output: [[0, 4], [1, 5], [2, 6], [3, 7]]
 
+        Args:
+            world_size (int): world size.
+            grad_workers (int): number of gradient workers.
+
         Returns:
-            Set[Set[int]] where the total number of elements is equal to
+            set[set[int]] where the total number of elements is equal to
             world_size and the size of each subset is equal to grad_workers.
         """
         if not 0 < world_size:
@@ -321,13 +355,17 @@ class KAISAAssignment(WorkAssignment):
         world_size: int,
         grad_workers: int,
     ) -> set[frozenset[int]]:
-        """Returns set of sets of unique gradient receiver groups
+        """Returns set of sets of unique gradient receiver groups.
 
         Constructs the grid described in `partition_grad_receivers` and returns
         the rows.
 
+        Args:
+            world_size (int): world size.
+            grad_workers (int): number of gradient workers.
+
         Returns:
-            Set[Set[int]] where the total number of elements is equal to
+            set[set[int]] where the total number of elements is equal to
             world_size and the size of each top-level set is equal to
             grad_workers.
         """
