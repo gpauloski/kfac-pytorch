@@ -1,3 +1,4 @@
+"""Unit tests for kfac/distributed.py."""
 from __future__ import annotations
 
 import pytest
@@ -15,14 +16,16 @@ from testing.distributed import distributed_test
 
 
 def test_distributed_not_initialized() -> None:
+    """Test rank/world_size functions when not using distributed."""
     assert get_rank() == 0
     assert get_world_size() == 1
 
 
 def test_triu() -> None:
-    """Test upper triangular support methods"""
+    """Test upper triangular support methods."""
 
     def check(shape: list[int]) -> None:
+        """Check get triangle and restore."""
         t = torch.rand(shape)
         # Make symmetric
         t = t + t.T
@@ -59,7 +62,7 @@ def test_allreduce(
     symmetric: bool,
     expect_raises: type[BaseException] | None,
 ) -> None:
-    """Test allreduce"""
+    """Test allreduce."""
 
     @distributed_test(world_size)
     def simple_allreduce(
@@ -98,7 +101,7 @@ def test_broadcast(
     symmetric: bool,
     expect_raises: type[BaseException] | None,
 ) -> None:
-    """Test broadcast"""
+    """Test broadcast."""
 
     @distributed_test(world_size)
     def simple_broadcast(
@@ -129,6 +132,7 @@ def test_allreduce_tensor_bucket(world_size: int) -> None:
 
     @distributed_test(world_size)
     def allreduce() -> None:
+        """Run allreduce example in distributed environment."""
         bucket = AllreduceTensorBucket()
 
         # Communication operation can only be called once
@@ -206,6 +210,7 @@ def test_allreduce_bucketed(
         symmetric: bool = False,
         expect_raises: type[BaseException] | None = None,
     ) -> None:
+        """Test allreduce in distributed environment."""
         try:
             world_size = torch.distributed.get_world_size()
             comm = TorchDistributedCommunicator(bucket_cap_mb)
@@ -263,6 +268,7 @@ def test_allreduce_bucketed_grouped(
         bucket_cap_mb: float,
         symmetric: bool = False,
     ) -> None:
+        """Test allreduce in distributed environment."""
         rank = torch.distributed.get_rank()
         world_size = torch.distributed.get_world_size()
         comm = TorchDistributedCommunicator(bucket_cap_mb)

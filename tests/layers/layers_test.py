@@ -1,3 +1,4 @@
+"""Unit tests for implementations of KFACBaseLayer."""
 from __future__ import annotations
 
 from typing import Any
@@ -79,6 +80,7 @@ def test_preconditioning_step(
 
     @distributed_test(world_size)
     def precondition() -> None:
+        """Precondition layer in distributed environment."""
         in_features = 10
         out_features = 5
         batch_size = 2
@@ -144,7 +146,8 @@ def test_preconditioning_step(
 
 
 @pytest.mark.parametrize('layer_type', (KFACInverseLayer, KFACEigenLayer))
-def test_inv_layer(layer_type: type[KFACBaseLayer]) -> None:
+def test_kfac_layers(layer_type: type[KFACBaseLayer]) -> None:
+    """Test KFACBaseLayer implementation."""
     batch_size, in_features, out_features = 2, 5, 5
     module = torch.nn.Linear(in_features, out_features)
     x = torch.rand([batch_size, in_features])
@@ -248,6 +251,7 @@ def test_inv_layer(layer_type: type[KFACBaseLayer]) -> None:
 
 
 def test_nonsymmetric_eigen() -> None:
+    """Test nonsymmetric eigen decomposition."""
     batch_size, in_features, out_features = 2, 5, 5
     module = torch.nn.Linear(in_features, out_features)
     x = torch.rand([batch_size, in_features])

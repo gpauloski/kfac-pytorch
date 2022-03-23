@@ -1,3 +1,4 @@
+"""Unit Tests for kfac/base_preconditioner.py."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -21,6 +22,7 @@ from testing.models import TinyModel
 
 
 def example_layers() -> dict[torch.nn.Module, tuple[str, KFACBaseLayer]]:
+    """Return register layers of LeNet with KFAC."""
     return register_modules(
         LeNet(),
         compute_method=ComputeMethod.INVERSE,
@@ -36,6 +38,7 @@ def example_layers() -> dict[torch.nn.Module, tuple[str, KFACBaseLayer]]:
 
 
 def test_base_preconditioner_init_raises() -> None:
+    """Test BaseKFACPreconditioner raises."""
     with pytest.raises(ValueError):
         BaseKFACPreconditioner(
             example_layers(),
@@ -111,6 +114,7 @@ def test_base_preconditioner_init_raises() -> None:
 
 
 def test_base_preconditioner_init() -> None:
+    """Test BaseKFACPreconditioner initialize."""
     factor_update_steps = 1
     inv_update_steps = 2
     damping = 0.003
@@ -169,6 +173,7 @@ def test_base_preconditioner_init() -> None:
 
 
 def test_empty_state_dict() -> None:
+    """Test state dict functionality with no factors."""
     p1 = BaseKFACPreconditioner(
         layers=example_layers(),
         assignment=LazyAssignment(),
@@ -275,12 +280,11 @@ def test_base_preconditioner_e2e(
     broadcast: bool,
     kfac_args: dict[str, Any],
 ) -> None:
+    """Run small e2e training example."""
 
-    # TODO(gpauloski): This test causes some of the tests in
-    # tests/distributed_test.py to hang when run outsize of the
-    # distributed_test wrapper.
     @distributed_test(world_size=1)
     def e2e() -> None:
+        """Helper to run training in simulated distributed environment."""
         batch_size = 2
         model = TinyModel()
         criterion = torch.nn.MSELoss(reduction='sum')

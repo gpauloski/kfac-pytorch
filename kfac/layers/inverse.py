@@ -1,3 +1,4 @@
+"""Inverse preconditioning implementation."""
 from __future__ import annotations
 
 from typing import Callable
@@ -16,6 +17,8 @@ from kfac.layers.modules import ModuleHelper
 
 
 class KFACInverseLayer(KFACBaseLayer):
+    """KFAC layer that preconditions gradients with inverse factors."""
+
     def __init__(
         self,
         module: ModuleHelper,
@@ -29,6 +32,27 @@ class KFACInverseLayer(KFACBaseLayer):
         inv_dtype: torch.dtype = torch.float32,
         symmetry_aware: bool = False,
     ) -> None:
+        """Init KFACInverseLayer.
+
+        Args:
+            module (ModuleHelper): module helper that exposes interfaces for
+                getting the factors and gradients of a PyTorch module.
+            tdc (TorchDistributedCommunicator): communicator object. Typically
+                the communicator object should be shared by all KFACBaseLayers.
+            allreduce_method (AllreduceMethod): allreduce method (default:
+                AllreduceMethod.ALLREDUCE).
+            factor_dtype (torch.dtype): data format to store factors in. If
+                None, factors are stored in the format used in training
+                (default: None).
+            grad_scaler (optional): optional GradScaler or callable that
+                returns the scale factor used in AMP training (default: None).
+            inv_dtype (torch.dtype): data format to store inverses in.
+                Inverses (or eigen decompositions) may be unstable in half-
+                precision (default: torch.float32).
+            symmetry_aware (bool): use symmetry aware communication method.
+                This is typically more helpful when the factors are very
+                large (default: False).
+        """
         super().__init__(
             module=module,
             tdc=tdc,
@@ -47,25 +71,30 @@ class KFACInverseLayer(KFACBaseLayer):
 
     @property
     def a_inv(self) -> torch.Tensor | None:
+        """Get A inverse."""
         if isinstance(self._a_inv, Future):
             self._a_inv = cast(torch.Tensor, self._a_inv.wait())
         return self._a_inv
 
     @a_inv.setter
     def a_inv(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set A inverse."""
         self._a_inv = value
 
     @property
     def g_inv(self) -> torch.Tensor | None:
+        """Get G inverse."""
         if isinstance(self._g_inv, Future):
             self._g_inv = cast(torch.Tensor, self._g_inv.wait())
         return self._g_inv
 
     @g_inv.setter
     def g_inv(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set G inverse."""
         self._g_inv = value
 
     def memory_usage(self) -> dict[str, int]:
+        """Get memory usage for all variables in the layer."""
         sizes = super().memory_usage()
         sizes['a_inverses'] = (
             self.a_inv.nelement() * self.a_inv.element_size()
@@ -84,6 +113,18 @@ class KFACInverseLayer(KFACBaseLayer):
         src: int,
         group: dist.ProcessGroup | None = None,
     ) -> None:
+        """Initiate A inv broadcast and store future to result.
+
+        Note:
+            all ranks must enter this function even if the rank is not
+            a part of the inverse broadcast group.
+
+        Args:
+            src (int): src rank that computed A inverse.
+            group (ProcessGroup): process group to which src should broadcast
+                A inv. All ranks in group should enter this function.
+                Defaults to None, the default process group.
+        """
         if self.a_inv is None:
             if get_rank() == src:
                 raise RuntimeError(
@@ -109,6 +150,18 @@ class KFACInverseLayer(KFACBaseLayer):
         src: int,
         group: dist.ProcessGroup | None = None,
     ) -> None:
+        """Initiate G inv broadcast and store future to result.
+
+        Note:
+            all ranks must enter this function even if the rank is not
+            a part of the inverse broadcast group.
+
+        Args:
+            src (int): src rank that computed G inverse.
+            group (ProcessGroup): process group to which src should broadcast
+                G inv. All ranks in group should enter this function.
+                Defaults to None, the default process group.
+        """
         if self.g_inv is None:
             if get_rank() == src:
                 raise RuntimeError(
@@ -130,6 +183,14 @@ class KFACInverseLayer(KFACBaseLayer):
         )
 
     def compute_a_inv(self, damping: float = 0.001) -> None:
+        """Compute A inverse on assigned rank.
+
+        update_a_factor() must be called at least once before this function.
+
+        Args:
+            damping (float, optional): damping value to condition inverse
+                (default: 0.001).
+        """
         if self.a_factor is None:
             raise RuntimeError('Cannot invert A before A has been computed')
 
@@ -140,6 +201,7 @@ class KFACInverseLayer(KFACBaseLayer):
         self.a_inv = torch.linalg.inv(a.to(torch.float32)).to(self.inv_dtype)
 
     def compute_g_inv(self, damping: float = 0.001) -> None:
+        """See `compute_g_inv`."""
         if self.g_factor is None:
             raise RuntimeError('Cannot invert G before G has been computed')
 
@@ -150,6 +212,16 @@ class KFACInverseLayer(KFACBaseLayer):
         self.g_inv = torch.linalg.inv(g.to(torch.float32)).to(self.inv_dtype)
 
     def preconditioned_grad(self, damping: float = 0.001) -> None:
+        """Compute precondition gradient of each weight in module.
+
+        Preconditioned gradients can be applied to the actual gradients with
+        `update_gradient()`. Note the steps are separate in the event that
+        intermediate steps will be applied to the preconditioned gradient.
+
+        Args:
+            damping (float, optional): damping to use if preconditioning using
+                the eigendecomposition method (default: 0.001).
+        """
         if self.a_inv is None or self.g_inv is None:
             raise RuntimeError(
                 'Cannot precondition gradient before A and G have been '

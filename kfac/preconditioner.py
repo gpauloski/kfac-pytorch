@@ -1,3 +1,4 @@
+"""Implementation of the KAISA preconditioner."""
 from __future__ import annotations
 
 import logging
@@ -22,81 +23,23 @@ logger = logging.getLogger(__name__)
 
 
 class KFACPreconditioner(BaseKFACPreconditioner):
-    """KFAC Distributed Gradient Preconditioner
+    """KFAC Distributed Gradient Preconditioner.
 
-    Preconditions the gradients of a model with a layer-wise FIM approximation.
-    Layer computations are distributed across workers using torch.distributed.
+    Implements the KAISA preconditioning strategy where gradient workers and
+    receivers are assigned based on the gradient worker fraction.
 
     Example:
-    >>> model = torch.nn.parallel.DistributedDataParallel(model, ...)
-    >>> optimizer = optim.SGD(model.parameters(), ...)
-    >>> preconditioner = KFAC(model, ...)
-    >>>
-    >>> for i, (data, target) in enumerate(train_loader):
-    >>>     optimizer.zero_grad()
-    >>>     output = model(data)
-    >>>     loss = criterion(output, target)
-    >>>     loss.backward()
-    >>>     preconditioner.step()
-    >>>     optimizer.step()
-
-    Args:
-      model (torch.nn.Module): model to register and perform KFAC updates on.
-      factor_update_steps (int): steps between computing and updating the
-          running average of the Kronecker factors.
-      inv_update_steps (int): steps between recomputing and communicating
-          the second-order information.
-      damping (Callable, float): Tikhonov damping parameter or a callable
-          that will return the damping parameter as a float (default: 0.001).
-      factor_decay (Callable, float): running average coefficient for Kronecker
-          factors or callable that will return the factor_decay
-          (default: 0.95).
-      kl_clip (Callable, float): clipping parameter for gradient scaling or
-          a callable that returns a float. If None, no scaling/clipping
-          will be applied (default: 0.001).
-      lr (Callable, float): learning rate or callable that will return learning
-          rate (default: 0.1).
-      accumulation_steps (int): number of forward/backward passes
-          between optimization steps (default: 1).
-      allreduce_bucket_cap_mb (float): maximum size in megabytes for allreduce
-          bucketing. If zero, bucketing is not used (default: 25).
-      assignment_strategy (AssignmentStrategy, str): See `AssignmentStrategy`
-          for more details (default: AssignmentStrategy.COMPUTE).
-      colocate_factors (bool): assign both factors for a single layer to the
-          same worker. Reccomended when num_layers < world_size
-          (default: True).
-      compute_method (ComputeMethod, str): See `ComputeMethod` for more
-          details (default: ComputeMethod.EIGEN).
-      compute_eigenvalue_outer_product (bool): when using the eigen compute
-          method, precompute the element-wise inverse of the outer product of
-          eigenvectors on the eigen decomposition worker rather to reduce
-          computation in the gradient preconditioning stage.
-          `colocate_factors` must be True (default: True).
-      grad_worker_fraction (DistributedStrategy, float): controls the fraction
-          of workers assigned as gradient workers for each layer. Optionally,
-          predefined configurations can be passed using the
-          DistributedStrategy enum (default: DistributedStrategy.COMM_OPT).
-      symmetry_aware (bool): communicate only the upper triangle of symmetric
-          matrices. Can reduce communication time when factors are large
-          (default: False).
-      grad_scaler (torch.cuda.amp.GradScaler or callable): Gradient scaler
-          used for Torch AMP training. Used to unscale the G factors as they
-          are accumulated during the backward pass. Alternatively can be
-          a callable which will return the current scale (default: None).
-      factor_dtype (torch.dtype): force data type for storing factors. If None,
-          defaults to data type of intermediate values in forward/backward pass
-          (default: None).
-      inv_dtype (torch.dtype): force data type for storing second-order data
-          (e.g., inverses or eigen decompositions) (default: torch.float32).
-      skip_layers (list): list of module names to ignore when registering
-          layers. Passing the name of parent modules will prevent recursively
-          registering child modules of the parent. Case-insensitive
-          (default: []).
-      update_factors_in_hook (bool): If True, running average of factors is
-          updated in the module hook and the async commmunication is started.
-          Otherwise, this will be performed at the start of step() (default:
-          True).
-      loglevel (int): logging level (default: logging.DEBUG).
+        >>> model = torch.nn.parallel.DistributedDataParallel(model, ...)
+        >>> optimizer = optim.SGD(model.parameters(), ...)
+        >>> preconditioner = kfac.preconditioner.KFACPreconditioner(model, ...)
+        >>>
+        >>> for i, (data, target) in enumerate(train_loader):
+        >>>     optimizer.zero_grad()
+        >>>     output = model(data)
+        >>>     loss = criterion(output, target)
+        >>>     loss.backward()
+        >>>     preconditioner.step()
+        >>>     optimizer.step()
     """
 
     def __init__(
@@ -133,6 +76,74 @@ class KFACPreconditioner(BaseKFACPreconditioner):
         update_factors_in_hook: bool = True,
         loglevel: int = logging.DEBUG,
     ) -> None:
+        """Init KFACPreconditioner.
+
+        Args:
+            model (torch.nn.Module): model to precondition with KFAC.
+            factor_update_steps (Callable, int): steps between computing and
+                updating the running average of the Kronecker factors or
+                callable that returns the value.
+            inv_update_steps (Callble, int): steps between recomputing and
+                communicating the second-order information or callable that
+                returns the value.
+            damping (Callable, float): Tikhonov damping parameter or a callable
+                that will return the damping parameter as a float
+                (default: 0.001).
+            factor_decay (Callable, float): running average coefficient for
+                Kronecker factors or callable that will return the factor_decay
+                (default: 0.95).
+            kl_clip (Callable, float): clipping parameter for gradient scaling
+                or a callable that returns a float. If None, no
+                scaling/clipping will be applied (default: 0.001).
+            lr (Callable, float): learning rate or callable that will return
+                learning rate (default: 0.1).
+            accumulation_steps (int): number of forward/backward passes
+                between optimization steps (default: 1).
+            allreduce_bucket_cap_mb (float): maximum size in megabytes for
+                allreduce bucketing. If zero, bucketing is not used
+                (default: 25).
+            assignment_strategy (AssignmentStrategy, str): See
+                `AssignmentStrategy` for more details
+                (default: AssignmentStrategy.COMPUTE).
+            colocate_factors (bool): assign both factors for a single layer to
+                the same worker. Reccomended when num_layers < world_size
+                (default: True).
+            compute_method (ComputeMethod, str): See `ComputeMethod` for more
+                details (default: ComputeMethod.EIGEN).
+            compute_eigenvalue_outer_product (bool): when using the eigen
+                compute method, precompute the element-wise inverse of the
+                outer product of eigenvectors on the eigen decomposition worker
+                rather to reduce computation in the gradient preconditioning
+                stage. `colocate_factors` must be True (default: True).
+            grad_worker_fraction (DistributedStrategy, float): controls the
+                fraction of workers assigned as gradient workers for each
+                layer. Optionally, predefined configurations can be passed
+                using the DistributedStrategy enum
+                (default: DistributedStrategy.COMM_OPT).
+            symmetry_aware (bool): communicate only the upper triangle of
+                symmetric matrices. Can reduce communication time when factors
+                are large (default: False).
+            grad_scaler (torch.cuda.amp.GradScaler or callable): Gradient
+                scaler used for Torch AMP training. Used to unscale the G
+                factors as they are accumulated during the backward pass.
+                Alternatively can be a callable which will return the current
+                scale (default: None).
+            factor_dtype (torch.dtype): force data type for storing factors.
+                If None, defaults to data type of intermediate values in
+                forward/backward pass (default: None).
+            inv_dtype (torch.dtype): force data type for storing second-order
+                data (e.g., inverses or eigen decompositions)
+                (default: torch.float32).
+            skip_layers (list): list of module names to ignore when registering
+                layers. Passing the name of parent modules will prevent
+                recursively registering child modules of the parent.
+                Case-insensitive (default: []).
+            update_factors_in_hook (bool): If True, running average of factors
+                is updated in the module hook and the async commmunication is
+                started. Otherwise, this will be performed at the start of
+                step() (default: True).
+            loglevel (int): logging level (default: logging.DEBUG).
+        """
         if allreduce_bucket_cap_mb < 0:
             raise ValueError('allreduce_bucket_cap_mb must be >= 0')
         if (

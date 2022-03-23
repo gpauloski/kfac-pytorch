@@ -1,15 +1,18 @@
+"""KFAC enum types."""
 from __future__ import annotations
 
 from enum import Enum
 
 
 class AllreduceMethod(Enum):
+    """Allreduce method."""
+
     ALLREDUCE = 1
     ALLREDUCE_BUCKETED = 2
 
 
 class AssignmentStrategy(Enum):
-    """KFAC Factor Distribution Method
+    """KFAC Factor Distribution Method.
 
     KFAC assigns factors for second-order computation using a heuristic-based
     longest-processing time greedy algorithm. AssignmentStrategy.COMPUTE
@@ -23,7 +26,7 @@ class AssignmentStrategy(Enum):
 
 
 class ComputeMethod(Enum):
-    """KFAC Second Order Computation Method
+    """KFAC Second Order Computation Method.
 
     Controls if eigen decompositions or inverse of the factors will be used
     to precondition the gradients.
@@ -34,7 +37,7 @@ class ComputeMethod(Enum):
 
 
 class DistributedStrategy(Enum):
-    """KFAC Distribution Strategy
+    """KFAC Distribution Strategy.
 
     Shortcuts for common grad_worker_fractions.
       - COMM_OPT: grad_worker_fraction = 1

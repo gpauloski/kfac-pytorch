@@ -1,3 +1,4 @@
+"""Unit tests for kfac/layers/utils.py."""
 from __future__ import annotations
 
 import pytest
@@ -13,6 +14,7 @@ from kfac.layers.utils import reshape_data
     [((1,), (2,)), ((4, 6), (4, 7)), ((1, 2, 3), (1, 2, 4))],
 )
 def test_append_bias_ones(shape: tuple[int], out_shape: tuple[int]) -> None:
+    """Test append_bias_ones."""
     x = torch.rand(shape)
     x_out = append_bias_ones(x)
     assert x_out.shape == out_shape
@@ -58,6 +60,7 @@ def test_get_cov(
     scale: float | None,
     expected: torch.Tensor,
 ) -> None:
+    """Test get_cov."""
     if len(a.shape) != 2 or (b is not None and a.shape != b.shape):
         with pytest.raises(ValueError):
             get_cov(a, b, scale)
@@ -84,6 +87,7 @@ def test_reshape_data(
     collapse_dims: bool,
     expected: tuple[int],
 ) -> None:
+    """Test reshape_data."""
     # TODO: this test does not check batch_first = False (which assumes the
     # batch is the second dimension which is a little strange).
     tensors = [torch.ones(shape) for shape in shapes]

@@ -1,3 +1,4 @@
+"""Unit tests for kfac/layers/modules.py."""
 from __future__ import annotations
 
 import pytest
@@ -22,6 +23,7 @@ def test_conv2d_module(
     win: int,
     bias: bool,
 ) -> None:
+    """Test Conv2dModuleHelper."""
     hout = int((hin + 2 * padding - 1 * (kernel_size - 1) - 1) / stride) + 1
     wout = int((win + 2 * padding - 1 * (kernel_size - 1) - 1) / stride) + 1
 
@@ -73,6 +75,7 @@ def test_conv2d_module(
 
 @pytest.mark.parametrize('bias', [True, False])
 def test_linear_module(bias: bool) -> None:
+    """Test LinearModuleHelper."""
     in_shape = 5
     out_shape = 3
     batch_size = 4
