@@ -11,7 +11,6 @@ import torch
 from kfac.base_preconditioner import BaseKFACPreconditioner
 from kfac.distributed import TorchDistributedCommunicator
 from kfac.enums import AllreduceMethod
-from kfac.enums import ComputeMethod
 from kfac.layers.base import KFACBaseLayer
 from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.register import register_modules
@@ -25,9 +24,8 @@ def example_layers() -> dict[torch.nn.Module, tuple[str, KFACBaseLayer]]:
     """Return register layers of LeNet with KFAC."""
     return register_modules(
         LeNet(),
-        compute_method=ComputeMethod.INVERSE,
+        kfac_layer_type=KFACInverseLayer,
         allreduce_method=AllreduceMethod.ALLREDUCE,
-        compute_eigenvalue_outer_product=False,
         grad_scaler=None,
         factor_dtype=None,
         inv_dtype=torch.float32,
@@ -293,9 +291,8 @@ def test_base_preconditioner_e2e(
         tdc = TorchDistributedCommunicator()
         layers = register_modules(
             model,
-            compute_method=ComputeMethod.INVERSE,
+            KFACInverseLayer,
             allreduce_method=AllreduceMethod.ALLREDUCE,
-            compute_eigenvalue_outer_product=False,
             grad_scaler=None,
             factor_dtype=None,
             inv_dtype=torch.float32,

@@ -17,6 +17,9 @@ from kfac.enums import AllreduceMethod
 from kfac.enums import AssignmentStrategy
 from kfac.enums import ComputeMethod
 from kfac.enums import DistributedStrategy
+from kfac.layers.base import KFACBaseLayer
+from kfac.layers.eigen import KFACEigenLayer
+from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.register import register_modules
 
 logger = logging.getLogger(__name__)
@@ -225,17 +228,31 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             bucket_cap_mb=self.allreduce_bucket_cap_mb,
         )
 
-        kfac_layers = register_modules(
-            model,
+        layer_kwargs = dict(
             allreduce_method=self.allreduce_method,
-            compute_eigenvalue_outer_product=self.compute_eigenvalue_outer_product,  # noqa: E501
-            compute_method=self.compute_method,
             grad_scaler=self.grad_scaler,
             factor_dtype=self.factor_dtype,
             inv_dtype=self.inv_dtype,
-            skip_layers=self.skip_layers,
             symmetry_aware=self.symmetry_aware,
             tdc=self.tdc,
+        )
+
+        layer_type: type[KFACBaseLayer]
+        if self.compute_method == ComputeMethod.EIGEN:
+            layer_type = KFACEigenLayer
+            layer_kwargs[
+                'prediv_eigenvalues'
+            ] = self.compute_eigenvalue_outer_product
+        elif self.compute_method == ComputeMethod.INVERSE:
+            layer_type = KFACInverseLayer
+        else:
+            raise AssertionError(f'Unknown {self.compute_method=}')
+
+        kfac_layers = register_modules(
+            model,
+            kfac_layer_type=layer_type,
+            skip_layers=self.skip_layers,
+            **layer_kwargs,
         )
         for name, kfac_layer in kfac_layers.values():
             logger.log(
@@ -276,7 +293,9 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             'allreduce_method': self.allreduce_method,
             'assignment_strategy': self.assignment_strategy,
             'colocate_factors': self.colocate_factors,
-            'compute_eigenvalue_outer_product': self.compute_eigenvalue_outer_product,  # noqa: E501
+            'compute_eigenvalue_outer_product': (
+                self.compute_eigenvalue_outer_product
+            ),
             'compute_method': self.compute_method,
             'distributed_strategy': self.distributed_strategy,
             'grad_worker_fraction': self.grad_worker_fraction,
