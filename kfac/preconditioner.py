@@ -310,6 +310,7 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             kfac_layers,
             factor_update_steps=factor_update_steps,
             inv_update_steps=inv_update_steps,
+            factor_decay=factor_decay,
             damping=damping,
             kl_clip=kl_clip,
             lr=lr,
