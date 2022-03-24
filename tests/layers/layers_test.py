@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from typing import cast
 from typing import Literal
 from unittest import mock
 
@@ -46,9 +47,10 @@ from testing.distributed import distributed_test
             DistributedStrategy.MEM_OPT,
             {
                 'allreduce_method': AllreduceMethod.ALLREDUCE_BUCKETED,
+                'factor_dtype': torch.float64,
                 'grad_scaler': torch.cuda.amp.GradScaler(),
-                'symmetry_aware': True,
                 'prediv_eigenvalues': True,
+                'symmetry_aware': True,
             },
         ),
         (
@@ -58,8 +60,9 @@ from testing.distributed import distributed_test
             {
                 'allreduce_method': AllreduceMethod.ALLREDUCE_BUCKETED,
                 'grad_scaler': torch.cuda.amp.GradScaler(),
-                'symmetry_aware': True,
+                'inv_dtype': torch.float64,
                 'prediv_eigenvalues': True,
+                'symmetry_aware': True,
             },
         ),
     ],
@@ -110,6 +113,15 @@ def test_preconditioning_step(
         # Stage 2: compute factors
         layer.update_a_factor()
         layer.update_g_factor()
+        if 'factor_dtype' in kwargs:
+            assert (
+                layer.a_factor is not None
+                and layer.a_factor.dtype == kwargs['factor_dtype']
+            )
+            assert (
+                layer.g_factor is not None
+                and layer.g_factor.dtype == kwargs['factor_dtype']
+            )
 
         # Stage 3: reduce factors
         layer.reduce_a_factor()
@@ -126,6 +138,47 @@ def test_preconditioning_step(
         if world_size > 1 and strategy == DistributedStrategy.COMM_OPT:
             layer.broadcast_a_inv(src=0)
             layer.broadcast_g_inv(src=0)
+
+        if 'inv_dtype' in kwargs:
+            if kfac_layer == KFACInverseLayer:
+                layer = cast(KFACInverseLayer, layer)
+                assert (
+                    layer.a_inv is not None
+                    and layer.a_inv.dtype == kwargs['inv_dtype']
+                )
+                assert (
+                    layer.g_inv is not None
+                    and layer.g_inv.dtype == kwargs['inv_dtype']
+                )
+            elif kfac_layer == KFACEigenLayer:
+                layer = cast(KFACEigenLayer, layer)
+                assert (
+                    layer.qa is not None
+                    and layer.qa.dtype == kwargs['inv_dtype']
+                )
+                assert (
+                    layer.qg is not None
+                    and layer.qg.dtype == kwargs['inv_dtype']
+                )
+                if (
+                    'prediv_eigenvalues' in kwargs
+                    and kwargs['prediv_eigenvalues']
+                ):
+                    assert (
+                        layer.dgda is not None
+                        and layer.dgda.dtype == kwargs['inv_dtype']
+                    )
+                else:
+                    assert (
+                        layer.da is not None
+                        and layer.da.dtype == kwargs['inv_dtype']
+                    )
+                    assert (
+                        layer.dg is not None
+                        and layer.dg.dtype == kwargs['inv_dtype']
+                    )
+            else:
+                raise AssertionError
 
         # Stage 6: compute and communicate preconditioned gradient
         if strategy == DistributedStrategy.COMM_OPT or (
