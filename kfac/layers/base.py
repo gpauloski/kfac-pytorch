@@ -323,7 +323,7 @@ class KFACBaseLayer:
 
     def save_layer_input(self, input: list[torch.Tensor]) -> None:
         """Save input for layer."""
-        a = input[0]
+        a = input[0].to(self.factor_dtype)
         a = self.module.get_a_factor(a)
         if self._a_batch is None:
             self._a_batch = a
@@ -337,7 +337,7 @@ class KFACBaseLayer:
         grad_output: tuple[torch.Tensor, ...],
     ) -> None:
         """Save grad w.r.t outputs for layer."""
-        g = grad_output[0]
+        g = grad_output[0].to(self.factor_dtype)
         if self.grad_scaler is not None:
             g = g / self.grad_scaler()
         g = self.module.get_g_factor(g)
