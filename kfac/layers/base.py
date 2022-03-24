@@ -323,7 +323,10 @@ class KFACBaseLayer:
 
     def save_layer_input(self, input: list[torch.Tensor]) -> None:
         """Save input for layer."""
-        a = input[0].to(self.factor_dtype)
+        # Note: the clone here is a fix for "RuntimeError: one of the variables
+        # needed for gradient computation has been modified by an inplace
+        # operation" in the ResNet50 + ImageNet example.
+        a = input[0].to(self.factor_dtype).clone()
         a = self.module.get_a_factor(a)
         if self._a_batch is None:
             self._a_batch = a
