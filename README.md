@@ -1,9 +1,11 @@
-# KAISA: a K-FAC Preconditioner for Distributed PyTorch
+# Distributed K-FAC Preconditioner for PyTorch
 
 [![DOI](https://zenodo.org/badge/240976400.svg)](https://zenodo.org/badge/latestdoi/240976400)
 
-KAISA is a **K-FAC**-enabled, **A**daptable, **I**mproved, and **S**c**A**lable second-order optimizer framework.
-KAISA enables efficient second-order optimization with K-FAC to reduce time-to-convergence in [PyTorch distributed training](https://pytorch.org/tutorials/intermediate/ddp_tutorial.html).
+K-FAC, Kronecker-factored Approximate Curvature, is a second-order optimization method based on an efficient approximation of the Fisher information matrix (see the [original paper](https://arxiv.org/abs/1503.05671)).
+This repository provides a PyTorch implementation of K-FAC as a preconditioner to standard PyTorch optimizers with support for single-device or distributed training.
+The distributed strategy is implemented using KAISA, a **K-FAC**-enabled, **A**daptable, **I**mproved, and **S**c**A**lable second-order optimizer framework, where the placement of the second-order computations and gradient preconditioning is controlled by the *gradient worker fraction* parameter (see the [paper](https://arxiv.org/abs/2107.01739) for more details).
+KAISA has been shown to reduce time-to-convergence in [PyTorch distributed training](https://pytorch.org/tutorials/intermediate/ddp_tutorial.html) applications such as ResNet-50, Mask R-CNN, and BERT.
 
 ## Publications
 
@@ -17,7 +19,6 @@ KAISA enables efficient second-order optimization with K-FAC to reduce time-to-c
 - [Usage](#usage)
 - [Examples](#examples)
 - [Developing](#developing)
-- [Related Code](#related-code)
 - [Citations and References](#citations-and-references)
 
 ## Install
@@ -42,11 +43,15 @@ See the [K-FAC docstring](kfac/preconditioner.py) for a detailed list of K-FAC p
 
 ```Python
 from kfac.preconditioner import KFACPreconditioner
+
 ...
+
 model = torch.nn.parallel.DistributedDataParallel(...)
 optimizer = optim.SGD(model.parameters(), ...)
 preconditioner = KFACPreconditioner(model, ...)
+
 ...
+
 for data, target in train_loader:
     optimizer.zero_grad()
     output = model(data)
@@ -54,6 +59,7 @@ for data, target in train_loader:
     loss.backward()
     preconditioner.step()
     optimizer.step()
+
 ...
 ```
 
