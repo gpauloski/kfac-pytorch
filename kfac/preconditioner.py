@@ -299,7 +299,7 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             'compute_method': self.compute_method,
             'distributed_strategy': self.distributed_strategy,
             'grad_worker_fraction': self.grad_worker_fraction,
-            'grad_scaler': self.grad_scaler is None,
+            'grad_scaler': self.grad_scaler is not None,
             'factor_dtype': self.factor_dtype,
             'inv_dtype': self.inv_dtype,
             'skip_layers': self.skip_layers,
