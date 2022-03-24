@@ -12,12 +12,12 @@ from kfac.scheduler import LambdaParamScheduler
 from testing.models import TinyModel
 
 
-def factor_func(scale: int) -> Callable[..., int]:
+def factor_func(scale: int, constant: bool = True) -> Callable[..., int]:
     """Get function which returns scale given step."""
 
     def factor(step: int = 1) -> int:
         """Scale function."""
-        return scale
+        return scale if constant else scale * step
 
     return factor
 
@@ -111,6 +111,34 @@ def test_scheduler(
         assert preconditioner.factor_decay == 7**steps
         assert preconditioner.kl_clip == 9**steps
         assert preconditioner.lr == 11**steps
+
+    preconditioner = preconditioner_type(
+        **preconditioner_kwargs,
+        factor_update_steps=1,
+        inv_update_steps=1,
+        damping=1,
+        factor_decay=1,
+        kl_clip=1,
+        lr=1,
+    )
+    scheduler = LambdaParamScheduler(
+        preconditioner,
+        factor_update_steps_lambda=factor_func(2, False),
+        inv_update_steps_lambda=factor_func(3, False),
+        damping_lambda=factor_func(5, False),
+        factor_decay_lambda=factor_func(7, False),
+        kl_clip_lambda=factor_func(9, False),
+        lr_lambda=factor_func(11, False),
+    )
+    for steps in range(1, 10):
+        preconditioner._steps = steps
+        scheduler.step(step=0)
+        assert preconditioner.factor_update_steps == 0
+        assert preconditioner.inv_update_steps == 0
+        assert preconditioner.damping == 0
+        assert preconditioner.factor_decay == 0
+        assert preconditioner.kl_clip == 0
+        assert preconditioner.lr == 0
 
     scheduler = LambdaParamScheduler(preconditioner)
     scheduler.step()

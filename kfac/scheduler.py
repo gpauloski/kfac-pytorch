@@ -13,7 +13,8 @@ class LambdaParamScheduler:
         The lambda functions take as input the step value of the
         preconditioner. This step value is not necessarily the global number
         of optimization steps but rather the number of times
-        preconditioner.step() has been called.
+        preconditioner.step() has been called. This can be overridden by
+        passing the step value to scheduler.step(step).
 
     Warning:
         KFACBasePreconditioner can take callables for the parameters instead
@@ -114,39 +115,52 @@ class LambdaParamScheduler:
                     'and cannot be updated by the lambdaparamscheduler.',
                 )
 
-    def step(self) -> None:
+    def step(self, step: int | None = None) -> None:
         """Update KFAC preconditioner params.
 
         Note:
             This should be called after preconditioner.step().
+
+        Args:
+            step (int, optional): optionally override the current step.
         """
         if self._factor_update_steps_lambda is not None:
             factor = self._factor_update_steps_lambda(
-                self._preconditioner.steps,
+                step if step is not None else self._preconditioner.steps,
             )
             assert not callable(self._preconditioner._factor_update_steps)
             self._preconditioner._factor_update_steps = int(
                 self._preconditioner._factor_update_steps * factor,
             )
         if self._inv_update_steps_lambda is not None:
-            factor = self._inv_update_steps_lambda(self._preconditioner.steps)
+            factor = self._inv_update_steps_lambda(
+                step if step is not None else self._preconditioner.steps,
+            )
             assert not callable(self._preconditioner._inv_update_steps)
             self._preconditioner._inv_update_steps = int(
                 self._preconditioner._inv_update_steps * factor,
             )
         if self._damping_lambda is not None:
-            factor = self._damping_lambda(self._preconditioner.steps)
+            factor = self._damping_lambda(
+                step if step is not None else self._preconditioner.steps,
+            )
             assert not callable(self._preconditioner._damping)
             self._preconditioner._damping *= factor
         if self._factor_decay_lambda is not None:
-            factor = self._factor_decay_lambda(self._preconditioner.steps)
+            factor = self._factor_decay_lambda(
+                step if step is not None else self._preconditioner.steps,
+            )
             assert not callable(self._preconditioner._factor_decay)
             self._preconditioner._factor_decay *= factor
         if self._kl_clip_lambda is not None:
-            factor = self._kl_clip_lambda(self._preconditioner.steps)
+            factor = self._kl_clip_lambda(
+                step if step is not None else self._preconditioner.steps,
+            )
             assert not callable(self._preconditioner._kl_clip)
             self._preconditioner._kl_clip *= factor
         if self._lr_lambda is not None:
-            factor = self._lr_lambda(self._preconditioner.steps)
+            factor = self._lr_lambda(
+                step if step is not None else self._preconditioner.steps,
+            )
             assert not callable(self._preconditioner._lr)
             self._preconditioner._lr *= factor
