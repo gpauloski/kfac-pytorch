@@ -73,14 +73,18 @@ def get_optimizer(
 
         def get_lambda(
             alpha: int,
-            epochs: list[int],
+            epochs: list[int] | None,
         ) -> Callable[[int], float]:
             """Create lambda function for param scheduler."""
+            if epochs is None:
+                _epochs = []
+            else:
+                _epochs = epochs
 
             def scale(epoch: int) -> float:
                 """Compute current scale factor using epoch."""
                 factor = 1.0
-                for e in epochs:
+                for e in _epochs:
                     if epoch >= e:
                         factor *= alpha
                 return factor

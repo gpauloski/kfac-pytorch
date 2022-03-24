@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import cast
+from typing import List
 
 import torch
 
@@ -211,9 +212,9 @@ class Conv2dModuleHelper(ModuleHelper):
         Returns:
             tensor of shape (batch_size, out_h, out_w, in_c*kh*kw)
         """
-        padding = cast(list[int], self.module.padding)
-        kernel_size = cast(list[int], self.module.kernel_size)
-        stride = cast(list[int], self.module.stride)
+        padding = cast(List[int], self.module.padding)
+        kernel_size = cast(List[int], self.module.kernel_size)
+        stride = cast(List[int], self.module.stride)
         if padding[0] + padding[1] > 0:
             x = torch.nn.functional.pad(
                 x,
