@@ -10,5 +10,6 @@ pep8-naming
 pre-commit
 pytest
 pytest-cov
+torchvision
 tox
 virtualenv
