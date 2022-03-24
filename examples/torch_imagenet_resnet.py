@@ -331,7 +331,11 @@ if __name__ == '__main__':
         scaler = GradScaler()
     args.grad_scaler = scaler
 
-    optimizer, preconditioner, lr_schedules = optimizers.get_optimizer(
+    (
+        optimizer,
+        preconditioner,
+        (lr_scheduler, kfac_scheduler),
+    ) = optimizers.get_optimizer(
         model,
         args,
     )
@@ -346,9 +350,8 @@ if __name__ == '__main__':
         checkpoint = torch.load(filepath, map_location=map_location)
         model.module.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
-        if isinstance(checkpoint['schedulers'], list):
-            for sched, state in zip(lr_schedules, checkpoint['schedulers']):
-                sched.load_state_dict(state)
+        if checkpoint['lr_scheduler'] is not None:
+            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         if (
             checkpoint['preconditioner'] is not None
             and preconditioner is not None
@@ -369,8 +372,9 @@ if __name__ == '__main__':
             args,
         )
         engine.test(epoch, model, loss_func, val_loader, args)
-        for scheduler in lr_schedules:
-            scheduler.step()
+        lr_scheduler.step()
+        if kfac_scheduler is not None:
+            kfac_scheduler.step(step=epoch)
         if (
             epoch > 0
             and epoch % args.checkpoint_freq == 0
@@ -382,7 +386,7 @@ if __name__ == '__main__':
                 model.module,
                 optimizer,
                 preconditioner,
-                lr_schedules,
+                lr_scheduler,
                 args.checkpoint_format.format(epoch=epoch),
             )
 

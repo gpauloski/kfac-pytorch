@@ -19,8 +19,8 @@ def accuracy(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-    preconditioner: kfac.preconditioner.KFACPreconditioner,
-    schedulers: list[torch.optim.lr_scheduler._LRScheduler],
+    preconditioner: kfac.preconditioner.KFACPreconditioner | None,
+    lr_scheduler: torch.optim.lr_scheduler._LRScheduler | None,
     filepath: str,
 ) -> None:
     """Save model checkpoint."""
@@ -30,8 +30,8 @@ def save_checkpoint(
         'preconditioner': preconditioner.state_dict()
         if preconditioner is not None
         else None,
-        'schedulers': [s.state_dict() for s in schedulers]
-        if isinstance(schedulers, list)
+        'lr_scheduler': lr_scheduler.state_dict()
+        if lr_scheduler is not None
         else None,
     }
     torch.save(state, filepath)
