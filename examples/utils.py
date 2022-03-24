@@ -1,16 +1,29 @@
+"""Training utilities."""
 from __future__ import annotations
+
+from typing import Callable
 
 import torch
 import torch.distributed as dist
 from torch.nn.functional import log_softmax
 
+import kfac
 
-def accuracy(output, target):
+
+def accuracy(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Get prediction accuracy."""
     pred = output.max(1, keepdim=True)[1]
     return pred.eq(target.view_as(pred)).float().mean()
 
 
-def save_checkpoint(model, optimizer, preconditioner, schedulers, filepath):
+def save_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    preconditioner: kfac.preconditioner.KFACPreconditioner,
+    schedulers: list[torch.optim.lr_scheduler._LRScheduler],
+    filepath: str,
+) -> None:
+    """Save model checkpoint."""
     state = {
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict(),
@@ -25,11 +38,19 @@ def save_checkpoint(model, optimizer, preconditioner, schedulers, filepath):
 
 
 class LabelSmoothLoss(torch.nn.Module):
-    def __init__(self, smoothing=0.0):
+    """Label smoothing loss."""
+
+    def __init__(self, smoothing: float = 0.0):
+        """Init LabelSmoothLoss."""
         super().__init__()
         self.smoothing = smoothing
 
-    def forward(self, input, target):
+    def forward(
+        self,
+        input: torch.Tensor,
+        target: torch.Tensor,
+    ) -> torch.Tensor:
+        """Forward pass."""
         log_prob = log_softmax(input, dim=-1)
         weight = (
             input.new_ones(input.size())
@@ -42,23 +63,41 @@ class LabelSmoothLoss(torch.nn.Module):
 
 
 class Metric:
-    def __init__(self, name):
+    """Metric tracking class."""
+
+    def __init__(self, name: str):
+        """Init Metric."""
         self.name = name
         self.total = torch.tensor(0.0)
         self.n = torch.tensor(0.0)
 
-    def update(self, val, n=1):
+    def update(self, val: torch.Tensor, n: int = 1) -> None:
+        """Update metric.
+
+        Args:
+            val (float): new value to add.
+            n (int): weight of new value.
+        """
         dist.all_reduce(val, async_op=False)
         self.total += val.cpu() / dist.get_world_size()
         self.n += n
 
     @property
-    def avg(self):
+    def avg(self) -> torch.Tensor:
+        """Get average of metric."""
         return self.total / self.n
 
 
-def create_lr_schedule(workers, warmup_epochs, decay_schedule, alpha=0.1):
-    def lr_schedule(epoch):
+def create_lr_schedule(
+    workers: int,
+    warmup_epochs: int,
+    decay_schedule: list[int],
+    alpha: float = 0.1,
+) -> Callable[[int], float]:
+    """Return lr scheduler lambda."""
+
+    def lr_schedule(epoch: int) -> float:
+        """Compute lr scale factor."""
         lr_adj = 1.0
         if epoch < warmup_epochs:
             lr_adj = (
