@@ -1,26 +1,28 @@
+"""Train and Eval function."""
 from __future__ import annotations
 
+import argparse
 import math
-import sys
 
 import torch
 from tqdm import tqdm
 
-sys.path.append('..')
-from utils import Metric, accuracy  # noqa: E402
+import kfac
+from examples.utils import accuracy
+from examples.utils import Metric
 
 
 def train(
-    epoch,
-    model,
-    optimizer,
-    preconditioner,
-    loss_func,
-    train_sampler,
-    train_loader,
-    args,
-):
-
+    epoch: int,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    preconditioner: kfac.preconditioner.KFACPreconditioner,
+    loss_func: torch.nn.Module,
+    train_sampler: torch.utils.data.distributed.DistributedSampler,
+    train_loader: torch.utils.data.DataLoader,
+    args: argparse.Namespace,
+) -> None:
+    """Train model."""
     model.train()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
@@ -110,7 +112,14 @@ def train(
         )
 
 
-def test(epoch, model, loss_func, val_loader, args):
+def test(
+    epoch: int,
+    model: torch.nn.Module,
+    loss_func: torch.nn.Module,
+    val_loader: torch.utils.data.DataLoader,
+    args: argparse.Namespace,
+) -> None:
+    """Test the model."""
     model.eval()
     val_loss = Metric('val_loss')
     val_accuracy = Metric('val_accuracy')

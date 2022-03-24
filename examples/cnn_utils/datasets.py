@@ -1,6 +1,8 @@
+"""Functions for getting datasets."""
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -8,7 +10,15 @@ from torchvision import datasets
 from torchvision import transforms
 
 
-def get_cifar(args):
+def get_cifar(
+    args: Any,
+) -> tuple[
+    torch.utils.data.distributed.DistributedSampler,
+    torch.utils.data.DataLoader,
+    torch.utils.data.distributed.DistributedSampler,
+    torch.utils.data.DataLoader,
+]:
+    """Get cifar dataset."""
     transform_train = transforms.Compose(
         [
             transforms.RandomCrop(32, padding=4),
@@ -53,7 +63,15 @@ def get_cifar(args):
     return make_sampler_and_loader(args, train_dataset, test_dataset)
 
 
-def get_imagenet(args):
+def get_imagenet(
+    args: Any,
+) -> tuple[
+    torch.utils.data.distributed.DistributedSampler,
+    torch.utils.data.DataLoader,
+    torch.utils.data.distributed.DistributedSampler,
+    torch.utils.data.DataLoader,
+]:
+    """Get imagenet dataset."""
     train_dataset = datasets.ImageFolder(
         args.train_dir,
         transform=transforms.Compose(
@@ -86,7 +104,17 @@ def get_imagenet(args):
     return make_sampler_and_loader(args, train_dataset, val_dataset)
 
 
-def make_sampler_and_loader(args, train_dataset, val_dataset):
+def make_sampler_and_loader(
+    args: Any,
+    train_dataset: torch.utils.data.Dataset,
+    val_dataset: torch.utils.data.Dataset,
+) -> tuple[
+    torch.utils.data.distributed.DistributedSampler,
+    torch.utils.data.DataLoader,
+    torch.utils.data.distributed.DistributedSampler,
+    torch.utils.data.DataLoader,
+]:
+    """Create sampler and dataloader for train and val datasets."""
     torch.set_num_threads(4)
     kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
     kwargs['prefetch_factor'] = 8

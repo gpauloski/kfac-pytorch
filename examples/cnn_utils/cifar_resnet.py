@@ -28,6 +28,9 @@ Source: https://raw.githubusercontent.com/akamaster/pytorch_resnet_cifar10
 """
 from __future__ import annotations
 
+from typing import Callable
+
+import torch
 import torch.nn as nn
 import torch.nn.init as init
 from torch.nn.functional import avg_pool2d
@@ -46,7 +49,8 @@ __all__ = [
 ]
 
 
-def get_model(model):
+def get_model(model: str) -> torch.nn.Module:
+    """Get PyTorch model by name."""
     if model.lower() == 'resnet20':
         model = resnet20()
     elif model.lower() == 'resnet32':
@@ -60,24 +64,38 @@ def get_model(model):
     return model
 
 
-def _weights_init(m):
+def _weights_init(m: torch.nn.Module) -> None:
+    """Initialize weights of linear or conv2d module."""
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         init.kaiming_normal_(m.weight)
 
 
 class LambdaLayer(nn.Module):
-    def __init__(self, lambd):
+    """LambdaLayer."""
+
+    def __init__(self, lambd: Callable[[torch.Tensor], torch.Tensor]):
+        """Init LambdaLayer."""
         super().__init__()
         self.lambd = lambd
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass which applies lambda to x."""
         return self.lambd(x)
 
 
 class BasicBlock(nn.Module):
+    """Basic ResNet block implementation."""
+
     expansion = 1
 
-    def __init__(self, in_planes, planes, stride=1, option='A'):
+    def __init__(
+        self,
+        in_planes: int,
+        planes: int,
+        stride: int = 1,
+        option: str = 'A',
+    ) -> None:
+        """Init BasicBlock."""
         super().__init__()
         self.conv1 = nn.Conv2d(
             in_planes,
@@ -124,7 +142,8 @@ class BasicBlock(nn.Module):
                     nn.BatchNorm2d(self.expansion * planes),
                 )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass."""
         out = relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
@@ -133,7 +152,15 @@ class BasicBlock(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10):
+    """ResNet model implementation."""
+
+    def __init__(
+        self,
+        block: type[torch.nn.Module],
+        num_blocks: list[int],
+        num_classes: int = 10,
+    ) -> None:
+        """Init ResNet."""
         super().__init__()
         self.in_planes = 16
 
@@ -153,7 +180,14 @@ class ResNet(nn.Module):
 
         self.apply(_weights_init)
 
-    def _make_layer(self, block, planes, num_blocks, stride):
+    def _make_layer(
+        self,
+        block: type[torch.nn.Module],
+        planes: int,
+        num_blocks: int,
+        stride: int,
+    ) -> torch.nn.Sequential:
+        """Make individual layer."""
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
@@ -162,7 +196,8 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass."""
         out = relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
@@ -173,31 +208,38 @@ class ResNet(nn.Module):
         return out
 
 
-def resnet20():
+def resnet20() -> ResNet:
+    """Get ResNet20 model."""
     return ResNet(BasicBlock, [3, 3, 3])
 
 
-def resnet32():
+def resnet32() -> ResNet:
+    """Get ResNet20 model."""
     return ResNet(BasicBlock, [5, 5, 5])
 
 
-def resnet44():
+def resnet44() -> ResNet:
+    """Get ResNet20 model."""
     return ResNet(BasicBlock, [7, 7, 7])
 
 
-def resnet56():
+def resnet56() -> ResNet:
+    """Get ResNet20 model."""
     return ResNet(BasicBlock, [9, 9, 9])
 
 
-def resnet110():
+def resnet110() -> ResNet:
+    """Get ResNet20 model."""
     return ResNet(BasicBlock, [18, 18, 18])
 
 
-def resnet1202():
+def resnet1202() -> ResNet:
+    """Get ResNet20 model."""
     return ResNet(BasicBlock, [200, 200, 200])
 
 
-def test(net):
+def test(net: ResNet) -> None:
+    """Print sizes of all ResNet models."""
     import numpy as np
 
     total_params = 0

@@ -1,3 +1,4 @@
+"""ImageNet and ResNet training script."""
 from __future__ import annotations
 
 import argparse
@@ -26,7 +27,8 @@ except ImportError:
 warnings.filterwarnings('ignore', '(Possibly )?corrupt EXIF data', UserWarning)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
+    """Get cmd line args."""
     # General settings
     parser = argparse.ArgumentParser(
         description='PyTorch ImageNet Example',

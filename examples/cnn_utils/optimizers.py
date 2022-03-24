@@ -1,17 +1,29 @@
+"""Utilities for getting optimizers."""
 from __future__ import annotations
 
-import sys
+import argparse
+from typing import Callable
 
+import torch
 import torch.distributed as dist
 import torch.optim as optim
 
 import kfac
-
-sys.path.append('..')
-from utils import create_lr_schedule  # noqa: E402
+from examples.utils import create_lr_schedule
 
 
-def get_optimizer(model, args):
+def get_optimizer(
+    model: torch.nn.Module,
+    args: argparse.Namespace,
+) -> tuple[
+    optim.Optimizer,
+    kfac.preconditioner.KFACPreconditioner | None,
+    tuple[
+        optim.lr_scheduler._LRScheduler,
+        kfac.scheduler.LambdaParamScheduler | None,
+    ],
+]:
+    """Get optimizer, preconditioner, and scheduler."""
     use_kfac = True if args.kfac_inv_update_steps > 0 else False
 
     optimizer = optim.SGD(
@@ -20,11 +32,18 @@ def get_optimizer(model, args):
         momentum=args.momentum,
         weight_decay=args.weight_decay,
     )
+    lrs = create_lr_schedule(
+        dist.get_world_size(),
+        args.warmup_epochs,
+        args.lr_decay,
+    )
+    lr_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lrs)
 
+    grad_worker_fraction: kfac.enums.DistributedStrategy | float
     if args.kfac_strategy == 'comm-opt':
-        grad_worker_fraction = kfac.DistributedStrategy.COMM_OPT
+        grad_worker_fraction = kfac.enums.DistributedStrategy.COMM_OPT
     elif args.kfac_strategy == 'mem-opt':
-        grad_worker_fraction = kfac.DistributedStrategy.MEM_OPT
+        grad_worker_fraction = kfac.enums.DistributedStrategy.MEM_OPT
     elif args.kfac_strategy == 'hybrid-opt':
         grad_worker_fraction = args.kfac_grad_worker_fraction
     else:
@@ -33,7 +52,7 @@ def get_optimizer(model, args):
         )
 
     if use_kfac:
-        preconditioner = kfac.KFAC(
+        preconditioner = kfac.preconditioner.KFACPreconditioner(
             model,
             factor_update_steps=args.kfac_factor_update_steps,
             inv_update_steps=args.kfac_inv_update_steps,
@@ -44,31 +63,48 @@ def get_optimizer(model, args):
             accumulation_steps=args.batches_per_allreduce,
             allreduce_bucket_cap_mb=25,
             colocate_factors=args.kfac_colocate_factors,
-            compute_method=kfac.ComputeMethod.INVERSE
+            compute_method=kfac.enums.ComputeMethod.INVERSE
             if args.kfac_inv_method
-            else kfac.ComputeMethod.EIGEN,
+            else kfac.enums.ComputeMethod.EIGEN,
             grad_worker_fraction=grad_worker_fraction,
             grad_scaler=args.grad_scaler if 'grad_scaler' in args else None,
             skip_layers=args.kfac_skip_layers,
         )
-        kfac_param_scheduler = kfac.KFACParamScheduler(
+
+        def get_lambda(
+            alpha: int,
+            epochs: list[int],
+        ) -> Callable[[int], float]:
+            """Create lambda function for param scheduler."""
+
+            def scale(epoch: int) -> float:
+                """Compute current scale factor using epoch."""
+                factor = 1.0
+                for e in epochs:
+                    if epoch >= e:
+                        factor *= alpha
+                return factor
+
+            return scale
+
+        kfac_param_scheduler = kfac.scheduler.LambdaParamScheduler(
             preconditioner,
-            damping_alpha=args.kfac_damping_alpha,
-            damping_schedule=args.kfac_damping_decay,
-            update_freq_alpha=args.kfac_update_steps_alpha,
-            update_freq_schedule=args.kfac_update_steps_decay,
+            damping_lambda=get_lambda(
+                args.kfac_damping_alpha,
+                args.kfac_damping_decay,
+            ),
+            factor_update_steps_lambda=get_lambda(
+                args.kfac_update_steps_alpha,
+                args.kfac_update_steps_decay,
+            ),
+            inv_update_steps_lambda=get_lambda(
+                args.kfac_update_steps_alpha,
+                args.kfac_update_steps_decay,
+            ),
+            lr_lambda=lambda x: optimizer.param_groups[0]['lr'],
         )
     else:
         preconditioner = None
+        kfac_param_scheduler = None
 
-    lrs = create_lr_schedule(
-        dist.get_world_size(),
-        args.warmup_epochs,
-        args.lr_decay,
-    )
-    lr_scheduler = [optim.lr_scheduler.LambdaLR(optimizer, lrs)]
-    if use_kfac:
-        lr_scheduler.append(optim.lr_scheduler.LambdaLR(preconditioner, lrs))
-        lr_scheduler.append(kfac_param_scheduler)
-
-    return optimizer, preconditioner, lr_scheduler
+    return optimizer, preconditioner, (lr_scheduler, kfac_param_scheduler)

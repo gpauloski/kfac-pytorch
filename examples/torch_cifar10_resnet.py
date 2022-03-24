@@ -1,3 +1,4 @@
+"""Cifar10 and ResNet training script."""
 from __future__ import annotations
 
 import argparse
@@ -23,7 +24,8 @@ except ImportError:
     TORCH_FP16 = False
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
+    """Get cmd line args."""
     # General settings
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Example')
     parser.add_argument(
@@ -253,7 +255,8 @@ def parse_args():
     return args
 
 
-def main():
+def main() -> None:
+    """Main train and eval function."""
     args = parse_args()
 
     torch.distributed.init_process_group(
