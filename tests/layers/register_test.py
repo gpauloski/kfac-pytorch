@@ -6,7 +6,9 @@ import torch
 
 from kfac.distributed import TorchDistributedCommunicator
 from kfac.enums import AllreduceMethod
-from kfac.enums import ComputeMethod
+from kfac.layers.base import KFACBaseLayer
+from kfac.layers.eigen import KFACEigenLayer
+from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.modules import Conv2dModuleHelper
 from kfac.layers.modules import LinearModuleHelper
 from kfac.layers.modules import ModuleHelper
@@ -107,40 +109,42 @@ def test_get_module_helper(
 
 
 @pytest.mark.parametrize(
-    'model,compute_method,skip_layers,expected_count',
+    'model,layer_type,skip_layers,expected_count',
     (
-        (TinyModel(), ComputeMethod.EIGEN, [], 2),
-        (TinyModel(), ComputeMethod.INVERSE, [], 2),
-        (NestedTinyModel(), ComputeMethod.EIGEN, [], 6),
-        (NestedTinyModel(), ComputeMethod.INVERSE, [], 6),
-        (LeNet(), ComputeMethod.EIGEN, [], 5),
-        (LeNet(), ComputeMethod.INVERSE, [], 5),
-        (torch.nn.Conv3d(1, 1, 1), ComputeMethod.EIGEN, [], 0),
+        (TinyModel(), KFACEigenLayer, [], 2),
+        (TinyModel(), KFACInverseLayer, [], 2),
+        (NestedTinyModel(), KFACEigenLayer, [], 6),
+        (NestedTinyModel(), KFACInverseLayer, [], 6),
+        (LeNet(), KFACEigenLayer, [], 5),
+        (LeNet(), KFACInverseLayer, [], 5),
+        (torch.nn.Conv3d(1, 1, 1), KFACEigenLayer, [], 0),
         # Test skip_layers: both by name or class and case invariant
-        (LeNet(), ComputeMethod.EIGEN, ['fc1'], 4),
-        (LeNet(), ComputeMethod.EIGEN, ['FC1'], 4),
-        (LeNet(), ComputeMethod.EIGEN, ['Conv2d'], 3),
-        (LeNet(), ComputeMethod.EIGEN, ['conv2d'], 3),
-        (LeNet(), ComputeMethod.EIGEN, ['Conv2d', 'Linear'], 0),
+        (LeNet(), KFACEigenLayer, ['fc1'], 4),
+        (LeNet(), KFACEigenLayer, ['FC1'], 4),
+        (LeNet(), KFACEigenLayer, ['Conv2d'], 3),
+        (LeNet(), KFACEigenLayer, ['conv2d'], 3),
+        (LeNet(), KFACEigenLayer, ['Conv2d', 'Linear'], 0),
     ),
 )
 def test_register_modules(
     model: torch.nn.Module,
-    compute_method: ComputeMethod,
+    layer_type: type[KFACBaseLayer],
     skip_layers: list[str],
     expected_count: int,
 ) -> None:
     """Test register_modules."""
-    kfac_layers = register_modules(
-        model,
-        compute_method,
+    kwargs = dict(
         allreduce_method=AllreduceMethod.ALLREDUCE,
-        compute_eigenvalue_outer_product=False,
         grad_scaler=None,
         factor_dtype=None,
         inv_dtype=torch.float32,
-        skip_layers=skip_layers,
         symmetry_aware=False,
         tdc=TorchDistributedCommunicator(),
+    )
+    kfac_layers = register_modules(
+        model,
+        layer_type,
+        skip_layers=skip_layers,
+        **kwargs,
     )
     assert len(kfac_layers) == expected_count

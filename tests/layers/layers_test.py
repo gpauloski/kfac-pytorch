@@ -33,13 +33,13 @@ from testing.distributed import distributed_test
             KFACInverseLayer,
             4,
             DistributedStrategy.MEM_OPT,
-            {'symmetry_aware': True},
+            {'symmetry_aware': True, 'factor_dtype': torch.float64},
         ),
         (
             KFACInverseLayer,
             4,
             DistributedStrategy.COMM_OPT,
-            {'symmetry_aware': True},
+            {'symmetry_aware': True, 'inv_dtype': torch.float64},
         ),
         (
             KFACEigenLayer,
@@ -63,6 +63,16 @@ from testing.distributed import distributed_test
                 'inv_dtype': torch.float64,
                 'prediv_eigenvalues': True,
                 'symmetry_aware': True,
+            },
+        ),
+        (
+            KFACEigenLayer,
+            4,
+            DistributedStrategy.COMM_OPT,
+            {
+                'allreduce_method': AllreduceMethod.ALLREDUCE_BUCKETED,
+                'inv_dtype': torch.float64,
+                'prediv_eigenvalues': False,
             },
         ),
     ],

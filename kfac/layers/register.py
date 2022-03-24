@@ -1,18 +1,13 @@
 """Utilities for registering PyTorch modules to KFAC layers."""
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any
 from typing import cast
 from typing import Type
 
 import torch
 
-from kfac.distributed import TorchDistributedCommunicator
-from kfac.enums import AllreduceMethod
-from kfac.enums import ComputeMethod
 from kfac.layers.base import KFACBaseLayer
-from kfac.layers.eigen import KFACEigenLayer
-from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.modules import Conv2dModuleHelper
 from kfac.layers.modules import LinearModuleHelper
 from kfac.layers.modules import ModuleHelper
@@ -65,48 +60,22 @@ def get_module_helper(module: torch.nn.Module) -> ModuleHelper | None:
 
 def register_modules(
     model: torch.nn.Module,
-    compute_method: ComputeMethod,
-    *,
-    allreduce_method: AllreduceMethod,
-    compute_eigenvalue_outer_product: bool,
-    grad_scaler: torch.cuda.amp.GradScaler | Callable[[], float] | None,
-    factor_dtype: torch.dtype | None,
-    inv_dtype: torch.dtype,
+    kfac_layer_type: type[KFACBaseLayer],
     skip_layers: list[str],
-    symmetry_aware: bool,
-    tdc: TorchDistributedCommunicator,
+    **layer_kwargs: Any,
 ) -> dict[torch.nn.Module, tuple[str, KFACBaseLayer]]:
     """Register supported modules in model with a KFACLayer.
 
     Args:
         model (torch.nn.Module): model to scan for modules to register.
-        compute_method (ComputeMethod): compute method to use for gradient
-            preconditioner (inverse or eigen).
-        allreduce_method (AllreduceMethod): allreduce method (default:
-            AllreduceMethod.ALLREDUCE).
-        compute_eigenvalue_outer_product (bool): precompute the outerproduct of
-            eigen values on the worker that eigen decomposes G. This reduces
-            the cost of the preconditioning stage but uses more memory
-            (default: False).
-        grad_scaler (optional): optional GradScaler or callable that
-            returns the scale factor used in AMP training (default: None).
-        factor_dtype (torch.dtype): data format to store factors in. If
-            None, factors are stored in the format used in training
-            (default: None).
-        inv_dtype (torch.dtype): data format to store inverses in.
-            Inverses (or eigen decompositions) may be unstable in half-
-            precision (default: torch.float32).
+        kfac_layer_type (type[KFACBaseLayer]): type of subclass of
+            KFACBaseLayer to use.
         skip_layers (list[str]): names of layers to skip registering. Names
             can either by the name of the attribute or the name of the
             class of the layer. Matches are case insensitive.
-        symmetry_aware (bool): use symmetry aware communication method.
-            This is typically more helpful when the factors are very
-            large (default: False).
-        tdc (TorchDistributedCommunicator): communicator object. Typically
-            the communicator object should be shared by all KFACBaseLayers.
+        **layer_kwargs (dict[str, Any]): optional keyword arguments to
+            pass to the kfac_layer_type constructor.
     """
-    # TODO(gpauloski): maybe this function should take **kwargs that get
-    # passed to the KFAC layer.
     modules = get_flattened_modules(model)
     skip_layers = [s.lower() for s in skip_layers]
 
@@ -121,30 +90,7 @@ def register_modules(
             if module_helper is None:
                 continue
 
-            kfac_layer: KFACBaseLayer
-            if compute_method == ComputeMethod.EIGEN:
-                kfac_layer = KFACEigenLayer(
-                    module_helper,
-                    allreduce_method=allreduce_method,
-                    factor_dtype=factor_dtype,
-                    grad_scaler=grad_scaler,
-                    inv_dtype=inv_dtype,
-                    prediv_eigenvalues=compute_eigenvalue_outer_product,
-                    symmetry_aware=symmetry_aware,
-                    tdc=tdc,
-                )
-            elif compute_method == ComputeMethod.INVERSE:
-                kfac_layer = KFACInverseLayer(
-                    module_helper,
-                    allreduce_method=allreduce_method,
-                    factor_dtype=factor_dtype,
-                    grad_scaler=grad_scaler,
-                    inv_dtype=inv_dtype,
-                    symmetry_aware=symmetry_aware,
-                    tdc=tdc,
-                )
-            else:
-                raise AssertionError(f'Unknown {compute_method=}')
+            kfac_layer = kfac_layer_type(module_helper, **layer_kwargs)
 
             # get_flattened_modules() should never give us modules with the
             # same name
