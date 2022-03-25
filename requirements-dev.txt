@@ -1,5 +1,15 @@
 black
+covdefaults>=2.2
+coverage
 flake8
+flake8-bugbear
 flake8-docstrings
+mypy
+numpy
+pep8-naming
 pre-commit
 pytest
+pytest-cov
+torchvision
+tox
+virtualenv
