@@ -1,37 +1,41 @@
+"""Train and Eval function."""
+from __future__ import annotations
+
+import argparse
 import math
-import sys
 
 import torch
 from tqdm import tqdm
 
-sys.path.append("..")
-from utils import Metric, accuracy  # noqa: E402
+import kfac
+from examples.utils import accuracy
+from examples.utils import Metric
 
 
 def train(
-    epoch,
-    model,
-    optimizer,
-    preconditioner,
-    loss_func,
-    train_sampler,
-    train_loader,
-    args,
-):
-
+    epoch: int,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    preconditioner: kfac.preconditioner.KFACPreconditioner,
+    loss_func: torch.nn.Module,
+    train_sampler: torch.utils.data.distributed.DistributedSampler,
+    train_loader: torch.utils.data.DataLoader,
+    args: argparse.Namespace,
+) -> None:
+    """Train model."""
     model.train()
     train_sampler.set_epoch(epoch)
-    train_loss = Metric("train_loss")
-    train_accuracy = Metric("train_accuracy")
-    scaler = args.grad_scaler if "grad_scaler" in args else None
+    train_loss = Metric('train_loss')
+    train_accuracy = Metric('train_accuracy')
+    scaler = args.grad_scaler if 'grad_scaler' in args else None
     mini_step = 0
-    step_loss = torch.tensor(0.0).to("cuda" if args.cuda else "cpu")
-    step_accuracy = torch.tensor(0.0).to("cuda" if args.cuda else "cpu")
+    step_loss = torch.tensor(0.0).to('cuda' if args.cuda else 'cpu')
+    step_accuracy = torch.tensor(0.0).to('cuda' if args.cuda else 'cpu')
 
     with tqdm(
         total=math.ceil(len(train_loader) / args.batches_per_allreduce),
-        bar_format="{l_bar}{bar:10}{r_bar}",
-        desc=f"Epoch {epoch:3d}/{args.epochs:3d}",
+        bar_format='{l_bar}{bar:10}{r_bar}',
+        desc=f'Epoch {epoch:3d}/{args.epochs:3d}',
         disable=not args.verbose,
     ) as t:
         for batch_idx, (data, target) in enumerate(train_loader):
@@ -89,34 +93,41 @@ def train(
                 step_accuracy = 0.0
 
                 t.set_postfix_str(
-                    "loss: {:.4f}, acc: {:.2f}%, lr: {:.4f}".format(
+                    'loss: {:.4f}, acc: {:.2f}%, lr: {:.4f}'.format(
                         train_loss.avg,
                         100 * train_accuracy.avg,
-                        optimizer.param_groups[0]["lr"],
+                        optimizer.param_groups[0]['lr'],
                     ),
                 )
                 t.update(1)
                 mini_step = 0
 
     if args.log_writer is not None:
-        args.log_writer.add_scalar("train/loss", train_loss.avg, epoch)
-        args.log_writer.add_scalar("train/accuracy", train_accuracy.avg, epoch)
+        args.log_writer.add_scalar('train/loss', train_loss.avg, epoch)
+        args.log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
         args.log_writer.add_scalar(
-            "train/lr",
-            optimizer.param_groups[0]["lr"],
+            'train/lr',
+            optimizer.param_groups[0]['lr'],
             epoch,
         )
 
 
-def test(epoch, model, loss_func, val_loader, args):
+def test(
+    epoch: int,
+    model: torch.nn.Module,
+    loss_func: torch.nn.Module,
+    val_loader: torch.utils.data.DataLoader,
+    args: argparse.Namespace,
+) -> None:
+    """Test the model."""
     model.eval()
-    val_loss = Metric("val_loss")
-    val_accuracy = Metric("val_accuracy")
+    val_loss = Metric('val_loss')
+    val_accuracy = Metric('val_accuracy')
 
     with tqdm(
         total=len(val_loader),
-        bar_format="{l_bar}{bar:10}|{postfix}",
-        desc="             ",
+        bar_format='{l_bar}{bar:10}|{postfix}',
+        desc='             ',
         disable=not args.verbose,
     ) as t:
         with torch.no_grad():
@@ -130,7 +141,7 @@ def test(epoch, model, loss_func, val_loader, args):
                 t.update(1)
                 if i + 1 == len(val_loader):
                     t.set_postfix_str(
-                        "\b\b val_loss: {:.4f}, val_acc: {:.2f}%".format(
+                        '\b\b val_loss: {:.4f}, val_acc: {:.2f}%'.format(
                             val_loss.avg,
                             100 * val_accuracy.avg,
                         ),
@@ -138,5 +149,5 @@ def test(epoch, model, loss_func, val_loader, args):
                     )
 
     if args.log_writer is not None:
-        args.log_writer.add_scalar("val/loss", val_loss.avg, epoch)
-        args.log_writer.add_scalar("val/accuracy", val_accuracy.avg, epoch)
+        args.log_writer.add_scalar('val/loss', val_loss.avg, epoch)
+        args.log_writer.add_scalar('val/accuracy', val_accuracy.avg, epoch)

@@ -1,369 +1,402 @@
-from enum import Enum
+"""Base KFAC layer implementation."""
+from __future__ import annotations
+
+from typing import Callable
+from typing import cast
 
 import torch
 import torch.distributed as dist
 
 from kfac.distributed import Future
-
-
-class AllreduceMethod(Enum):
-    ALLREDUCE = 1
-    ALLREDUCE_BUCKETED = 2
-
-
-class BroadcastMethod(Enum):
-    BROADCAST = 1
-    ALLREDUCE = 2
-    ALLREDUCE_BUCKETED = 3
+from kfac.distributed import FutureType
+from kfac.distributed import get_rank
+from kfac.distributed import TorchDistributedCommunicator
+from kfac.enums import AllreduceMethod
+from kfac.layers.modules import ModuleHelper
 
 
 class KFACBaseLayer:
+    """KFAC base layer implementation.
+
+    There is a 1:1 mapping of KFAC layers to PyTorch modules in the model
+    being preconditioned with KFAC. The KFACBaseLayer provides methods
+    for the computations and communications required in the KFAC process.
+    """
+
     def __init__(
         self,
-        module,
-        module_helper,
-        tdc,
-        allreduce_method=AllreduceMethod.ALLREDUCE,
-        broadcast_method=BroadcastMethod.BROADCAST,
-        factor_dtype=None,
-        grad_scaler=None,
-        inv_dtype=None,
-        symmetry_aware=False,
-    ):
+        module: ModuleHelper,
+        *,
+        tdc: TorchDistributedCommunicator,
+        allreduce_method: AllreduceMethod = AllreduceMethod.ALLREDUCE,
+        factor_dtype: torch.dtype | None = None,
+        grad_scaler: (
+            torch.cuda.amp.GradScaler | Callable[[], float] | None
+        ) = None,
+        inv_dtype: torch.dtype = torch.float32,
+        symmetry_aware: bool = False,
+    ) -> None:
+        """Init KFACBaseLayer.
+
+        Args:
+            module (ModuleHelper): module helper that exposes interfaces for
+                getting the factors and gradients of a PyTorch module.
+            tdc (TorchDistributedCommunicator): communicator object. Typically
+                the communicator object should be shared by all KFACBaseLayers.
+            allreduce_method (AllreduceMethod): allreduce method (default:
+                AllreduceMethod.ALLREDUCE).
+            factor_dtype (torch.dtype): data format to store factors in. If
+                None, factors are stored in the format used in training
+                (default: None).
+            grad_scaler (optional): optional GradScaler or callable that
+                returns the scale factor used in AMP training (default: None).
+            inv_dtype (torch.dtype): data format to store inverses in.
+                Inverses (or eigen decompositions) may be unstable in half-
+                precision (default: torch.float32).
+            symmetry_aware (bool): use symmetry aware communication method.
+                This is typically more helpful when the factors are very
+                large (default: False).
+        """
         self.module = module
-        self.module_helper = module_helper
         self.tdc = tdc
         self.allreduce_method = allreduce_method
-        self.broadcast_method = broadcast_method
         self.factor_dtype = factor_dtype
-        self.grad_scaler = grad_scaler
+        if isinstance(grad_scaler, torch.cuda.amp.GradScaler):
+            grad_scaler = grad_scaler.get_scale
+        self.grad_scaler: Callable[[], float] | None = grad_scaler
         self.inv_dtype = inv_dtype
         self.symmetry_aware = symmetry_aware
 
         self.eps = 1e-10
-        self.has_bias = self.module_helper.has_bias()
-        self.symmetric_factors = self.module_helper.has_symmetric_factors()
-
-        # Communication internal implementation helpers
-        if self.allreduce_method == AllreduceMethod.ALLREDUCE:
-            self._allreduce_fn = self.tdc.allreduce
-        elif self.allreduce_method == AllreduceMethod.ALLREDUCE_BUCKETED:
-            self._allreduce_fn = self.tdc.allreduce
-        if self.broadcast_method == BroadcastMethod.BROADCAST:
-            self._broadcast_fn = self.tdc.broadcast
-        elif self.broadcast_method == BroadcastMethod.ALLREDUCE:
-            self._broadcast_fn = self.tdc.allreduce
-        elif self.broadcast_method == BroadcastMethod.ALLREDUCE_BUCKETED:
-            self._broadcast_fn = self.tdc.allreduce_bucketed
+        self.symmetric_factors = self.module.has_symmetric_factors()
 
         # KFAC State Variables
-        self.a = None  # A factor being accumulated for current batch
-        self.g = None  # G factor being accumulated for current batch
-        self.a_count = None  # Number of inputs accumulated in self.a
-        self.g_count = None  # Number of grads accumulated in self.g
-        self._A = None  # Running average of A factor
-        self._G = None  # Running average of G factor
-        self._grad = None  # Preconditioned gradient
+        # A factor being accumulated for current batch
+        self._a_batch: torch.Tensor | None = None
+        # G factor being accumulated for current batch
+        self._g_batch: torch.Tensor | None = None
+        # Number of inputs accumulated in self.a_batch
+        self._a_count: int = 0
+        # Number of grads accumulated in self.g_batch
+        self._g_count: int = 0
+        # Running average of A factor
+        self._a_factor: torch.Tensor | FutureType | None = None
+        # Running average of G factor
+        self._g_factor: torch.Tensor | FutureType | None = None
+        # Preconditioned gradient
+        self._grad: torch.Tensor | FutureType | None = None
 
-    def __repr__(self):
-        return (
-            f"{self.__class__.__name__}({repr(self.module)}) {{\n"
-            f"    A_inv worker: {self.a_inv_worker},\n"
-            f"    G_inv worker: {self.g_inv_worker},\n"
-            f"    is A_inv worker: {self.is_a_inv_worker},\n"
-            f"    is G_inv worker: {self.is_g_inv_worker},\n"
-            f"    is grad worker: {self.is_grad_worker},\n"
-            f"    grad src worker: {self.grad_src_worker},\n"
-            f"    grad worker group: {self.grad_worker_ranks},\n"
-            f"    grad receiver group: {self.grad_receiver_ranks}\n"
-            f"}}"
-        )
+    def __repr__(self) -> str:
+        """Representation of KFACBaseLayer."""
+        return f'{self.__class__.__name__}({repr(self.module)})'
 
     @property
-    def A(self):
-        if isinstance(self._A, Future):
-            self._A = self._A.wait()
-        return self._A
+    def a_factor(self) -> torch.Tensor | None:
+        """Get A factor."""
+        if isinstance(self._a_factor, Future):
+            self._a_factor = cast(torch.Tensor, self._a_factor.wait())
+        return self._a_factor
 
-    @A.setter
-    def A(self, value):
-        self._A = value
-
-    @property
-    def G(self):
-        if isinstance(self._G, Future):
-            self._G = self._G.wait()
-        return self._G
-
-    @G.setter
-    def G(self, value):
-        self._G = value
+    @a_factor.setter
+    def a_factor(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set A factor."""
+        self._a_factor = value
 
     @property
-    def grad(self):
+    def g_factor(self) -> torch.Tensor | None:
+        """Get G factor."""
+        if isinstance(self._g_factor, Future):
+            self._g_factor = cast(torch.Tensor, self._g_factor.wait())
+        return self._g_factor
+
+    @g_factor.setter
+    def g_factor(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set G factor."""
+        self._g_factor = value
+
+    @property
+    def grad(self) -> torch.Tensor | None:
+        """Get grad."""
         if isinstance(self._grad, Future):
-            self._grad = self._grad.wait()
+            self._grad = cast(torch.Tensor, self._grad.wait())
         return self._grad
 
     @grad.setter
-    def grad(self, value):
+    def grad(self, value: torch.Tensor | FutureType | None) -> None:
+        """Set grad."""
         self._grad = value
 
-    def state_dict(self):
+    def state_dict(self) -> dict[str, torch.Tensor | None]:
         """Returns the state of the KFACLayer as a dictionary.
 
         Note:
             Only the factors are saved because because the factors are a
             running average so need to be restored properly and the remaining
             variables (e.g., inverses) can be recomputed.
-        """
-        return {"A": self.A, "G": self.G}
 
-    def load_state_dict(self, state_dict):
+        Returns:
+            dict containing two keys, 'A' and 'G', and the corresponding
+            tensors for A and G.
+        """
+        return {'A': self.a_factor, 'G': self.g_factor}
+
+    def load_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor | None],
+    ) -> None:
         """Loads the KFACLayer state.
 
         Note:
             Factors will be placed on same device as module weights.
+
+        Args:
+            state_dict (dict): dict containing two keys, 'A' and 'G', and the
+            corresponding tensors for A and G.
         """
-        if "A" not in state_dict or "G" not in state_dict:
+        if 'A' not in state_dict or 'G' not in state_dict:
             raise KeyError(
                 "KFACLayer state_dict must contain keys 'A' and 'G'",
             )
-        device = next(self.module.parameters()).device
-        self.A = state_dict["A"].to(device)
-        self.G = state_dict["G"].to(device)
+        device = self.module.device
+        if state_dict['A'] is not None:
+            self.a_factor = state_dict['A'].to(device)
+        if state_dict['G'] is not None:
+            self.g_factor = state_dict['G'].to(device)
 
-    def assign_workers(
-        self,
-        a_inv_worker,
-        g_inv_worker,
-        grad_src_worker,
-        grad_worker_ranks,
-        grad_worker_group,
-        grad_receiver_ranks,
-        grad_receiver_group,
-    ):
-        """Assign ranks to compute inverses
-
-        Args:
-          a_inv_worker (int): rank to compute A inverse.
-          g_inv_worker (int): rank to compute G inverse.
-          grad_src_worker (int): gradient worker that is responsible for
-              sharing the preconditioned gradient with this rank
-          grad_worker_ranks (List[int]): ranks that will compute preconditioned
-              gradient.
-          grad_worker_group (ProcessGroup): Torch ProcessGroup composed of
-              grad_worker_ranks
-          grad_receiver_ranks (List[int]): list of ranks for gradient
-              communication groups.
-          grad_receiver_group (ProcessGroup): Torch ProcessGroup for
-              communicating the preconditioned gradients.
-        """
-        if a_inv_worker != g_inv_worker and self.prediv_eigenvalues:
-            raise ValueError(
-                "When precomputing 1 / (dG * dA.T + damping), A and G inverse "
-                "workers must be the same. I.e. colocate_factors=True.",
-            )
-        if grad_src_worker not in grad_worker_ranks:
-            raise ValueError(
-                f"grad_src_worker is worker {grad_src_worker} which is not a "
-                f"member of grad_worker_ranks={grad_worker_ranks}.",
-            )
-        if (
-            a_inv_worker not in grad_worker_ranks
-            or g_inv_worker not in grad_worker_ranks
-        ):
-            raise ValueError(
-                f"a_inv_worker={a_inv_worker} and g_inv_worker={g_inv_worker} "
-                f"must be members of grad_worker_ranks={grad_worker_ranks}.",
-            )
-        self.a_inv_worker = a_inv_worker
-        self.g_inv_worker = g_inv_worker
-        self.grad_src_worker = grad_src_worker
-        self.grad_worker_ranks = grad_worker_ranks
-        self.grad_worker_group = grad_worker_group
-        self.grad_receiver_ranks = grad_receiver_ranks
-        self.grad_receiver_group = grad_receiver_group
-        self.is_a_inv_worker = dist.get_rank() == self.a_inv_worker
-        self.is_g_inv_worker = dist.get_rank() == self.g_inv_worker
-        self.is_grad_worker = dist.get_rank() in self.grad_worker_ranks
-
-    def memory_usage(self):
-        """Returns memory usage of this layer for this worker"""
+    def memory_usage(self) -> dict[str, int]:
+        """Returns memory usage of variables in this layer for this worker."""
         return {
-            "a_factors": 0
-            if self.A is None
-            else self.A.nelement() * self.A.element_size(),
-            "g_factors": 0
-            if self.G is None
-            else self.G.nelement() * self.G.element_size(),
+            'a_factors': self.a_factor.nelement()
+            * self.a_factor.element_size()
+            if self.a_factor is not None
+            else 0,
+            'g_factors': self.g_factor.nelement()
+            * self.g_factor.element_size()
+            if self.g_factor is not None
+            else 0,
+            'a_batch': self._a_batch.nelement() * self._a_batch.element_size()
+            if self._a_batch is not None
+            else 0,
+            'g_batch': self._g_batch.nelement() * self._g_batch.element_size()
+            if self._g_batch is not None
+            else 0,
         }
 
-    def broadcast_a_inv(self):
-        """Initiate A inv broadcast and store future to result
+    def broadcast_a_inv(
+        self,
+        src: int,
+        group: dist.ProcessGroup | None = None,
+    ) -> None:
+        """Initiate A inv broadcast and store future to result.
 
         Note:
             all ranks must enter this function even if the rank is not
             a part of the inverse broadcast group.
-        """
-        raise NotImplementedError
-
-    def broadcast_g_inv(self):
-        """Initiate G inv broadcast and store future to result
-
-        Note:
-            all ranks must enter this function even if the rank is not
-            a part of the inverse broadcast group.
-        """
-        raise NotImplementedError
-
-    def broadcast_grad(self):
-        """Broadcast preconditioned gradient and store future to result
-
-        Note:
-            all ranks must enter this function
-        """
-        if len(self.grad_receiver_ranks) == 1:
-            # COMM-OPT case -> no gradient communication
-            return
-
-        if self.grad is None:
-            self.grad = torch.empty_like(self.module_helper.get_grad())
-
-        kwargs = {}
-        if self.broadcast_method == BroadcastMethod.BROADCAST:
-            kwargs["src"] = self.grad_src_worker
-        elif not self.is_grad_worker:
-            self.grad.zero_()
-
-        self.grad = self._broadcast_fn(
-            self.grad,
-            group=self.grad_receiver_group,
-            **kwargs,
-        )
-
-    def compute_a_inv(self, damping=0.001):
-        """Compute A inverse on assigned rank
-
-        Note:
-          - All ranks must enter this function even if the rank is not
-            a part of the inverse broadcast group.
-          - self.update_A_factor() must be called at least once before this
-            function.
 
         Args:
-          damping (float, optional): damping value to condition inverse
-             (default: 0.001)
+            src (int): src rank that computed A inverse.
+            group (ProcessGroup): process group to which src should broadcast
+                A inv. All ranks in group should enter this function.
+                Defaults to None, the default process group.
         """
         raise NotImplementedError
 
-    def compute_g_inv(self, damping=0.001):
-        """See `compute_A_inv`"""
+    def broadcast_g_inv(
+        self,
+        src: int,
+        group: dist.ProcessGroup | None = None,
+    ) -> None:
+        """Initiate G inv broadcast and store future to result.
+
+        Note:
+            all ranks must enter this function even if the rank is not
+            a part of the inverse broadcast group.
+
+        Args:
+            src (int): src rank that computed G inverse.
+            group (ProcessGroup): process group to which src should broadcast
+                G inv. All ranks in group should enter this function.
+                Defaults to None, the default process group.
+        """
         raise NotImplementedError
 
-    def preconditioned_grad(self, damping=0.001):
-        """Compute precondition gradient of each weight in module
+    def broadcast_grad(
+        self,
+        src: int,
+        group: dist.ProcessGroup | None = None,
+    ) -> None:
+        """Broadcast preconditioned gradient and store future to result.
+
+        Note:
+            all ranks must enter this function.
+
+        Args:
+            src (int): src rank that preconditioned the gradient.
+            group (ProcessGroup): process group to which src should broadcast
+                the gradient. All ranks in group should enter this function.
+                Defaults to None, the default process group.
+        """
+        if self.grad is None:
+            if get_rank() == src:
+                raise RuntimeError(
+                    f'Attempt to broadcast gradient from {src=} but this rank '
+                    'has not computed the preconditioned gradient yet.',
+                )
+            self.grad = torch.empty_like(self.module.get_grad())
+
+        self.grad = self.tdc.broadcast(self.grad, src=src, group=group)
+
+    def compute_a_inv(self, damping: float = 0.001) -> None:
+        """Compute A inverse on assigned rank.
+
+        update_a_factor() must be called at least once before this function.
+
+        Args:
+            damping (float, optional): damping value to condition inverse
+                (default: 0.001).
+        """
+        raise NotImplementedError
+
+    def compute_g_inv(self, damping: float = 0.001) -> None:
+        """See `compute_g_inv`."""
+        raise NotImplementedError
+
+    def preconditioned_grad(self, damping: float = 0.001) -> None:
+        """Compute precondition gradient of each weight in module.
 
         Preconditioned gradients can be applied to the actual gradients with
         `update_gradient()`. Note the steps are separate in the event that
         intermediate steps will be applied to the preconditioned gradient.
 
         Args:
-          damping (float, optional): damping to use if preconditioning using
-              the eigendecomposition method. (default: 0.001)
+            damping (float, optional): damping to use if preconditioning using
+                the eigendecomposition method (default: 0.001).
         """
         raise NotImplementedError
 
-    def reduce_a_factor(self):
-        """Initiate reduction of A and store future to result"""
-        self.A = self._allreduce_fn(
-            self.A,
-            average=True,
-            symmetric=self.symmetric_factors and self.symmetry_aware,
-        )
+    def reduce_a_factor(self) -> None:
+        """Initiate reduction of A and store future to result.
 
-    def reduce_g_factor(self):
-        """Initiate reduction of G and store future to result"""
-        self.G = self._allreduce_fn(
-            self.G,
-            average=True,
-            symmetric=self.symmetric_factors and self.symmetry_aware,
-        )
-
-    def save_layer_input(self, input):
-        """Save input for layer"""
-        a = self.module_helper.get_a_factor(input[0])
-        if self.a is None:
-            self.a = a
-            self.a_count = 1
+        Note:
+            all ranks should enter this function.
+        """
+        if self.a_factor is None:
+            raise RuntimeError('a_factor is None, cannot reduce')
+        if self.allreduce_method == AllreduceMethod.ALLREDUCE:
+            allreduce = self.tdc.allreduce
+        elif self.allreduce_method == AllreduceMethod.ALLREDUCE_BUCKETED:
+            allreduce = self.tdc.allreduce_bucketed
         else:
-            self.a = self.a + a
-            self.a_count += 1
+            raise AssertionError('Unknown {self.allreduce_method=}')
+        self.a_factor = allreduce(
+            self.a_factor,
+            average=True,
+            symmetric=self.symmetric_factors and self.symmetry_aware,
+        )
 
-    def save_layer_grad_output(self, grad_output):
-        """Save grad w.r.t outputs for layer"""
-        g = self.module_helper.get_g_factor(grad_output[0])
+    def reduce_g_factor(self) -> None:
+        """Initiate reduction of G and store future to result.
+
+        Note:
+            all ranks should enter this function.
+        """
+        if self.g_factor is None:
+            raise RuntimeError('g_factor is None, cannot reduce')
+        if self.allreduce_method == AllreduceMethod.ALLREDUCE:
+            allreduce = self.tdc.allreduce
+        elif self.allreduce_method == AllreduceMethod.ALLREDUCE_BUCKETED:
+            allreduce = self.tdc.allreduce_bucketed
+        else:
+            raise AssertionError('Unknown {self.allreduce_method=}')
+        self.g_factor = allreduce(
+            self.g_factor,
+            average=True,
+            symmetric=self.symmetric_factors and self.symmetry_aware,
+        )
+
+    def reset_batch(self) -> None:
+        """Clears current buffers for A and G."""
+        self._a_batch = None
+        self._a_count = 0
+        self._g_batch = None
+        self._g_count = 0
+
+    def save_layer_input(self, input: list[torch.Tensor]) -> None:
+        """Save input for layer."""
+        # Note: the clone here is a fix for "RuntimeError: one of the variables
+        # needed for gradient computation has been modified by an inplace
+        # operation" in the ResNet50 + ImageNet example.
+        a = input[0].to(self.factor_dtype).clone()
+        a = self.module.get_a_factor(a)
+        if self._a_batch is None:
+            self._a_batch = a
+            self._a_count = 1
+        else:
+            self._a_batch = self._a_batch + a
+            self._a_count += 1
+
+    def save_layer_grad_output(
+        self,
+        grad_output: tuple[torch.Tensor, ...],
+    ) -> None:
+        """Save grad w.r.t outputs for layer."""
+        g = grad_output[0].to(self.factor_dtype)
         if self.grad_scaler is not None:
-            g = g / self.grad_scaler.get_scale()
-        if self.g is None:
-            self.g = g
-            self.g_count = 1
+            g = g / self.grad_scaler()
+        g = self.module.get_g_factor(g)
+        if self._g_batch is None:
+            self._g_batch = g
+            self._g_count = 1
         else:
-            self.g = self.g + g
-            self.g_count += 1
+            self._g_batch = self._g_batch + g
+            self._g_count += 1
 
-    def update_a_factor(self, alpha=0.95):
-        """Compute factor A and add to running averages"""
-        if self.a is None:
+    def update_a_factor(self, alpha: float = 0.95) -> None:
+        """Compute factor A and add to running averages.
+
+        Args:
+            alpha (float): running average parameter (default: 0.95).
+        """
+        if self._a_batch is None:
             return
-        if self.a_count > 1:
-            self.a = (1 / self.a_count) * self.a
-        A_new = self.a
-        self.a = None
-        if self.A is None:
-            self.A = torch.diag(A_new.new(A_new.shape[0]).fill_(1))
-        self.A = (alpha * self.A) + ((1 - alpha) * A_new)
+        if self._a_count > 1:
+            self._a_batch = (1 / self._a_count) * self._a_batch
+        a_new = self._a_batch
+        self._a_batch = None
+        if self.a_factor is None:
+            self.a_factor = torch.diag(a_new.new(a_new.shape[0]).fill_(1))
+        self.a_factor = (alpha * self.a_factor) + ((1 - alpha) * a_new)
 
-    def update_g_factor(self, alpha=0.95):
-        """Compute factor G and add to running averages"""
-        if self.g is None:
+    def update_g_factor(self, alpha: float = 0.95) -> None:
+        """Compute factor G and add to running averages.
+
+        Args:
+            alpha (float): running average parameter (default: 0.95).
+        """
+        if self._g_batch is None:
             return
-        if self.g_count > 1:
-            self.g = (1 / self.g_count) * self.g
-        G_new = self.g
-        self.g = None
-        if self.G is None:
-            self.G = torch.diag(G_new.new(G_new.shape[0]).fill_(1))
-        self.G = (alpha * self.G) + ((1 - alpha) * G_new)
+        if self._g_count > 1:
+            self._g_batch = (1 / self._g_count) * self._g_batch
+        g_new = self._g_batch
+        self._g_batch = None
+        if self.g_factor is None:
+            self.g_factor = torch.diag(g_new.new(g_new.shape[0]).fill_(1))
+        self.g_factor = (alpha * self.g_factor) + ((1 - alpha) * g_new)
 
-    def update_grad(self, scale=None):
-        """Updates gradients of module with computed precondition gradients"""
-        if self.has_bias:
-            weight = self.grad[:, :-1].view(self._get_weight_grad().size())
-            bias = self.grad[:, -1:].view(self._get_bias_grad().size())
-        else:
-            weight = self.grad.view(self._get_weight_grad().size())
+    def update_grad(self, scale: float | None = None) -> None:
+        """Updates gradients of module with computed precondition gradients.
+
+        Args:
+            scale (float, optional): optional factor to scale gradient by
+                (default: None).
+        """
+        grad = self.grad
+        if grad is None:
+            raise RuntimeError(
+                'preconditionined gradient is None. This may be because '
+                'update_grad() was called before preconditioned_grad()',
+            )
         if scale is not None:
-            weight = scale * weight
-        self._set_weight_grad(weight)
-        if self.has_bias:
-            if scale is not None:
-                bias = scale * bias
-            self._set_bias_grad(bias)
+            grad = scale * grad
+        self.module.set_grad(grad)
         self.grad = None
-
-    def _get_bias_grad(self):
-        """Get bias.grad tensor of module"""
-        return self.module.bias.grad
-
-    def _get_weight_grad(self):
-        """Get weight.grad tensor of module"""
-        return self.module.weight.grad
-
-    def _set_bias_grad(self, grad):
-        """Set bias.grad tensor of module"""
-        self.module.bias.grad = grad.contiguous()
-
-    def _set_weight_grad(self, grad):
-        """Set weight.grad tensor of module"""
-        self.module.weight.grad = grad.contiguous()
