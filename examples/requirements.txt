@@ -1,0 +1,4 @@
+tensorboard
+torchinfo==1.5.2
+torchvision
+tqdm

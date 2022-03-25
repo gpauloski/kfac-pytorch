@@ -1,76 +1,81 @@
+"""Train and Eval function."""
+from __future__ import annotations
+
+import argparse
 import math
-import sys
+
 import torch
 from tqdm import tqdm
 
-sys.path.append('..')
-from utils import Metric, accuracy
+import kfac
+from examples.utils import accuracy
+from examples.utils import Metric
 
-def train(epoch,
-          model,
-          optimizer, 
-          preconditioner, 
-          loss_func, 
-          train_sampler, 
-          train_loader, 
-          args):
 
+def train(
+    epoch: int,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    preconditioner: kfac.preconditioner.KFACPreconditioner,
+    loss_func: torch.nn.Module,
+    train_sampler: torch.utils.data.distributed.DistributedSampler,
+    train_loader: torch.utils.data.DataLoader,
+    args: argparse.Namespace,
+) -> None:
+    """Train model."""
     model.train()
     train_sampler.set_epoch(epoch)
-    train_loss = Metric('train_loss') 
+    train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
     scaler = args.grad_scaler if 'grad_scaler' in args else None
+    mini_step = 0
+    step_loss = torch.tensor(0.0).to('cuda' if args.cuda else 'cpu')
+    step_accuracy = torch.tensor(0.0).to('cuda' if args.cuda else 'cpu')
 
-    with tqdm(total=len(train_loader),
-              bar_format='{l_bar}{bar:10}{r_bar}',
-              desc='Epoch {:3d}/{:3d}'.format(epoch, args.epochs),
-              disable=not args.verbose) as t:
+    with tqdm(
+        total=math.ceil(len(train_loader) / args.batches_per_allreduce),
+        bar_format='{l_bar}{bar:10}{r_bar}',
+        desc=f'Epoch {epoch:3d}/{args.epochs:3d}',
+        disable=not args.verbose,
+    ) as t:
         for batch_idx, (data, target) in enumerate(train_loader):
+            mini_step += 1
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
-            optimizer.zero_grad()
 
-            batch_idx = range(0, len(data), args.batch_size)
-            for i in batch_idx:
-                data_batch = data[i:i + args.batch_size]
-                target_batch = target[i:i + args.batch_size]
-
-                if scaler is not None:
-                    with torch.cuda.amp.autocast():
-                        output = model(data_batch)
-                        loss = loss_func(output, target_batch)
-                else:
-                    output = model(data_batch)
-                    loss = loss_func(output, target_batch)
-                
-                loss = loss / args.batches_per_allreduce
-
-                with torch.no_grad():
-                    train_loss.update(loss)
-                    train_accuracy.update(accuracy(output, target_batch))
-
-                if args.horovod:
-                    loss.backward()
-                else:
-                    if i < batch_idx[-1]:
-                        with model.no_sync():
-                            if scaler is not None:
-                                scaler.scale(loss).backward()
-                            else:
-                                loss.backward()
-                    else:
-                        if scaler is not None:
-                            scaler.scale(loss).backward()
-                        else:
-                            loss.backward()
-
-            if args.horovod:
-                optimizer.synchronize()
-                if preconditioner is not None:
-                    preconditioner.step()
-                with optimizer.skip_synchronize():
-                    optimizer.step()
+            if scaler is not None:
+                with torch.cuda.amp.autocast():
+                    output = model(data)
+                    loss = loss_func(output, target)
             else:
+                output = model(data)
+                loss = loss_func(output, target)
+
+            with torch.no_grad():
+                step_loss += loss
+                step_accuracy += accuracy(output, target)
+
+            loss = loss / args.batches_per_allreduce
+
+            if (
+                mini_step % args.batches_per_allreduce == 0
+                or batch_idx + 1 == len(train_loader)
+            ):
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
+            else:
+                with model.no_sync():
+                    if scaler is not None:
+                        scaler.scale(loss).backward()
+                    else:
+                        loss.backward()
+
+            if (
+                mini_step % args.batches_per_allreduce == 0
+                or batch_idx + 1 == len(train_loader)
+            ):
                 if preconditioner is not None:
                     if scaler is not None:
                         scaler.unscale_(optimizer)
@@ -80,32 +85,51 @@ def train(epoch,
                     scaler.update()
                 else:
                     optimizer.step()
+                optimizer.zero_grad()
 
-            t.set_postfix_str("loss: {:.4f}, acc: {:.2f}%, lr: {:.4f}".format(
-                    train_loss.avg, 100*train_accuracy.avg,
-                    optimizer.param_groups[0]['lr']))
-            t.update(1)
+                train_loss.update(step_loss / mini_step)
+                train_accuracy.update(step_accuracy / mini_step)
+                step_loss = 0.0
+                step_accuracy = 0.0
+
+                t.set_postfix_str(
+                    'loss: {:.4f}, acc: {:.2f}%, lr: {:.4f}'.format(
+                        train_loss.avg,
+                        100 * train_accuracy.avg,
+                        optimizer.param_groups[0]['lr'],
+                    ),
+                )
+                t.update(1)
+                mini_step = 0
 
     if args.log_writer is not None:
         args.log_writer.add_scalar('train/loss', train_loss.avg, epoch)
         args.log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
-        args.log_writer.add_scalar('train/lr', optimizer.param_groups[0]['lr'],
-                                    epoch)
+        args.log_writer.add_scalar(
+            'train/lr',
+            optimizer.param_groups[0]['lr'],
+            epoch,
+        )
 
 
-def test(epoch, 
-         model, 
-         loss_func, 
-         val_loader, 
-         args):
+def test(
+    epoch: int,
+    model: torch.nn.Module,
+    loss_func: torch.nn.Module,
+    val_loader: torch.utils.data.DataLoader,
+    args: argparse.Namespace,
+) -> None:
+    """Test the model."""
     model.eval()
     val_loss = Metric('val_loss')
     val_accuracy = Metric('val_accuracy')
 
-    with tqdm(total=len(val_loader),
-              bar_format='{l_bar}{bar:10}|{postfix}',
-              desc='             '.format(epoch, args.epochs),
-              disable=not args.verbose) as t:
+    with tqdm(
+        total=len(val_loader),
+        bar_format='{l_bar}{bar:10}|{postfix}',
+        desc='             ',
+        disable=not args.verbose,
+    ) as t:
         with torch.no_grad():
             for i, (data, target) in enumerate(val_loader):
                 if args.cuda:
@@ -116,9 +140,13 @@ def test(epoch,
 
                 t.update(1)
                 if i + 1 == len(val_loader):
-                    t.set_postfix_str("\b\b val_loss: {:.4f}, val_acc: {:.2f}%".format(
-                            val_loss.avg, 100*val_accuracy.avg),
-                            refresh=False)
+                    t.set_postfix_str(
+                        '\b\b val_loss: {:.4f}, val_acc: {:.2f}%'.format(
+                            val_loss.avg,
+                            100 * val_accuracy.avg,
+                        ),
+                        refresh=False,
+                    )
 
     if args.log_writer is not None:
         args.log_writer.add_scalar('val/loss', val_loss.avg, epoch)
