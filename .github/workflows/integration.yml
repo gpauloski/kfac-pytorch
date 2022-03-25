@@ -1,0 +1,31 @@
+name: integration
+
+on:
+  push:
+    branches: [main]
+    tags:
+  pull_request:
+
+jobs:
+  integration:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository Content
+        uses: actions/checkout@v2
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+
+      - name: Install Dependencies
+        # TODO: this installs more than we actually need currently
+        run: python -mpip install --upgrade -r requirements-dev.txt
+
+      - name: Install KFAC
+        run: python -mpip install .
+
+      - name: Run MNIST Integration Test
+        run: python tests/integration/mnist_integration_test.py

@@ -1,0 +1,17 @@
+name: Documentation Improvements
+description: Suggest improvements to the documentation.
+title: "[DOCS]: "
+labels: ["documentation"]
+assignees:
+  - gpauloski
+body:
+  - type: textarea
+    id: freeform
+    attributes:
+      label: Describe the Request
+      description: >
+        Please describe limitations of the current documentation (either
+        the docstrings in the code or the GitHub wiki and READMEs) or
+        suggested improvements.
+    validations:
+      required: true

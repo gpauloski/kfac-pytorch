@@ -1,0 +1,41 @@
+name: Bug Report
+description: Report errors or unexpected results.
+title: "[BUG]: "
+labels: ["bug"]
+assignees:
+  - gpauloski
+body:
+  - type: textarea
+    id: install
+    attributes:
+      label: How did you install K-FAC and PyTorch?
+      description: >
+        E.g., install via pip, install from source, etc. **Note:** this will
+        be rendered as console text automatically.
+      placeholder: |
+        $ pip install torch
+        $ pip install -e .
+        ...
+      render: console
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: What version of commit are you using?
+      description: >
+        Current commit hash.
+      placeholder: Output of $(git rev-parse HEAD)
+    validations:
+      required: true
+
+  - type: textarea
+    id: freeform
+    attributes:
+      label: Describe the problem.
+      description: >
+        Please provide sample code and directions for reproducing
+        your problem and what you expected to happen.
+    validations:
+      required: true
