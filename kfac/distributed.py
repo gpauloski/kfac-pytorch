@@ -1,3 +1,4 @@
+"""Utilities for distributed operations."""
 from __future__ import annotations
 
 import warnings
@@ -8,14 +9,14 @@ import torch
 import torch.distributed as dist
 
 try:
-    import apex_C
+    import apex_C  # type: ignore
 
-    flatten = apex_C.flatten
-    unflatten = apex_C.unflatten
+    flatten = apex_C.flatten  # pragma: no cover
+    unflatten = apex_C.unflatten  # pragma: no cover
 except ImportError:
     warnings.warn(
-        "apex is not installed or was not installed wit --cpp_ext. "
-        "Falling back to PyTorch flatten and unflatten.",
+        'NVIDIA Apex is not installed or was not installed with --cpp_ext. '
+        'Falling back to PyTorch flatten and unflatten.',
     )
     flatten = torch._utils._flatten_dense_tensors
     unflatten = torch._utils._unflatten_dense_tensors
@@ -26,14 +27,23 @@ FutureType = Union[torch._C.Future, torch.futures.Future]
 
 
 class NonSquareTensorError(Exception):
+    """Exception raised when functions expect a square tensor as input."""
+
     pass
 
 
 class AllreduceTensorBucket:
-    def __init__(self, group) -> None:
+    """Bucket representing a fused allreduce of multiple tensors."""
+
+    def __init__(self, group: dist.ProcessGroup | None = None) -> None:
+        """Init AllreduceTensorBucket.
+
+        Args:
+            group (ProcessGroup): process group to perform allreduce in.
+        """
         self._group = group
         self._tensors: list[torch.Tensor] = []
-        self._futures: list[Future] = []
+        self._futures: list[FutureType] = []
         self._size: int = 0
         self._communicated: bool = False
 
@@ -50,20 +60,20 @@ class AllreduceTensorBucket:
         """Add tensor to bucket.
 
         Args:
-            tensor (torch.Tensor): tensor to add to bucket
+            tensor (torch.Tensor): tensor to add to bucket.
 
         Returns:
             future that can be waited on with `future.wait()` to get the
             allreduced tensor.
         """
-        future = torch.futures.Future()
+        future: FutureType = torch.futures.Future()
         self._tensors.append(tensor)
         self._futures.append(future)
         assert len(self._tensors) == len(self._futures)
         self._size += tensor.element_size() * tensor.nelement()
         return future
 
-    def allreduce(self) -> FutureType:
+    def allreduce(self) -> FutureType | None:
         """Initiate the allreduce for the bucket.
 
         Returns:
@@ -76,23 +86,23 @@ class AllreduceTensorBucket:
         """
         if self.communicated():
             raise RuntimeError(
-                "Communication for this bucket has already been performed. "
-                "Ensure allreduce() or broadcast() is only called once for a "
-                "given TensorBucket.",
+                'Communication for this bucket has already been performed. '
+                'Ensure allreduce() or broadcast() is only called once for a '
+                'given TensorBucket.',
             )
         self._communicated = True
         if len(self._tensors) == 0:
-            return
+            return None
         tensor = flatten(self._tensors)
-        future = dist.all_reduce(
+        _future = dist.all_reduce(
             tensor,
             group=self._group,
             async_op=True,
         ).get_future()
         # future.value is a list of one tensor so unpack it to be cleaner
-        future = future.then(lambda f: f.value()[0])
+        _future = _future.then(lambda f: f.value()[0])  # pragma: no cover
 
-        def _callback(future: Future) -> torch.Tensor:
+        def _callback(future: FutureType) -> None:  # pragma: no cover
             tensors = unflatten(future.value(), self._tensors)
             for sub_tensor, sub_future in zip(tensors, self._futures):
                 sub_future.set_result(sub_tensor)
@@ -100,9 +110,9 @@ class AllreduceTensorBucket:
             self._tensors.clear()
             self._futures.clear()
 
-        future.add_done_callback(_callback)
+        _future.add_done_callback(_callback)
 
-        return future
+        return _future
 
 
 class TorchDistributedCommunicator:
@@ -120,7 +130,7 @@ class TorchDistributedCommunicator:
         """
         self._bucket_cap_mb = bucket_cap_mb
         self._allreduce_buckets: defaultdict[
-            frozenset,
+            frozenset[int],
             AllreduceTensorBucket | None,
         ] = defaultdict(lambda: None)
 
@@ -136,7 +146,7 @@ class TorchDistributedCommunicator:
         """Get current allreduce bucket.
 
         Args:
-            group (ProcessGroup, optional): process group to get bucket for
+            group (ProcessGroup, optional): process group to get bucket for.
 
         Returns:
             Current AllreduceTensorBucket if one has been created else None.
@@ -150,10 +160,10 @@ class TorchDistributedCommunicator:
         """Create a new allreduce bucket.
 
         Args:
-            group: process group to get bucket for
+            group: process group to get bucket for.
 
         Returns:
-            TensorBucket
+            TensorBucket.
 
         Raises:
             RuntimeError:
@@ -164,30 +174,31 @@ class TorchDistributedCommunicator:
         bucket = self._get_allreduce_bucket(group)
         if bucket is not None and not bucket.communicated():
             raise RuntimeError(
-                "Current bucket is being replaced without having been "
-                "communicated.",
+                'Current bucket is being replaced without having been '
+                'communicated.',
             )
-        self._allreduce_buckets[
-            self.group_ranks(group)
-        ] = AllreduceTensorBucket(group)
-        return self._get_allreduce_bucket(group)
+        bucket = AllreduceTensorBucket(group)
+        self._allreduce_buckets[self.group_ranks(group)] = bucket
+        return bucket
 
     def allreduce(
         self,
         tensor: torch.Tensor,
+        *,
         average: bool = False,
         group: dist.ProcessGroup | None = None,
         symmetric: bool = False,
     ) -> FutureType | torch.Tensor:
-        """Allreduce tensor asynchronously
+        """Allreduce tensor asynchronously.
 
         Args:
-            tensor (torch.Tensor): tensor to allreduce
+            tensor (torch.Tensor): tensor to allreduce.
             average (torch.Tensor): average tensors rather than sum
-                (default: False)
+                (default: False).
             group (torch.distributed.ProcessGroup): optional process group
-                to perform communication within
-            symmetric (bool): communicate symmetric tensor using upper triangle
+                to perform communication within.
+            symmetric (bool): communicate symmetric tensor using upper
+                triangle.
 
         Returns:
             Future to tensor. Tensor can be retrieved with `future.wait()`.
@@ -201,14 +212,14 @@ class TorchDistributedCommunicator:
             NonSquareTensorError:
                 if symmetric is True and tensor is not a 2D square tensor.
         """
-        if dist.get_world_size(group) == 1:
+        if get_world_size(group) == 1:
             return tensor
         shape = tensor.size()
         if symmetric:
             if len(shape) != 2 or shape[0] != shape[1]:
                 raise NonSquareTensorError(
-                    "Symmetric communication can only be done with a 2D "
-                    f"square tensor. Got tensor with shape {shape}.",
+                    'Symmetric communication can only be done with a 2D '
+                    f'square tensor. Got tensor with shape {shape}.',
                 )
             tensor = get_triu(tensor)
         tensor = tensor.contiguous()
@@ -218,10 +229,10 @@ class TorchDistributedCommunicator:
             async_op=True,
         ).get_future()
 
-        def callback_(future_):
+        def callback_(future_: FutureType) -> torch.Tensor:  # pragma: no cover
             t = future_.value()[0]
             if average:
-                t = (1 / dist.get_world_size(group)) * t
+                t = (1 / get_world_size(group)) * t
             if symmetric:
                 t = fill_triu(shape, t)
             return t
@@ -231,18 +242,20 @@ class TorchDistributedCommunicator:
     def broadcast(
         self,
         tensor: torch.Tensor,
+        *,
         src: int,
-        group: dist.ProcessGroup = None,
+        group: dist.ProcessGroup | None = None,
         symmetric: bool = False,
     ) -> FutureType | torch.Tensor:
-        """Broadcast tensor from src to all other workers asynchronously
+        """Broadcast tensor from src to all other workers asynchronously.
 
         Args:
-            tensor (torch.Tensor): tensor for broadcast
-            src (int): rank of worker with src tensor
+            tensor (torch.Tensor): tensor for broadcast.
+            src (int): rank of worker with src tensor.
             group (torch.distributed.ProcessGroup): optional process group
-                to perform communication within
-            symmetric (bool): communicate symmetric tensor using upper triangle
+                to perform communication within.
+            symmetric (bool): communicate symmetric tensor using upper
+                triangle.
 
         Returns:
             Future to tensor. Tensor can be retrieved with `future.wait()`.
@@ -256,14 +269,14 @@ class TorchDistributedCommunicator:
             NonSquareTensorError:
                 if symmetric is True and tensor is not a 2D square tensor.
         """
-        if dist.get_world_size(group) == 1:
+        if get_world_size(group) == 1:
             return tensor
         shape = tensor.size()
         if symmetric:
             if len(shape) != 2 or shape[0] != shape[1]:
                 raise NonSquareTensorError(
-                    "Symmetric communication can only be done with a 2D "
-                    f"square tensor. Got tensor with shape {shape}.",
+                    'Symmetric communication can only be done with a 2D '
+                    f'square tensor. Got tensor with shape {shape}.',
                 )
             tensor = get_triu(tensor)
         tensor = tensor.contiguous()
@@ -274,19 +287,24 @@ class TorchDistributedCommunicator:
             async_op=True,
         ).get_future()
         if symmetric:
-            future = future.then(lambda fut: fill_triu(shape, fut.value()[0]))
+            future = future.then(  # pragma: no cover
+                lambda fut: fill_triu(shape, fut.value()[0]),
+            )
         else:
-            future = future.then(lambda fut: fut.value()[0])
+            future = future.then(  # pragma: no cover
+                lambda fut: fut.value()[0],
+            )
         return future
 
     def allreduce_bucketed(
         self,
         tensor: torch.Tensor,
+        *,
         average: bool = False,
-        group: dist.ProcessGroup = None,
+        group: dist.ProcessGroup | None = None,
         symmetric: bool = False,
     ) -> FutureType | torch.Tensor:
-        """Allreduce tensor asynchronously with bucketing
+        """Allreduce tensor asynchronously with bucketing.
 
         Warning:
             Allreduces are only performed once a bucket fills up. As a result,
@@ -300,12 +318,13 @@ class TorchDistributedCommunicator:
             will not be broken up.
 
         Args:
-            tensor (torch.Tensor): tensor to allreduce
+            tensor (torch.Tensor): tensor to allreduce.
             average (torch.Tensor): average tensors rather than sum
-                (default: False)
+                (default: False).
             group (torch.distributed.ProcessGroup): optional process group
-                to perform communication within
-            symmetric (bool): communicate symmetric tensor using upper triangle
+                to perform communication within.
+            symmetric (bool): communicate symmetric tensor using upper
+                triangle.
 
         Returns:
             Future to tensor. Tensor can be retrieved with `future.wait()`.
@@ -319,14 +338,14 @@ class TorchDistributedCommunicator:
             NonSquareTensorError:
                 if symmetric is True and tensor is not a 2D square tensor.
         """
-        if dist.get_world_size(group) == 1:
+        if get_world_size(group) == 1:
             return tensor
         shape = tensor.size()
         if symmetric:
             if len(shape) != 2 or shape[0] != shape[1]:
                 raise NonSquareTensorError(
-                    "Symmetric communication can only be done with a 2D "
-                    f"square tensor. Got tensor with shape {shape}.",
+                    'Symmetric communication can only be done with a 2D '
+                    f'square tensor. Got tensor with shape {shape}.',
                 )
             tensor = get_triu(tensor)
         tensor_size = tensor.element_size() * tensor.nelement()
@@ -338,19 +357,19 @@ class TorchDistributedCommunicator:
             bucket = self._new_allreduce_bucket(group)
         future = bucket.add_tensor(tensor)
 
-        def callback_(future_):
+        def callback_(future_: FutureType) -> torch.Tensor:  # pragma: no cover
             t = future_.value()
             if average:
-                t = (1 / dist.get_world_size(group)) * t
+                t = (1 / get_world_size(group)) * t
             if symmetric:
                 t = fill_triu(shape, t)
             return t
 
         return future.then(callback_)
 
-    def group_ranks(self, group: dist.ProcessGroup | None) -> None:
+    def group_ranks(self, group: dist.ProcessGroup | None) -> frozenset[int]:
         """Get frozenset of ranks in group."""
-        return frozenset(range(dist.get_world_size(group)))
+        return frozenset(range(get_world_size(group)))
 
     def flush_allreduce_buckets(self) -> None:
         """Initiate the communication for the current allreduce bucket."""
@@ -360,12 +379,46 @@ class TorchDistributedCommunicator:
                 self._allreduce_buckets[group] = None
 
 
-def get_triu(tensor):
-    """Returns flattened upper triangle of 2D tensor"""
+def get_rank(group: dist.ProcessGroup | None = None) -> int:
+    """Get process rank.
+
+    Args:
+        group (ProcessGroup, optional): optional process group to get rank
+            within (default: None).
+
+    Returns:
+        rank in distributed environment or 0 if distributed is not
+        initialized.
+    """
+    if dist.is_initialized():
+        return dist.get_rank()
+    else:
+        return 0
+
+
+def get_world_size(group: dist.Process | None = None) -> int:
+    """Get world size.
+
+    Args:
+        group (ProcessGroup, optional): optional process group to get size
+            of (default: None).
+
+    Returns:
+        world size of distributed environment or 1 if distributed is not
+        initialized.
+    """
+    if dist.is_initialized():
+        return dist.get_world_size()
+    else:
+        return 1
+
+
+def get_triu(tensor: torch.Tensor) -> torch.Tensor:
+    """Returns flattened upper triangle of 2D tensor."""
     if len(tensor.shape) != 2:
-        raise ValueError("triu(tensor) requires tensor to be 2 dimensional")
+        raise ValueError('triu(tensor) requires tensor to be 2 dimensional')
     if tensor.shape[0] > tensor.shape[1]:
-        raise ValueError("tensor cannot have more rows than columns")
+        raise ValueError('tensor cannot have more rows than columns')
     idxs = torch.triu_indices(
         tensor.shape[0],
         tensor.shape[1],
@@ -374,8 +427,8 @@ def get_triu(tensor):
     return tensor[idxs[0], idxs[1]]
 
 
-def fill_triu(shape, triu_tensor):
-    """Reconstruct symmetric 2D tensor from flattened upper triangle
+def fill_triu(shape: torch.Size, triu_tensor: torch.Tensor) -> torch.Tensor:
+    """Reconstruct symmetric 2D tensor from flattened upper triangle.
 
     Usage:
       >>> x = tensor.new_empty([10, 10])
@@ -384,16 +437,16 @@ def fill_triu(shape, triu_tensor):
       >>> assert torch.equal(x, x_new)  # true
 
     Args:
-      shape (tuple): tuple(rows, cols) of size of output tensor
-      triu_tensor (tensor): flattened upper triangle of the tensor returned by
-          get_triu()
+        shape (tuple): tuple(rows, cols) of size of output tensor.
+        triu_tensor (tensor): flattened upper triangle of the tensor returned
+            by get_triu().
 
     Returns:
-      Symmetric tensor with `shape` where the upper/lower triangles are filled
-          with the data in `triu_tensor`
+        symmetric tensor with `shape` where the upper/lower triangles are
+        filled with the data in `triu_tensor`
     """
     if len(shape) != 2:
-        raise ValueError("shape must be 2 dimensional")
+        raise ValueError('shape must be 2 dimensional')
     rows, cols = shape
     dst_tensor = triu_tensor.new_empty(shape)
     idxs = torch.triu_indices(rows, cols, device=triu_tensor.device)
