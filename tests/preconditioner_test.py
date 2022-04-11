@@ -1,6 +1,9 @@
 """Unit Tests for kfac/preconditioner.py."""
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 import pytest
 
 from kfac.enums import AllreduceMethod
@@ -105,3 +108,19 @@ def test_preconditioner_init() -> None:
 
     p1 = KFACPreconditioner(TinyModel(), allreduce_bucket_cap_mb=0)
     assert p1.allreduce_method == AllreduceMethod.ALLREDUCE
+
+
+def test_preconditioner_logging(caplog: Any) -> None:
+    """Test KFACPreconditioner logs relevant info."""
+    caplog.set_level(logging.INFO)
+
+    KFACPreconditioner(TinyModel(), loglevel=logging.DEBUG)
+    assert len(caplog.records) == 0
+    caplog.clear()
+
+    KFACPreconditioner(TinyModel(), loglevel=logging.INFO)
+    messages = [r.getMessage() for r in caplog.records]
+    # Should register two layers in TinyModel and have a record for each
+    assert sum('Registered' in msg for msg in messages) == 2
+    # Should print KAISAAssignment once
+    assert sum('KAISAAssignment' in msg for msg in messages) == 1
