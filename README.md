@@ -1,9 +1,9 @@
 # Distributed K-FAC Preconditioner for PyTorch
 
 [![DOI](https://zenodo.org/badge/240976400.svg)](https://zenodo.org/badge/latestdoi/240976400)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/gpauloski/kfac_pytorch/main.svg)](https://results.pre-commit.ci/latest/github/gpauloski/kfac_pytorch/main)
 [![Tests](https://github.com/gpauloski/kfac_pytorch/actions/workflows/tests.yml/badge.svg)](https://github.com/gpauloski/kfac_pytorch/actions)
 [![Integration](https://github.com/gpauloski/kfac_pytorch/actions/workflows/integration.yml/badge.svg)](https://github.com/gpauloski/kfac_pytorch/actions)
-[![Style](https://github.com/gpauloski/kfac_pytorch/actions/workflows/style.yml/badge.svg)](https://github.com/gpauloski/kfac_pytorch/actions)
 
 K-FAC, Kronecker-factored Approximate Curvature, is a second-order optimization method based on an efficient approximation of the Fisher information matrix (see the [original paper](https://arxiv.org/abs/1503.05671)).
 This repository provides a PyTorch implementation of K-FAC as a preconditioner to standard PyTorch optimizers with support for single-device or distributed training.
