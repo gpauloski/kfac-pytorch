@@ -145,10 +145,10 @@ def test_base_preconditioner_init() -> None:
         layers=example_layers(),
         assignment=LazyAssignment(),
         tdc=TorchDistributedCommunicator(),
-        damping=lambda: damping,
-        factor_decay=lambda: factor_decay,
-        kl_clip=lambda: kl_clip,
-        lr=lambda: lr,
+        damping=lambda x: damping,
+        factor_decay=lambda x: factor_decay,
+        kl_clip=lambda x: kl_clip,
+        lr=lambda x: lr,
     )
     assert preconditioner.damping == damping
     assert preconditioner.factor_decay == factor_decay
@@ -220,12 +220,12 @@ def test_empty_state_dict() -> None:
         layers=example_layers(),
         assignment=LazyAssignment(),
         tdc=TorchDistributedCommunicator(),
-        factor_update_steps=lambda: 1,
-        inv_update_steps=lambda: 3,
-        damping=lambda: 5,
-        factor_decay=lambda: 0.7,
-        kl_clip=lambda: 11,
-        lr=lambda: 13,
+        factor_update_steps=lambda x: 1,
+        inv_update_steps=lambda x: 3,
+        damping=lambda x: 5,
+        factor_decay=lambda x: 0.7,
+        kl_clip=lambda x: 11,
+        lr=lambda x: 13,
     )
     state_dict = p3.state_dict()
     assert 'factor_update_steps' not in state_dict
@@ -381,3 +381,44 @@ def test_base_preconditioner_e2e(
                     assert mem == 0
 
     e2e()
+
+
+def test_base_preconditioner_callable_hyperparams() -> None:
+    """Test BaseKFACPreconditioner supports callable hyperparams."""
+    p = BaseKFACPreconditioner(
+        example_layers(),
+        assignment=LazyAssignment(),
+        tdc=TorchDistributedCommunicator(),
+        factor_update_steps=lambda x: x * 2,
+        inv_update_steps=lambda x: x * 3,
+        damping=lambda x: x * 5,
+        factor_decay=lambda x: x * 7,
+        kl_clip=lambda x: x * 9,
+    )
+
+    for x in range(0, 10):
+        p._steps = x
+        assert p.factor_update_steps == x * 2
+        assert p.inv_update_steps == x * 3
+        assert p.damping == x * 5
+        assert p.factor_decay == x * 7
+        assert p.kl_clip == x * 9
+
+    p = BaseKFACPreconditioner(
+        example_layers(),
+        assignment=LazyAssignment(),
+        tdc=TorchDistributedCommunicator(),
+        factor_update_steps=lambda x: 2,
+        inv_update_steps=lambda x: 3,
+        damping=lambda x: 5,
+        factor_decay=lambda x: 7,
+        kl_clip=lambda x: 9,
+    )
+
+    for x in range(0, 10):
+        p._steps = x
+        assert p.factor_update_steps == 2
+        assert p.inv_update_steps == 3
+        assert p.damping == 5
+        assert p.factor_decay == 7
+        assert p.kl_clip == 9

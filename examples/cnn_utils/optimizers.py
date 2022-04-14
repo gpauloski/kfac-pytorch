@@ -59,7 +59,7 @@ def get_optimizer(
             damping=args.kfac_damping,
             factor_decay=args.kfac_factor_decay,
             kl_clip=args.kfac_kl_clip,
-            lr=lambda: optimizer.param_groups[0]['lr'],
+            lr=lambda x: optimizer.param_groups[0]['lr'],
             accumulation_steps=args.batches_per_allreduce,
             allreduce_bucket_cap_mb=25,
             colocate_factors=args.kfac_colocate_factors,

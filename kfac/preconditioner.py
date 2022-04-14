@@ -49,13 +49,13 @@ class KFACPreconditioner(BaseKFACPreconditioner):
         self,
         model: torch.nn.Module,
         *,
-        factor_update_steps: Callable[[], int] | int = 1,
-        inv_update_steps: Callable[[], int] | int = 1,
+        factor_update_steps: Callable[[int], int] | int = 1,
+        inv_update_steps: Callable[[int], int] | int = 1,
         # KFAC hyperparameters
-        damping: Callable[[], float] | float = 0.001,
-        factor_decay: Callable[[], float] | float = 0.95,
-        kl_clip: Callable[[], float] | float = 0.001,
-        lr: Callable[[], float] | float = 0.1,
+        damping: Callable[[int], float] | float = 0.001,
+        factor_decay: Callable[[int], float] | float = 0.95,
+        kl_clip: Callable[[int], float] | float = 0.001,
+        lr: Callable[[int], float] | float = 0.1,
         # Distribution strategy
         accumulation_steps: int = 1,
         allreduce_bucket_cap_mb: float = 25.0,
@@ -85,21 +85,21 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             model (torch.nn.Module): model to precondition with KFAC.
             factor_update_steps (Callable, int): steps between computing and
                 updating the running average of the Kronecker factors or
-                callable that returns the value.
+                callable that takes the K-FAC step and returns the value.
             inv_update_steps (Callble, int): steps between recomputing and
                 communicating the second-order information or callable that
-                returns the value.
+                takes the K-FAC step and returns the value.
             damping (Callable, float): Tikhonov damping parameter or a callable
-                that will return the damping parameter as a float
-                (default: 0.001).
+                that takes the K-FAC step and returns the damping parameter
+                as a float (default: 0.001).
             factor_decay (Callable, float): running average coefficient for
-                Kronecker factors or callable that will return the factor_decay
-                (default: 0.95).
+                Kronecker factors or callable that takes the K-FAC step and
+                returns the factor_decay (default: 0.95).
             kl_clip (Callable, float): clipping parameter for gradient scaling
-                or a callable that returns a float. If None, no
-                scaling/clipping will be applied (default: 0.001).
-            lr (Callable, float): learning rate or callable that will return
-                learning rate (default: 0.1).
+                or a callable that takes the K-FAC step and returns a float.
+                If None, no scaling/clipping will be applied (default: 0.001).
+            lr (Callable, float): learning rate or callable that takes the
+                K-FAC step and returns learning rate (default: 0.1).
             accumulation_steps (int): number of forward/backward passes
                 between optimization steps (default: 1).
             allreduce_bucket_cap_mb (float): maximum size in megabytes for
