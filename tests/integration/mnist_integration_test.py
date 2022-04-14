@@ -124,7 +124,7 @@ def train_and_eval(precondition: bool, epochs: int) -> float:
             model,
             factor_update_steps=10,
             inv_update_steps=100,
-            lr=lambda: optimizer.param_groups[0]['lr'],
+            lr=lambda x: optimizer.param_groups[0]['lr'],
             update_factors_in_hook=False,
         )
     else:

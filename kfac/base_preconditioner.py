@@ -32,12 +32,12 @@ class BaseKFACPreconditioner:
         assignment: WorkAssignment,
         tdc: TorchDistributedCommunicator,
         # KFAC hyperparameters
-        factor_update_steps: Callable[[], int] | int = 1,
-        inv_update_steps: Callable[[], int] | int = 1,
-        damping: Callable[[], float] | float = 0.001,
-        factor_decay: Callable[[], float] | float = 0.95,
-        kl_clip: Callable[[], float] | float = 0.001,
-        lr: Callable[[], float] | float = 0.1,
+        factor_update_steps: Callable[[int], int] | int = 1,
+        inv_update_steps: Callable[[int], int] | int = 1,
+        damping: Callable[[int], float] | float = 0.001,
+        factor_decay: Callable[[int], float] | float = 0.95,
+        kl_clip: Callable[[int], float] | float = 0.001,
+        lr: Callable[[int], float] | float = 0.1,
         # Other
         accumulation_steps: int = 1,
         update_factors_in_hook: bool = True,
@@ -54,21 +54,21 @@ class BaseKFACPreconditioner:
             tdc (TorchDistributedCommunicator): communicator instance.
             factor_update_steps (Callable, int): steps between computing and
                 updating the running average of the Kronecker factors or
-                callable that returns the value.
+                callable that takes the K-FAC step and returns the value.
             inv_update_steps (Callble, int): steps between recomputing and
                 communicating the second-order information or callable that
-                returns the value.
+                takes the K-FAC step and returns the value.
             damping (Callable, float): Tikhonov damping parameter or a callable
-                that will return the damping parameter as a float
-                (default: 0.001).
+                that takes the K-FAC step and returns the damping parameter
+                as a float (default: 0.001).
             factor_decay (Callable, float): running average coefficient for
-                Kronecker factors or callable that will return the factor_decay
-                (default: 0.95).
+                Kronecker factors or callable that takes the K-FAC step and
+                returns the factor_decay (default: 0.95).
             kl_clip (Callable, float): clipping parameter for gradient scaling
-                or a callable that returns a float. If None, no
-                scaling/clipping will be applied (default: 0.001).
-            lr (Callable, float): learning rate or callable that will return
-                learning rate (default: 0.1).
+                or a callable that takes the K-FAC step and returns a float.
+                If None, no scaling/clipping will be applied (default: 0.001).
+            lr (Callable, float): learning rate or callable that takes the
+                K-FAC step and returns learning rate (default: 0.1).
             accumulation_steps (int): number of forward/backward passes
                 between optimization steps (default: 1).
             update_factors_in_hook (bool): If True, running average of factors
@@ -157,13 +157,17 @@ class BaseKFACPreconditioner:
     @property
     def damping(self) -> float:
         """Get damping value."""
-        return self._damping() if callable(self._damping) else self._damping
+        return (
+            self._damping(self.steps)
+            if callable(self._damping)
+            else self._damping
+        )
 
     @property
     def factor_decay(self) -> float:
         """Get factor decay value."""
         return (
-            self._factor_decay()
+            self._factor_decay(self.steps)
             if callable(self._factor_decay)
             else self._factor_decay
         )
@@ -171,18 +175,22 @@ class BaseKFACPreconditioner:
     @property
     def kl_clip(self) -> float:
         """Get kl clip value."""
-        return self._kl_clip() if callable(self._kl_clip) else self._kl_clip
+        return (
+            self._kl_clip(self.steps)
+            if callable(self._kl_clip)
+            else self._kl_clip
+        )
 
     @property
     def lr(self) -> float:
         """Get lr value."""
-        return self._lr() if callable(self._lr) else self._lr
+        return self._lr(self.steps) if callable(self._lr) else self._lr
 
     @property
     def factor_update_steps(self) -> int:
         """Get factor update steps."""
         return (
-            self._factor_update_steps()
+            self._factor_update_steps(self.steps)
             if callable(self._factor_update_steps)
             else self._factor_update_steps
         )
@@ -191,7 +199,7 @@ class BaseKFACPreconditioner:
     def inv_update_steps(self) -> int:
         """Get inverse update steps."""
         return (
-            self._inv_update_steps()
+            self._inv_update_steps(self.steps)
             if callable(self._inv_update_steps)
             else self._inv_update_steps
         )
