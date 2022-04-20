@@ -13,6 +13,7 @@ import cnn_utils.optimizers as optimizers
 import torch
 import torch.distributed as dist
 import torchvision.models as models
+from torch.utils import collect_env
 from torch.utils.tensorboard import SummaryWriter
 from utils import LabelSmoothLoss
 from utils import save_checkpoint
@@ -279,19 +280,24 @@ if __name__ == '__main__':
         # torch.backends.cudnn.benchmark = False
         # torch.backends.cudnn.deterministic = True
 
-    print(
-        'rank = {}, world_size = {}, device_ids = {}'.format(
-            torch.distributed.get_rank(),
-            torch.distributed.get_world_size(),
-            args.local_rank,
-        ),
-    )
-
     args.base_lr = (
         args.base_lr * dist.get_world_size() * args.batches_per_allreduce
     )
-    args.verbose = True if dist.get_rank() == 0 else False
-    args.horovod = False
+    args.verbose = dist.get_rank() == 0
+
+    if args.verbose:
+        print('Collecting env info...')
+        print(collect_env.get_pretty_env_info())
+        print()
+
+    for r in range(torch.distributed.get_world_size()):
+        if r == torch.distributed.get_rank():
+            print(
+                f'Global rank {torch.distributed.get_rank()} initialized: '
+                f'local_rank = {args.local_rank}, '
+                f'world_size = {torch.distributed.get_world_size()}',
+            )
+        torch.distributed.barrier()
 
     train_sampler, train_loader, _, val_loader = datasets.get_imagenet(args)
     if args.model.lower() == 'resnet50':
