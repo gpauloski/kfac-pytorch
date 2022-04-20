@@ -1,6 +1,5 @@
 name: Bug Report
 description: Report errors or unexpected results.
-title: "[BUG]: "
 labels: ["bug"]
 assignees:
   - gpauloski
