@@ -1,6 +1,5 @@
 name: Enhancement Request
 description: Request a new feature.
-title: "[ENHANCE]: "
 labels: ["enhancement"]
 assignees:
   - gpauloski
