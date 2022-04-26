@@ -11,6 +11,7 @@ from typing import Callable
 import torch
 
 from kfac.assignment import WorkAssignment
+from kfac.distributed import get_rank
 from kfac.distributed import TorchDistributedCommunicator
 from kfac.layers.base import KFACBaseLayer
 
@@ -336,14 +337,22 @@ class BaseKFACPreconditioner:
         # Compute Inverses
         if self.steps % self.inv_update_steps == 0:
             for name, layer in reversed(self._layers.values()):
-                layer.compute_a_inv(damping=self.damping)
-                if self._assignment.broadcast_inverses():
+                if get_rank() == self._assignment.inv_worker(name, 'A'):
+                    layer.compute_a_inv(damping=self.damping)
+                if (
+                    self._assignment.broadcast_inverses()
+                    and self._assignment.is_grad_worker(name)
+                ):
                     layer.broadcast_a_inv(
                         src=self._assignment.inv_worker(name, 'A'),
                         group=self._assignment.grad_worker_group(name),
                     )
-                layer.compute_g_inv(damping=self.damping)
-                if self._assignment.broadcast_inverses():
+                if get_rank() == self._assignment.inv_worker(name, 'G'):
+                    layer.compute_g_inv(damping=self.damping)
+                if (
+                    self._assignment.broadcast_inverses()
+                    and self._assignment.is_grad_worker(name)
+                ):
                     layer.broadcast_g_inv(
                         src=self._assignment.inv_worker(name, 'G'),
                         group=self._assignment.grad_worker_group(name),
@@ -352,7 +361,8 @@ class BaseKFACPreconditioner:
 
         # Compute Preconditioned Gradients
         for name, layer in reversed(self._layers.values()):
-            layer.preconditioned_grad(damping=self.damping)
+            if self._assignment.is_grad_worker(name):
+                layer.preconditioned_grad(damping=self.damping)
             if self._assignment.broadcast_gradients():
                 layer.broadcast_grad(
                     src=self._assignment.src_grad_worker(name),
