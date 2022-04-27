@@ -10,4 +10,4 @@ import kfac.preconditioner as preconditioner
 import kfac.scheduler as scheduler
 import kfac.tracing as tracing
 
-__version__ = '0.4.0'
+__version__ = '0.4.1'
