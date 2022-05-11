@@ -58,6 +58,10 @@ class LazyAssignment(WorkAssignment):
         """
         return self.rank
 
+    def factor_group(self, layer: str) -> dist.ProcessGroup | None:
+        """Communication group for allreducing factors."""
+        return None
+
     def grad_worker_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for inverse factor broadcast.
 

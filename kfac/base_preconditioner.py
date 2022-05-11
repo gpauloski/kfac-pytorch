@@ -326,9 +326,9 @@ class BaseKFACPreconditioner:
             for name, layer in reversed(self._layers.values()):
                 self._mini_steps[name] = 0
                 layer.update_a_factor(alpha=self.factor_decay)
-                layer.reduce_a_factor()
+                layer.reduce_a_factor(self._assignment.factor_group(name))
                 layer.update_g_factor(alpha=self.factor_decay)
-                layer.reduce_g_factor()
+                layer.reduce_g_factor(self._assignment.factor_group(name))
 
         # Flush last allreduce bucket from forward/backward pass.
         # Will be a no-op if bucketing was not used
@@ -450,7 +450,7 @@ class BaseKFACPreconditioner:
                 and self._mini_steps[name] % self._accumulation_steps == 0
             ):
                 layer.update_a_factor(alpha=self.factor_decay)
-                layer.reduce_a_factor()
+                layer.reduce_a_factor(self._assignment.factor_group(name))
 
     @torch.no_grad()
     def _save_grad_output(
@@ -472,4 +472,4 @@ class BaseKFACPreconditioner:
                 and self._mini_steps[name] % self._accumulation_steps == 0
             ):
                 layer.update_g_factor(alpha=self.factor_decay)
-                layer.reduce_g_factor()
+                layer.reduce_g_factor(self._assignment.factor_group(name))

@@ -274,11 +274,16 @@ class KFACBaseLayer:
         """
         raise NotImplementedError
 
-    def reduce_a_factor(self) -> None:
+    def reduce_a_factor(self, group: dist.ProcessGroup | None = None) -> None:
         """Initiate reduction of A and store future to result.
 
         Note:
             all ranks should enter this function.
+
+        Args:
+            group (ProcessGroup): process group to use for the reduce
+                operation. All ranks in the group should enter this function.
+                Defaults to None, the default process group.
         """
         if self.a_factor is None:
             raise RuntimeError('a_factor is None, cannot reduce')
@@ -292,13 +297,19 @@ class KFACBaseLayer:
             self.a_factor,
             average=True,
             symmetric=self.symmetric_factors and self.symmetry_aware,
+            group=group,
         )
 
-    def reduce_g_factor(self) -> None:
+    def reduce_g_factor(self, group: dist.ProcessGroup | None = None) -> None:
         """Initiate reduction of G and store future to result.
 
         Note:
             all ranks should enter this function.
+
+        Args:
+            group (ProcessGroup): process group to use for the reduce
+                operation. All ranks in the group should enter this function.
+                Defaults to None, the default process group.
         """
         if self.g_factor is None:
             raise RuntimeError('g_factor is None, cannot reduce')
@@ -312,6 +323,7 @@ class KFACBaseLayer:
             self.g_factor,
             average=True,
             symmetric=self.symmetric_factors and self.symmetry_aware,
+            group=group,
         )
 
     def reset_batch(self) -> None:

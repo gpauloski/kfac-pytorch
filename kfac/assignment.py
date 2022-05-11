@@ -49,10 +49,12 @@ class WorkAssignment(metaclass=ABCMeta):
     @abstractmethod
     def broadcast_gradients(self) -> bool:
         """Return if gradients need to be broadcast."""
+        raise NotImplementedError
 
     @abstractmethod
     def broadcast_inverses(self) -> bool:
         """Return if inverses need to be broadcast."""
+        raise NotImplementedError
 
     @abstractmethod
     def get_layers(self) -> tuple[str, ...]:
@@ -83,6 +85,11 @@ class WorkAssignment(metaclass=ABCMeta):
         method returns the rank that is responsible for sending the
         preconditioned gradient to this process.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    def factor_group(self, layer: str) -> dist.ProcessGroup | None:
+        """Communication group for allreducing factors."""
         raise NotImplementedError
 
     @abstractmethod
@@ -426,6 +433,15 @@ class KAISAAssignment(WorkAssignment):
             self._grad_worker_groups[layer].ranks
             & self._grad_receiver_groups[layer].ranks,
         ).pop()
+
+    def factor_group(self, layer: str) -> dist.ProcessGroup | None:
+        """Communication group for allreducing factors.
+
+        KAISA assumes strong data-parallel training, i.e., each rank in the
+        world will contribute factors computed from its local mini-batch.
+        Thus, this function simply returns the global process group.
+        """
+        return None
 
     def grad_worker_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for inverse factor broadcast.
