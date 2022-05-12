@@ -64,3 +64,10 @@ class LeNet(torch.nn.Module):
         for s in size:
             num_features *= s
         return num_features
+
+
+def sequential_model(layers: int, hidden_dim: int) -> torch.nn.Sequential:
+    """Returns simple sequential linear model."""
+    return torch.nn.Sequential(
+        *[torch.nn.Linear(hidden_dim, hidden_dim) for _ in range(layers)],
+    )
