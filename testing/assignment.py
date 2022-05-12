@@ -74,8 +74,8 @@ class LazyAssignment(WorkAssignment):
     def grad_receiver_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for preconditioned gradient broadcast.
 
-        This communication group is used for the broadcasts of the inverses
-        from the inverse worker to the remaining gradient workers for the
+        This communication group is used for the broadcasts of the gradients
+        from the gradient worker to the remaining gradient receivers for the
         layer.
         """
         return None
