@@ -36,7 +36,9 @@ def exp_decay_factor_averaging(
 
     def _factor_weight(step: int) -> float:
         if step < 0:
-            raise ValueError(f'step value cannot be negative. Got {step=}.')
+            raise ValueError(
+                f'step value cannot be negative. Got step={step}.',
+            )
         if step == 0:
             step = 1
         return min(1 - (1 / step), min_value)
