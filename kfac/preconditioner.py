@@ -246,7 +246,9 @@ class KFACPreconditioner(BaseKFACPreconditioner):
         elif self.compute_method == ComputeMethod.INVERSE:
             layer_type = KFACInverseLayer
         else:
-            raise AssertionError(f'Unknown {self.compute_method=}')
+            raise AssertionError(
+                f'Unknown compute_method={self.compute_method}',
+            )
 
         kfac_layers = register_modules(
             model,

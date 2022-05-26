@@ -196,7 +196,7 @@ class KFACEigenLayer(KFACBaseLayer):
         ):
             if get_rank() == src:
                 raise RuntimeError(
-                    f'Attempt to broadcast A inv from {src=} but this rank '
+                    f'Attempt to broadcast A inv from src={src} but this rank '
                     'has not computed A inv yet.',
                 )
             assert isinstance(self.a_factor, torch.Tensor)
@@ -239,7 +239,7 @@ class KFACEigenLayer(KFACBaseLayer):
         ):
             if get_rank() == src:
                 raise RuntimeError(
-                    f'Attempt to broadcast G inv from {src=} but this rank '
+                    f'Attempt to broadcast G inv from src={src} but this rank '
                     'has not computed G inv yet.',
                 )
             assert isinstance(self.g_factor, torch.Tensor)

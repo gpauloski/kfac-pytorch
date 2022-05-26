@@ -1,9 +1,9 @@
 """Unit tests for implementations of KFACBaseLayer."""
 from __future__ import annotations
 
+import sys
 from typing import Any
 from typing import cast
-from typing import Literal
 from unittest import mock
 
 import pytest
@@ -18,6 +18,11 @@ from kfac.layers.eigen import KFACEigenLayer
 from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.modules import LinearModuleHelper
 from testing.distributed import distributed_test
+
+if sys.version_info >= (3, 8):  # pragma: >=3.8 cover
+    from typing import Literal
+else:  # pragma: <3.8 cover
+    from typing_extensions import Literal
 
 
 @pytest.mark.parametrize(
