@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from typing import Any
-from typing import cast
-from typing import Type
 
 import torch
 
@@ -12,24 +10,9 @@ from kfac.layers.modules import Conv2dModuleHelper
 from kfac.layers.modules import LinearModuleHelper
 from kfac.layers.modules import ModuleHelper
 
-try:  # pragma: no cover
-    from megatron.mpu.layers import ColumnParallelLinear  # type: ignore
-    from megatron.mpu.layers import RowParallelLinear
-
-    megatron = True
-except ImportError:
-    megatron = False
-
 KNOWN_MODULES = {'linear', 'conv2d'}
 LINEAR_TYPES: tuple[type[torch.nn.Module], ...] = (torch.nn.Linear,)
 CONV2D_TYPES: tuple[type[torch.nn.Module], ...] = (torch.nn.Conv2d,)
-
-if megatron:  # pragma: no cover
-    KNOWN_MODULES |= {'columnparallellinear', 'rowparallellinear'}
-    LINEAR_TYPES = LINEAR_TYPES + (
-        cast(Type[torch.nn.Module], ColumnParallelLinear),
-        cast(Type[torch.nn.Module], RowParallelLinear),
-    )
 
 
 def get_flattened_modules(

@@ -9,6 +9,7 @@ mypy
 numpy
 pep8-naming
 pre-commit
+protobuf==3.20.1
 pytest
 pytest-cov
 torchvision

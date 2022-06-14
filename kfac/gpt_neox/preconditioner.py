@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 from typing import Callable
 
 import torch
-import torch.distributed as dist
 
-from kfac.assignment import WorkAssignment
 from kfac.base_preconditioner import BaseKFACPreconditioner
 from kfac.distributed import get_rank
 from kfac.distributed import get_world_size
@@ -15,10 +14,12 @@ from kfac.distributed import TorchDistributedCommunicator
 from kfac.enums import AllreduceMethod
 from kfac.enums import AssignmentStrategy
 from kfac.enums import ComputeMethod
+from kfac.gpt_neox.assignment import GPTNeoXAssignment
+from kfac.gpt_neox.layer import GPTNeoXKFACEigenLayer
+from kfac.gpt_neox.modules import GPTNeoXLinearModuleHelper
 from kfac.layers.base import KFACBaseLayer
-from kfac.layers.eigen import KFACEigenLayer
-from kfac.layers.inverse import KFACInverseLayer
-from kfac.layers.register import register_modules
+from kfac.layers.register import get_flattened_modules
+from kfac.layers.register import requires_grad
 
 try:
     from deepspeed.pipe import PipelineModule
@@ -27,135 +28,7 @@ try:
 except ImportError as e:  # pragma: no cover
     deepspeed_import_error = e
 
-
 logger = logging.getLogger(__name__)
-
-
-class GPTNeoXAssignment(WorkAssignment):
-    """Pipeline parallel aware work assignment for GPT-NeoX."""
-
-    def __init__(
-        self,
-        work: dict[str, dict[str, float]],
-        *,
-        local_rank: int,
-        data_parallel_ranks: list[int],
-        data_parallel_group: dist.ProcessGroup | None,
-    ) -> None:
-        """Init GPTNeoxAssignment.
-
-        Args:
-            work (dict[str, dict[str, int]]): dictionary mapping unique layer
-                names to sub-dictionaries where the keys are the str names for
-                each factor associated with the layer and the values are the
-                cost of each factor computation for load balancing. Note: that
-                this should only be the work performed by the data parallel
-                group.
-            local_rank (int): local rank of this process.
-            data_parallel_ranks (list[int]): list of global ranks within the
-                same stage of all pipelines.
-            data_parallel_group (ProcessGroup): process group of all ranks
-                within the same stage of all pipelines.
-        """
-        if local_rank not in data_parallel_ranks:
-            raise ValueError(
-                'The local rank ({local_rank}) must be a member of the data '
-                'parallel ranks ({data_parallel_ranks}).',
-            )
-        self.local_rank = local_rank
-        self.data_parallel_ranks = data_parallel_ranks
-        self.data_parallel_group = data_parallel_group
-
-        worker_loads = [0.0 for _ in self.data_parallel_ranks]
-        self._inv_assignments = {
-            layer: {factor: -1 for factor in factors}
-            for layer, factors in work.items()
-        }
-        summed_work = [
-            (layer, sum(factors.values())) for layer, factors in work.items()
-        ]
-        sorted_work = sorted(
-            summed_work,
-            key=lambda item: (item[1], item[0]),
-            reverse=True,
-        )
-
-        for layer, cost in sorted_work:
-            min_worker_index = worker_loads.index(min(worker_loads))
-            min_worker = self.data_parallel_ranks[min_worker_index]
-            for factor in self._inv_assignments[layer]:
-                self._inv_assignments[layer][factor] = min_worker
-            worker_loads[min_worker_index] += cost
-
-    def broadcast_gradients(self) -> bool:
-        """Return if gradients need to be broadcast.
-
-        GPT-NeoX uses MEM-OPT training (grad worker fraction = 1/world_size)
-        so gradient broadcast is necessary.
-        """
-        return True
-
-    def broadcast_inverses(self) -> bool:
-        """Return if inverses need to be broadcast.
-
-        GPT-NeoX uses MEM-OPT training (grad worker fraction = 1/world_size)
-        so inverse broadcast is not necessary.
-        """
-        return False
-
-    def get_layers(self) -> tuple[str, ...]:
-        """Return tuple of layers assigned."""
-        return tuple(self._inv_assignments.keys())
-
-    def get_factors(self, layer: str) -> tuple[str, ...]:
-        """Return tuple of factors associated with the layer."""
-        return tuple(self._inv_assignments[layer].keys())
-
-    def inv_worker(self, layer: str, factor: str) -> int:
-        """Return rank that computes inverse factor for this layer."""
-        return self._inv_assignments[layer][factor]
-
-    def is_grad_worker(self, layer: str) -> bool:
-        """Return if this rank is a gradient worker for this layer."""
-        return self.local_rank in self._inv_assignments[layer].values()
-
-    def src_grad_worker(self, layer: str) -> int:
-        """Return rank that will share preconditioned gradient.
-
-        If process is a gradient worker, this method should return the
-        process rank. Otherwise, if the process is a gradient receiver, this
-        method returns the rank that is responsible for sending the
-        preconditioned gradient to this process.
-        """
-        ranks = list(self._inv_assignments[layer].values())
-        assert ranks.count(ranks[0]) == len(ranks)
-        return ranks[0]
-
-    def factor_group(self, layer: str) -> dist.ProcessGroup | None:
-        """Communication group for allreducing factors."""
-        return self.data_parallel_group
-
-    def grad_worker_group(self, layer: str) -> dist.ProcessGroup | None:
-        """Return communication group for inverse factor broadcast.
-
-        This communication group is used for the broadcasts of the inverses
-        from the inverse worker to the remaining gradient workers for the
-        layer.
-        """
-        raise NotImplementedError(
-            'The GPT-NeoX assignment strategy only supports MEM-OPT '
-            'and therefore should not be performing inverse factor '
-            'communication.',
-        )
-
-    def grad_receiver_group(self, layer: str) -> dist.ProcessGroup | None:
-        """Return communication group for preconditioned gradient broadcast.
-
-        This communication group is used for the broadcasts of the gradients
-        from the gradient worker to the remaining gradient receivers for the
-        layer.
-        """
-        return self.data_parallel_group
 
 
 class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
@@ -305,20 +178,16 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
             tdc=self.tdc,
         )
 
-        layer_type: type[KFACBaseLayer]
         if self.compute_method == ComputeMethod.EIGEN:
-            layer_type = KFACEigenLayer
-            layer_kwargs[
-                'prediv_eigenvalues'
-            ] = self.compute_eigenvalue_outer_product
+            pass
         elif self.compute_method == ComputeMethod.INVERSE:
-            layer_type = KFACInverseLayer
+            raise ValueError('Inverse method not supported with GPT NeoX.')
         else:
             raise AssertionError(f'Unknown {self.compute_method=}')
 
         kfac_layers = register_modules(
             model,
-            kfac_layer_type=layer_type,
+            model.mpu().get_model_parallel_group(),
             skip_layers=self.skip_layers,
             **layer_kwargs,
         )
@@ -404,3 +273,53 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
             tdc=self.tdc,
             loglevel=loglevel,
         )
+
+
+def register_modules(
+    model: torch.nn.Module,
+    model_parallel_group: torch.distributed.ProcessGroup,
+    skip_layers: list[str],
+    **layer_kwargs: Any,
+) -> dict[torch.nn.Module, tuple[str, KFACBaseLayer]]:
+    """Register supported modules in model with a KFACLayer.
+
+    Args:
+        model (torch.nn.Module): model to scan for modules to register.
+        model_parallel_group (ProcessGroup): model parallelism group this
+            rank belongs to.
+        skip_layers (list[str]): names of layers to skip registering. Names
+            can either by the name of the attribute or the name of the
+            class of the layer. Matches are case insensitive.
+        **layer_kwargs (dict[str, Any]): optional keyword arguments to
+            pass to the kfac_layer_type constructor.
+    """
+    if deepspeed_import_error is not None:  # pragma: no cover
+        raise deepspeed_import_error
+
+    modules = get_flattened_modules(model)
+    skip_layers = [s.lower() for s in skip_layers]
+
+    kfac_layers: dict[torch.nn.Module, tuple[str, KFACBaseLayer]] = {}
+    for name, module in modules:
+        if (
+            name.lower() not in skip_layers
+            and module.__class__.__name__.lower() not in skip_layers
+            and requires_grad(module)
+        ):
+            if module.__class__.__name__.lower() not in (
+                'ColumnParallelLinear'.lower(),
+                'RowParallelLinear'.lower(),
+            ):
+                continue
+
+            kfac_layer = GPTNeoXKFACEigenLayer(
+                GPTNeoXLinearModuleHelper(module, model_parallel_group),
+                **layer_kwargs,
+            )
+
+            # get_flattened_modules() should never give us modules with the
+            # same name
+            assert module not in kfac_layers
+            kfac_layers[module] = (name, kfac_layer)
+
+    return kfac_layers
