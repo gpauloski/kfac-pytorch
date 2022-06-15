@@ -391,7 +391,7 @@ def get_rank(group: dist.ProcessGroup | None = None) -> int:
         initialized.
     """
     if dist.is_initialized():
-        return dist.get_rank()
+        return dist.get_rank(group)
     else:
         return 0
 
@@ -408,7 +408,7 @@ def get_world_size(group: dist.Process | None = None) -> int:
         initialized.
     """
     if dist.is_initialized():
-        return dist.get_world_size()
+        return dist.get_world_size(group)
     else:
         return 1
 
