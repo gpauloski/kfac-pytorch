@@ -1,10 +1,15 @@
 """Unit tests for implementations of KFACBaseLayer."""
 from __future__ import annotations
 
+import sys
 from typing import Any
 from typing import cast
-from typing import Literal
 from unittest import mock
+
+if sys.version_info >= (3, 9):  # pragma: >=3.9 cover
+    from typing import Literal
+else:  # pragma: <3.9 cover
+    from typing_extensions import Literal
 
 import pytest
 import torch
