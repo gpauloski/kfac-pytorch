@@ -58,7 +58,11 @@ class LazyAssignment(WorkAssignment):
         """
         return self.rank
 
-    def factor_group(self, layer: str) -> dist.ProcessGroup | None:
+    def factor_group(
+        self,
+        layer: str,
+        factor: str,
+    ) -> dist.ProcessGroup | None:
         """Communication group for allreducing factors."""
         return None
 

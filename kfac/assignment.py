@@ -88,7 +88,11 @@ class WorkAssignment(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def factor_group(self, layer: str) -> dist.ProcessGroup | None:
+    def factor_group(
+        self,
+        layer: str,
+        factor: str,
+    ) -> dist.ProcessGroup | None:
         """Communication group for allreducing factors."""
         raise NotImplementedError
 
@@ -434,7 +438,11 @@ class KAISAAssignment(WorkAssignment):
             & self._grad_receiver_groups[layer].ranks,
         ).pop()
 
-    def factor_group(self, layer: str) -> dist.ProcessGroup | None:
+    def factor_group(
+        self,
+        layer: str,
+        factor: str,
+    ) -> dist.ProcessGroup | None:
         """Communication group for allreducing factors.
 
         KAISA assumes strong data-parallel training, i.e., each rank in the
