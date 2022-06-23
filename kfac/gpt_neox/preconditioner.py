@@ -61,6 +61,10 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
         compute_method: ComputeMethod | str = ComputeMethod.EIGEN,
         compute_eigenvalue_outer_product: bool = False,
         symmetry_aware: bool = False,
+        # DeepSpeed 3D parallelism
+        data_parallel_group: torch.distributed.ProcessGroup | None = None,
+        model_parallel_group: torch.distributed.ProcessGroup | None = None,
+        pipeline_parallel_group: torch.distributed.ProcessGroup | None = None,
         # Optional other parameters
         grad_scaler: (
             torch.cuda.amp.GradScaler | Callable[[], float] | None
@@ -110,6 +114,11 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
             symmetry_aware (bool): communicate only the upper triangle of
                 symmetric matrices. Can reduce communication time when factors
                 are large (default: False).
+            data_parallel_group (ProcessGroup): DeepSpeed data parallel group.
+            model_parallel_group (ProcessGroup): DeepSpeed model parallel
+                group.
+            pipeline_parallel_group (ProcessGroup): DeepSpeed pipeline parallel
+                group.
             grad_scaler (torch.cuda.amp.GradScaler or callable): Gradient
                 scaler used for Torch AMP training. Used to unscale the G
                 factors as they are accumulated during the backward pass.
@@ -161,6 +170,10 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
         self.skip_layers = [] if skip_layers is None else skip_layers
         self.symmetry_aware = symmetry_aware
 
+        self.data_parallel_group = data_parallel_group
+        self.model_parallel_group = model_parallel_group
+        self.pipeline_parallel_group = pipeline_parallel_group
+
         if self.allreduce_bucket_cap_mb > 0:
             self.allreduce_method = AllreduceMethod.ALLREDUCE_BUCKETED
         else:
@@ -187,28 +200,18 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
 
         kfac_layers = register_modules(
             model,
-            model.mpu().get_model_parallel_group(),
+            model_parallel_group=self.model_parallel_group,
             skip_layers=self.skip_layers,
             **layer_kwargs,
         )
 
-        model_parallel_size = get_world_size() // (
-            model.mpu().get_data_parallel_world_size()
-            * model.mpu().get_pipe_parallel_world_size()
-        )
-        if model_parallel_size != 1:
-            raise ValueError(
-                'GPTNeoXKFACPreconditioner only supports model parallelism '
-                'of 1 currently.',
-            )
-
         data_parallel_ranks = [
-            -1 for _ in range(model.mpu().get_data_parallel_world_size())
+            -1 for _ in range(get_world_size(self.data_parallel_group))
         ]
         torch.distributed.all_gather_object(
             object_list=data_parallel_ranks,
             obj=get_rank(),
-            group=model.mpu().get_data_parallel_group(),
+            group=self.data_parallel_group,
         )
 
         for name, kfac_layer in kfac_layers.values():
@@ -216,7 +219,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
                 loglevel,
                 f'Registered name="{name}": {repr(kfac_layer)} on '
                 f'global-rank={get_rank()} and '
-                f'pipeline-rank={model.mpu().get_pipe_parallel_rank()}',
+                f'pipeline-rank={get_rank(self.pipeline_parallel_group)}',
             )
 
         if self.assignment_strategy == AssignmentStrategy.COMPUTE:
@@ -235,13 +238,30 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
             }
             for name, kfac_layer in kfac_layers.values()
         }
+
         assignment = GPTNeoXAssignment(
             work,
             local_rank=get_rank(),
-            data_parallel_ranks=data_parallel_ranks,
-            data_parallel_group=model.mpu().get_data_parallel_group(),
+            topology=model.topology(),
+            data_parallel_group=self.data_parallel_group,
+            model_parallel_group=self.model_parallel_group,
         )
         logger.log(loglevel, f'KFAC layer assignments: {assignment}')
+
+        # Set primary rank for each layer
+        for name, kfac_layer in kfac_layers.values():
+            # Inv worker for A and G should be same because GPTNeoXAssignment
+            # uses gradient worker fraction 1/world_size (mem-opt)
+            if not isinstance(kfac_layer, GPTNeoXKFACEigenLayer):
+                raise AssertionError(
+                    'GPTNeoXKFACPreconditioner only supports '
+                    'GPTNeoXKFACEigenLayer.',
+                )
+            kfac_layer.primary_rank = assignment.factor_worker(name, 'A')
+            kfac_layer.data_parallel_group = assignment.data_parallel_group
+            kfac_layer.pipe_parallel_peer_group = (
+                assignment.pipe_parallel_peer_group
+            )
 
         defaults = {
             'allreduce_bucket_cap_mb': self.allreduce_bucket_cap_mb,
@@ -274,6 +294,18 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
             loglevel=loglevel,
         )
 
+    def load_state_dict(
+        self,
+        state_dict: dict[str, Any],
+        compute_inverses: bool = True,
+    ) -> None:
+        """State dict not supported because of sharded data."""
+        raise NotImplementedError
+
+    def state_dict(self, include_factors: bool = True) -> dict[str, Any]:
+        """State dict not supported because of sharded data."""
+        raise NotImplementedError
+
 
 def register_modules(
     model: torch.nn.Module,
@@ -301,21 +333,40 @@ def register_modules(
 
     kfac_layers: dict[torch.nn.Module, tuple[str, KFACBaseLayer]] = {}
     for name, module in modules:
+        module_name = module.__class__.__name__.lower()
         if (
             name.lower() not in skip_layers
-            and module.__class__.__name__.lower() not in skip_layers
+            and module_name not in skip_layers
             and requires_grad(module)
         ):
-            if module.__class__.__name__.lower() not in (
-                'ColumnParallelLinear'.lower(),
-                'RowParallelLinear'.lower(),
-            ):
+            if module_name == 'ColumnParallelLinear'.lower():
+                kfac_layer = GPTNeoXKFACEigenLayer(
+                    GPTNeoXLinearModuleHelper(
+                        module,
+                        model_parallel_group,
+                        parallelism='output',
+                    ),
+                    model_parallel_group=model_parallel_group,
+                    parallelism='output',
+                    **layer_kwargs,
+                )
+            elif module_name == 'RowParallelLinear'.lower():
+                kfac_layer = GPTNeoXKFACEigenLayer(
+                    GPTNeoXLinearModuleHelper(
+                        module,
+                        model_parallel_group,
+                        parallelism='input',
+                    ),
+                    model_parallel_group=model_parallel_group,
+                    parallelism='input',
+                    **layer_kwargs,
+                )
+            else:
+                # Add this no-op print because coverage does not like
+                # a bare else: continue block even though it can be proved
+                # the continue is executed
+                print('', end='')
                 continue
-
-            kfac_layer = GPTNeoXKFACEigenLayer(
-                GPTNeoXLinearModuleHelper(module, model_parallel_group),
-                **layer_kwargs,
-            )
 
             # get_flattened_modules() should never give us modules with the
             # same name

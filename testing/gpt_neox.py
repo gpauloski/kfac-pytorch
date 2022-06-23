@@ -1,7 +1,13 @@
 """Testing utilties for GPT NeoX code."""
 from __future__ import annotations
 
+from typing import Any
+from unittest import mock
+
 import torch
+import torch.distributed as dist
+from deepspeed.pipe import PipelineModule
+from deepspeed.runtime.pipe.topology import PipeModelDataParallelTopology
 
 
 class ColumnParallelLinear(torch.nn.Linear):
@@ -14,6 +20,18 @@ class RowParallelLinear(torch.nn.Linear):
     """Mock RowParallelLinear from Megatron."""
 
     pass
+
+
+def get_pipeline_module(*args: Any, **kwargs: Any) -> PipelineModule:
+    """Create pipeline module with correct topology type."""
+    with mock.patch.object(PipelineModule, 'to', mock.MagicMock()):
+        m = PipelineModule(*args, **kwargs)
+    m._topo = PipeModelDataParallelTopology(
+        num_pp=m.num_stages,
+        num_dp=dist.get_world_size(m.world_group) // m.num_stages,
+        num_mp=1,
+    )
+    return m
 
 
 def sequential_model(layers: int, hidden_dim: int) -> torch.nn.Sequential:

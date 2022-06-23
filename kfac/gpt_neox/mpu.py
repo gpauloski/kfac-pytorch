@@ -10,6 +10,7 @@ def gather_from_model_parallel_region(
     dst: int,
     model_parallel_group: dist.ProcessGroup,
     fp32_allreduce: bool = False,
+    dim: int = -1,
 ) -> torch.Tensor | None:
     """Gather model parallel partitions into single tensor.
 
@@ -26,7 +27,9 @@ def gather_from_model_parallel_region(
         dst (rank): destination rank to gather full tensor on.
         model_parallel_group (ProcessGroup): model parallel process group.
         fp32_allreduce (bool): if True and tensor is bf16, the tensor will
-            be cast to float before communication.
+            be cast to float before communication. Note: this is to match
+            the functionality of megatron's
+            gather_from_model_parallel_region().
 
     Returns:
         Gathered tensor on rank `dst` else None.
@@ -41,24 +44,19 @@ def gather_from_model_parallel_region(
     if dt == torch.bfloat16 and fp32_allreduce:
         tensor = tensor.float()
 
-    # Size and dimension.
-    last_dim = tensor.dim() - 1
+    tensor_list = [torch.empty_like(tensor) for _ in range(world_size)]
 
-    if dst == dist.get_rank():
-        tensor_list = [torch.empty_like(tensor) for _ in range(world_size)]
-    else:
-        tensor_list = None
-
-    torch.distributed.gather(
-        tensor,
+    # TODO(gpauloski): PyTorch>=1.11 supports gather directly
+    # which will be much faster
+    torch.distributed.all_gather(
         tensor_list,
-        dst=dst,
+        tensor,
         group=model_parallel_group,
     )
 
-    if tensor_list is not None:
+    if dist.get_rank() == dst:
         # Note: torch.cat already creates a contiguous tensor.
-        output = torch.cat(tensor_list, dim=last_dim).contiguous()
+        output = torch.cat(tensor_list, dim=dim).contiguous()
 
         # Bf16 convert
         if dt == torch.bfloat16 and fp32_allreduce:
@@ -67,3 +65,61 @@ def gather_from_model_parallel_region(
         return output
     else:
         return None
+
+
+def get_group_with_rank(rank: int, groups: list[list[int]]) -> list[int]:
+    """Returns first group from list of groups containing rank.
+
+    Args:
+        rank (int): rank to search for.
+        groups (list[list[int]]): list of groups where each group is a list
+            of ranks.
+
+    Returns:
+        group (list of ranks) containing rank.
+
+    Raises:
+        ValueError:
+            if a matching group is not found.
+    """
+    for group in groups:
+        if rank in group:
+            return group
+    raise ValueError(f'Rank {rank} was not in any of the groups.')
+
+
+def split_tensor_along_dim(
+    tensor: torch.Tensor,
+    num_partitions: int,
+    dim: int,
+    contiguous_split_chunks: bool = False,
+) -> tuple[torch.Tensor, ...]:
+    """Split a tensor along its last dimension.
+
+    Source: https://github.com/EleutherAI/gpt-neox/blob/d7af1e7a8e3a816610b7d169456f81ca62d34ff7/megatron/mpu/utils.py  # noqa: 501
+
+    Args:
+        tensor (torch.Tensor): input tensor
+        num_partitions (int): number of partitions to split the tensor
+        contiguous_split_chunks (bool): If True, make each chunk contiguous
+            in memory.
+
+    Returns:
+        tuple of tensors
+    """
+    dim_size = tensor.size()[dim]
+
+    if dim_size % num_partitions != 0:
+        raise ValueError(
+            f'Tensor dim {dim} (size={dim_size}) is not divisible '
+            f'into {num_partitions} parts.',
+        )
+
+    dim_size = dim_size // num_partitions
+    tensor_list = torch.split(tensor, dim_size, dim=dim)
+
+    # Note: torch.split does not create contiguous tensors by default.
+    if contiguous_split_chunks:
+        return tuple(chunk.contiguous() for chunk in tensor_list)
+
+    return tensor_list
