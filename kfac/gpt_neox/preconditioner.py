@@ -21,6 +21,7 @@ from kfac.gpt_neox.assignment import GPTNeoXAssignment
 from kfac.gpt_neox.layer import GPTNeoXKFACEigenLayer
 from kfac.gpt_neox.modules import GPTNeoXLinearModuleHelper
 from kfac.layers.base import KFACBaseLayer
+from kfac.layers.register import any_match
 from kfac.layers.register import get_flattened_modules
 from kfac.layers.register import requires_grad
 
@@ -447,9 +448,9 @@ def register_modules(
         model (torch.nn.Module): model to scan for modules to register.
         model_parallel_group (ProcessGroup): model parallelism group this
             rank belongs to.
-        skip_layers (list[str]): names of layers to skip registering. Names
-            can either by the name of the attribute or the name of the
-            class of the layer. Matches are case insensitive.
+        skip_layers (list[str]): regex patterns that if matched, will cause
+            the layer to not be registered. The patterns will be applied
+            against the layer's name and class name.
         **layer_kwargs (dict[str, Any]): optional keyword arguments to
             pass to the kfac_layer_type constructor.
     """
@@ -457,14 +458,13 @@ def register_modules(
         raise deepspeed_import_error
 
     modules = get_flattened_modules(model)
-    skip_layers = [s.lower() for s in skip_layers]
 
     kfac_layers: dict[torch.nn.Module, tuple[str, KFACBaseLayer]] = {}
     for name, module in modules:
         module_name = module.__class__.__name__.lower()
         if (
-            name.lower() not in skip_layers
-            and module_name not in skip_layers
+            not any_match(name, skip_layers)
+            and not any_match(module_name, skip_layers)
             and requires_grad(module)
         ):
             if module_name == 'ColumnParallelLinear'.lower():

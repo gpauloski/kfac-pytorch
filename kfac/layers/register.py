@@ -1,6 +1,7 @@
 """Utilities for registering PyTorch modules to KFAC layers."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import torch
@@ -41,6 +42,17 @@ def get_module_helper(module: torch.nn.Module) -> ModuleHelper | None:
         return None
 
 
+def any_match(query: str, patterns: list[str]) -> bool:
+    """Check if a query string matches any pattern in a list.
+
+    Note:
+        `search()` is used rather than `match()` so True will be returned
+        if there is a match anywhere in the query string.
+    """
+    regexes = [re.compile(p) for p in patterns]
+    return any(regex.search(query) for regex in regexes)
+
+
 def register_modules(
     model: torch.nn.Module,
     kfac_layer_type: type[KFACBaseLayer],
@@ -53,20 +65,19 @@ def register_modules(
         model (torch.nn.Module): model to scan for modules to register.
         kfac_layer_type (type[KFACBaseLayer]): type of subclass of
             KFACBaseLayer to use.
-        skip_layers (list[str]): names of layers to skip registering. Names
-            can either by the name of the attribute or the name of the
-            class of the layer. Matches are case insensitive.
+        skip_layers (list[str]): regex patterns that if matched, will cause
+            the layer to not be registered. The patterns will be applied
+            against the layer's name and class name.
         **layer_kwargs (dict[str, Any]): optional keyword arguments to
             pass to the kfac_layer_type constructor.
     """
     modules = get_flattened_modules(model)
-    skip_layers = [s.lower() for s in skip_layers]
 
     kfac_layers: dict[torch.nn.Module, tuple[str, KFACBaseLayer]] = {}
     for name, module in modules:
         if (
-            name.lower() not in skip_layers
-            and module.__class__.__name__.lower() not in skip_layers
+            not any_match(name, skip_layers)
+            and not any_match(module.__class__.__name__, skip_layers)
             and requires_grad(module)
         ):
             module_helper = get_module_helper(module)
