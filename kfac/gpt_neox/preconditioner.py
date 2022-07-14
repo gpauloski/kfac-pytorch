@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import logging
+import os
+import warnings
 from typing import Any
 from typing import Callable
+from typing import cast
 
 import torch
 
@@ -71,6 +74,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
         ) = None,
         factor_dtype: torch.dtype | None = None,
         inv_dtype: torch.dtype = torch.float32,
+        factor_checkpoint_dir: str | None = None,
         skip_layers: list[str] | None = None,
         update_factors_in_hook: bool = True,
         loglevel: int = logging.DEBUG,
@@ -130,6 +134,8 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
             inv_dtype (torch.dtype): force data type for storing second-order
                 data (e.g., inverses or eigen decompositions)
                 (default: torch.float32).
+            factor_checkpoint_dir (str): directory to store factors
+                checkpoints in.
             skip_layers (list): list of module names to ignore when registering
                 layers. Passing the name of parent modules will prevent
                 recursively registering child modules of the parent.
@@ -167,6 +173,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
         self.grad_scaler = grad_scaler
         self.factor_dtype = factor_dtype
         self.inv_dtype = inv_dtype
+        self.factor_checkpoint_dir = factor_checkpoint_dir
         self.skip_layers = [] if skip_layers is None else skip_layers
         self.symmetry_aware = symmetry_aware
 
@@ -272,6 +279,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
             ),
             'compute_method': self.compute_method,
             'grad_scaler': self.grad_scaler is not None,
+            'factor_checkpoint_dir': self.factor_checkpoint_dir,
             'factor_dtype': self.factor_dtype,
             'inv_dtype': self.inv_dtype,
             'skip_layers': self.skip_layers,
@@ -299,12 +307,132 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
         state_dict: dict[str, Any],
         compute_inverses: bool = True,
     ) -> None:
-        """State dict not supported because of sharded data."""
-        raise NotImplementedError
+        """Load state dict."""
+        layers = state_dict.pop('layers', None)
+        super().load_state_dict(state_dict, compute_inverses=False)
+
+        if self.factor_checkpoint_dir is not None:
+            self.load_factors_from_dir(compute_inverses)
+            return
+
+        if layers is None:
+            return
+
+        for found_name, layer_state_dict in layers.items():
+            for name, layer in self._layers.values():
+                if (
+                    found_name == name
+                    and cast(
+                        GPTNeoXAssignment,
+                        self._assignment,
+                    ).factor_worker(name, 'A')
+                    == get_rank()
+                ):
+                    assert isinstance(layer_state_dict['A'], torch.Tensor)
+                    assert isinstance(layer_state_dict['G'], torch.Tensor)
+
+                    layer.load_state_dict(layer_state_dict)
+                    if compute_inverses:
+                        layer.compute_a_inv(damping=self.damping)
+                        layer.compute_g_inv(damping=self.damping)
+
+        torch.distributed.barrier()
 
     def state_dict(self, include_factors: bool = True) -> dict[str, Any]:
-        """State dict not supported because of sharded data."""
-        raise NotImplementedError
+        """Get state dict.
+
+        Note:
+            all ranks must enter this.
+        """
+        state_dict = super().state_dict(include_factors=False)
+
+        if not include_factors:
+            return state_dict
+
+        if self.factor_checkpoint_dir is not None:
+            self.save_factors_to_dir()
+            return state_dict
+
+        partition: list[tuple[str, dict[str, Any]]] = []
+        for name, layer in self._layers.values():
+            # Inv worker for A and G is the same for GPT training
+            if get_rank() == self._assignment.inv_worker(name, 'A'):
+                layer_state_dict = layer.state_dict()
+                assert layer_state_dict['A'] is not None
+                assert layer_state_dict['G'] is not None
+                # Move to CPU where we have more RAM
+                layer_state_dict['A'] = layer_state_dict['A'].cpu()
+                layer_state_dict['G'] = layer_state_dict['G'].cpu()
+                partition.append((name, layer_state_dict))
+
+        partitions = [None for _ in range(get_world_size())]
+        # Use gloo group because we moved data to CPU for more RAM
+        group = torch.distributed.new_group(backend='gloo')
+        torch.distributed.all_gather_object(partitions, partition, group=group)
+
+        layers = {}
+        for partition in partitions:  # type: ignore
+            for name, layer_state_dict in partition:
+                layers[name] = layer_state_dict
+        state_dict['layers'] = layers
+
+        torch.distributed.barrier(group)
+
+        return state_dict
+
+    def load_factors_from_dir(self, compute_inverses: bool = True) -> None:
+        """Load factors from `factor_checkpoint_dir`."""
+        if self.factor_checkpoint_dir is None:
+            raise ValueError('factor_checkpoint_dir is None.')
+
+        if not os.path.isdir(self.factor_checkpoint_dir):
+            warnings.warn(
+                f'factor_checkpoint_dir={self.factor_checkpoint_dir} '
+                'is not a directory. Skipping KFAC checkpoint load.',
+            )
+            return
+
+        for name, layer in self._layers.values():
+            if (
+                cast(GPTNeoXAssignment, self._assignment).factor_worker(
+                    name,
+                    'A',
+                )
+                == get_rank()
+            ):
+                filepath = os.path.join(self.factor_checkpoint_dir, name)
+                if os.path.exists(filepath):
+                    logger.info(
+                        f'loading KFAC factors for {name} on rank '
+                        f'{get_rank()}',
+                    )
+                    state_dict = torch.load(filepath)
+                    layer.load_state_dict(state_dict)
+                    if compute_inverses:
+                        layer.compute_a_inv(damping=self.damping)
+                        layer.compute_g_inv(damping=self.damping)
+
+    def save_factors_to_dir(self) -> None:
+        """Save factors to `factor_checkpoint_dir`.
+
+        Saves the state dict for each layer to a separate file in
+        `self.factor_checkpoint_dir` with the filename as the name of the
+        layer. Note: only the inverse worker for the layer will save the
+        layer.
+        """
+        if self.factor_checkpoint_dir is None:
+            raise ValueError('factor_checkpoint_dir is None')
+
+        if get_rank() == 0:
+            os.makedirs(self.factor_checkpoint_dir, exist_ok=True)
+        torch.distributed.barrier()
+
+        for name, layer in self._layers.values():
+            if get_rank() == self._assignment.inv_worker(name, 'A'):
+                layer_state_dict = layer.state_dict()
+                filepath = os.path.join(self.factor_checkpoint_dir, name)
+                logger.info(f'saving KFAC factors for {name} to {filepath}')
+                torch.save(layer_state_dict, filepath)
 
 
 def register_modules(
