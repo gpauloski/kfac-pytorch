@@ -24,6 +24,7 @@ from kfac.layers.base import KFACBaseLayer
 from kfac.layers.register import any_match
 from kfac.layers.register import get_flattened_modules
 from kfac.layers.register import requires_grad
+from kfac.warnings import ExperimentalFeatureWarning
 
 try:
     from deepspeed.pipe import PipelineModule
@@ -149,6 +150,11 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
         """
         if deepspeed_import_error is not None:  # pragma: no cover
             raise deepspeed_import_error
+
+        warnings.warn(
+            'KFAC support for GPT-NeoX training is experimental.',
+            ExperimentalFeatureWarning,
+        )
 
         if not isinstance(model, PipelineModule):
             raise ValueError(
