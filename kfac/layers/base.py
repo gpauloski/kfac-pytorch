@@ -239,8 +239,8 @@ class KFACBaseLayer:
         if self.grad is None:
             if get_rank() == src:
                 raise RuntimeError(
-                    f'Attempt to broadcast gradient from {src=} but this rank '
-                    'has not computed the preconditioned gradient yet.',
+                    f'Attempt to broadcast gradient from src={src} but this '
+                    'rank has not computed the preconditioned gradient yet.',
                 )
             self.grad = torch.empty_like(self.module.get_grad())
 
@@ -292,7 +292,9 @@ class KFACBaseLayer:
         elif self.allreduce_method == AllreduceMethod.ALLREDUCE_BUCKETED:
             allreduce = self.tdc.allreduce_bucketed
         else:
-            raise AssertionError('Unknown {self.allreduce_method=}')
+            raise AssertionError(
+                f'Unknown allreduce_method={self.allreduce_method}',
+            )
         self.a_factor = allreduce(
             self.a_factor,
             average=True,
@@ -318,7 +320,9 @@ class KFACBaseLayer:
         elif self.allreduce_method == AllreduceMethod.ALLREDUCE_BUCKETED:
             allreduce = self.tdc.allreduce_bucketed
         else:
-            raise AssertionError('Unknown {self.allreduce_method=}')
+            raise AssertionError(
+                f'Unknown allreduce_method={self.allreduce_method}',
+            )
         self.g_factor = allreduce(
             self.g_factor,
             average=True,

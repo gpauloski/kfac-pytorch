@@ -24,6 +24,11 @@ from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.modules import LinearModuleHelper
 from testing.distributed import distributed_test
 
+if sys.version_info >= (3, 8):  # pragma: >=3.8 cover
+    from typing import Literal
+else:  # pragma: <3.8 cover
+    from typing_extensions import Literal
+
 
 @pytest.mark.parametrize(
     'kfac_layer,world_size,strategy,kwargs',

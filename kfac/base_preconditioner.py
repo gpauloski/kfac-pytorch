@@ -323,7 +323,7 @@ class BaseKFACPreconditioner:
             not self._update_factors_in_hook
             and self.steps % self.factor_update_steps == 0
         ):
-            for name, layer in reversed(self._layers.values()):
+            for name, layer in reversed(list(self._layers.values())):
                 self._mini_steps[name] = 0
                 layer.update_a_factor(alpha=self.factor_decay)
                 layer.reduce_a_factor(self._assignment.factor_group(name, 'A'))
@@ -336,7 +336,7 @@ class BaseKFACPreconditioner:
 
         # Compute Inverses
         if self.steps % self.inv_update_steps == 0:
-            for name, layer in reversed(self._layers.values()):
+            for name, layer in reversed(list(self._layers.values())):
                 if get_rank() == self._assignment.inv_worker(name, 'A'):
                     layer.compute_a_inv(damping=self.damping)
                 if (
@@ -360,7 +360,7 @@ class BaseKFACPreconditioner:
             self._tdc.flush_allreduce_buckets()
 
         # Compute Preconditioned Gradients
-        for name, layer in reversed(self._layers.values()):
+        for name, layer in reversed(list(self._layers.values())):
             if self._assignment.is_grad_worker(name):
                 layer.preconditioned_grad(damping=self.damping)
             if self._assignment.broadcast_gradients():
@@ -373,7 +373,7 @@ class BaseKFACPreconditioner:
         scale = None if self.kl_clip is None else self._compute_grad_scale()
 
         # Update gradients in-place
-        for _, layer in reversed(self._layers.values()):
+        for _, layer in reversed(list(self._layers.values())):
             layer.update_grad(scale=scale)
 
         self._steps += 1
@@ -413,7 +413,7 @@ class BaseKFACPreconditioner:
             sum_{layers} (sum_{gradients} precon_grad * grad * lr^2)
         """
         vg_sum = 0.0
-        for _, layer in reversed(self._layers.values()):
+        for _, layer in reversed(list(self._layers.values())):
             if layer.grad is None:
                 raise AssertionError(
                     'layer gradient has not been preconditioned',
