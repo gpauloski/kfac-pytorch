@@ -1,10 +1,11 @@
 """Unit Tests for kfac/gpt_neox.py."""
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import pathlib
+from contextlib import redirect_stderr
+from contextlib import redirect_stdout
 from typing import Any
 from unittest import mock
 
@@ -44,11 +45,8 @@ def test_gpt_neox_kfac_preconditioner(
         module.requires_grad_(False)
         model.append(module)
 
-        with (
-            # Trashing stdout/stderr because get_pipeline_module prints stuff
-            contextlib.redirect_stdout(None),
-            contextlib.redirect_stderr(None),
-        ):
+        # Trashing stdout/stderr because get_pipeline_module prints stuff
+        with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
             model = get_pipeline_module(layers=model, num_stages=num_stages)
             p = GPTNeoXKFACPreconditioner(model, **kwargs)
@@ -73,11 +71,8 @@ def test_input_validation() -> None:
     def check() -> None:
         model = sequential_model(1, 1)
 
-        with (
-            # Trashing stdout/stderr because get_pipeline_module prints stuff
-            contextlib.redirect_stdout(None),
-            contextlib.redirect_stderr(None),
-        ):
+        # Trashing stdout/stderr because get_pipeline_module prints stuff
+        with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
             model_ = get_pipeline_module(model, num_stages=1)
         with pytest.raises(ValueError, match='Inverse'):
@@ -86,10 +81,8 @@ def test_input_validation() -> None:
         with pytest.raises(ValueError, match='PipelineModule'):
             GPTNeoXKFACPreconditioner(model)
 
-        with (
-            contextlib.redirect_stdout(None),
-            contextlib.redirect_stderr(None),
-        ):
+        # Trashing stdout/stderr because get_pipeline_module prints stuff
+        with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
             model_ = get_pipeline_module(layers=model, num_stages=1)
         with pytest.raises(ValueError, match='allreduce_bucket_cap_mb'):
@@ -107,11 +100,8 @@ def test_state_dict() -> None:
         num_layers = 6
         model = sequential_model(layers=num_layers, hidden_dim=32)
 
-        with (
-            # Trashing stdout/stderr because get_pipeline_module prints stuff
-            contextlib.redirect_stdout(None),
-            contextlib.redirect_stderr(None),
-        ):
+        # Trashing stdout/stderr because get_pipeline_module prints stuff
+        with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
             model = get_pipeline_module(layers=model, num_stages=1)
 
@@ -156,11 +146,8 @@ def test_state_dict_save_factor_to_file_error() -> None:
     def check() -> None:
         model = sequential_model(layers=1, hidden_dim=32)
 
-        with (
-            # Trashing stdout/stderr because get_pipeline_module prints stuff
-            contextlib.redirect_stdout(None),
-            contextlib.redirect_stderr(None),
-        ):
+        # Trashing stdout/stderr because get_pipeline_module prints stuff
+        with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
             model = get_pipeline_module(layers=model, num_stages=1)
 
@@ -182,11 +169,8 @@ def test_load_factors_from_dir_warning(tmp_path: pathlib.Path) -> None:
     def check() -> None:
         model = sequential_model(layers=1, hidden_dim=32)
 
-        with (
-            # Trashing stdout/stderr because get_pipeline_module prints stuff
-            contextlib.redirect_stdout(None),
-            contextlib.redirect_stderr(None),
-        ):
+        # Trashing stdout/stderr because get_pipeline_module prints stuff
+        with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
             model = get_pipeline_module(layers=model, num_stages=1)
 
@@ -208,11 +192,8 @@ def test_state_dict_save_factors_to_file(tmp_path: pathlib.Path) -> None:
         num_layers = 6
         model = sequential_model(layers=num_layers, hidden_dim=32)
 
-        with (
-            # Trashing stdout/stderr because get_pipeline_module prints stuff
-            contextlib.redirect_stdout(None),
-            contextlib.redirect_stderr(None),
-        ):
+        # Trashing stdout/stderr because get_pipeline_module prints stuff
+        with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
             model = get_pipeline_module(layers=model, num_stages=1)
 

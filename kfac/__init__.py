@@ -10,5 +10,6 @@ import kfac.layers as layers
 import kfac.preconditioner as preconditioner
 import kfac.scheduler as scheduler
 import kfac.tracing as tracing
+import kfac.warnings as warnings
 
 __version__ = '0.4.1'

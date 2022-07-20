@@ -1,7 +1,6 @@
 black
 covdefaults>=2.2
 coverage
-git+https://github.com/EleutherAI/DeeperSpeed.git@eb7f5cff36678625d23db8a8fe78b4a93e5d2c75#egg=deepspeed
 flake8
 flake8-bugbear
 flake8-docstrings

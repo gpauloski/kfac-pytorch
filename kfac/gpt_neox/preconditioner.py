@@ -210,7 +210,9 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
         elif self.compute_method == ComputeMethod.INVERSE:
             raise ValueError('Inverse method not supported with GPT NeoX.')
         else:
-            raise AssertionError(f'Unknown {self.compute_method=}')
+            raise AssertionError(
+                f'Unknown compute_method={self.compute_method}',
+            )
 
         kfac_layers = register_modules(
             model,
