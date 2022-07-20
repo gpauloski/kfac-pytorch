@@ -326,9 +326,9 @@ class BaseKFACPreconditioner:
             for name, layer in reversed(list(self._layers.values())):
                 self._mini_steps[name] = 0
                 layer.update_a_factor(alpha=self.factor_decay)
-                layer.reduce_a_factor()
+                layer.reduce_a_factor(self._assignment.factor_group(name, 'A'))
                 layer.update_g_factor(alpha=self.factor_decay)
-                layer.reduce_g_factor()
+                layer.reduce_g_factor(self._assignment.factor_group(name, 'G'))
 
         # Flush last allreduce bucket from forward/backward pass.
         # Will be a no-op if bucketing was not used
@@ -428,6 +428,8 @@ class BaseKFACPreconditioner:
             vg_sum += (v1 * w * self.lr**2).sum().item()
             if layer.module.has_bias():
                 vg_sum += (v2 * b * self.lr**2).sum().item()
+        if vg_sum == 0.0:
+            return 1.0
         return min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
 
     @torch.no_grad()
@@ -450,7 +452,7 @@ class BaseKFACPreconditioner:
                 and self._mini_steps[name] % self._accumulation_steps == 0
             ):
                 layer.update_a_factor(alpha=self.factor_decay)
-                layer.reduce_a_factor()
+                layer.reduce_a_factor(self._assignment.factor_group(name, 'A'))
 
     @torch.no_grad()
     def _save_grad_output(
@@ -472,4 +474,4 @@ class BaseKFACPreconditioner:
                 and self._mini_steps[name] % self._accumulation_steps == 0
             ):
                 layer.update_g_factor(alpha=self.factor_decay)
-                layer.reduce_g_factor()
+                layer.reduce_g_factor(self._assignment.factor_group(name, 'G'))

@@ -523,3 +523,18 @@ def test_kaisa_assignment_group_sizes(
                 len(cast(Sized, assignment.grad_receiver_group(layer)))
                 == grad_receiver_group_size
             )
+
+
+def test_kaisa_factor_allreduce_groups() -> None:
+    """Test KAISA assignment factor groups is always None."""
+    for rank in [0, 1, 2, 3]:
+        assignment = KAISAAssignment(
+            TEST_WORK,
+            local_rank=rank,
+            world_size=4,
+            grad_worker_fraction=0.5,
+            group_func=lambda ranks: ranks,
+        )
+        for layer in TEST_WORK:
+            assert assignment.factor_group(layer, 'A') is None
+            assert assignment.factor_group(layer, 'G') is None

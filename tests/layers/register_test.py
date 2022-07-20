@@ -12,6 +12,7 @@ from kfac.layers.inverse import KFACInverseLayer
 from kfac.layers.modules import Conv2dModuleHelper
 from kfac.layers.modules import LinearModuleHelper
 from kfac.layers.modules import ModuleHelper
+from kfac.layers.register import any_match
 from kfac.layers.register import get_flattened_modules
 from kfac.layers.register import get_module_helper
 from kfac.layers.register import register_modules
@@ -120,9 +121,7 @@ def test_get_module_helper(
         (torch.nn.Conv3d(1, 1, 1), KFACEigenLayer, [], 0),
         # Test skip_layers: both by name or class and case invariant
         (LeNet(), KFACEigenLayer, ['fc1'], 4),
-        (LeNet(), KFACEigenLayer, ['FC1'], 4),
         (LeNet(), KFACEigenLayer, ['Conv2d'], 3),
-        (LeNet(), KFACEigenLayer, ['conv2d'], 3),
         (LeNet(), KFACEigenLayer, ['Conv2d', 'Linear'], 0),
     ),
 )
@@ -148,3 +147,24 @@ def test_register_modules(
         **kwargs,
     )
     assert len(kfac_layers) == expected_count
+
+
+@pytest.mark.parametrize(
+    'query,patterns,match',
+    (
+        ('mystring', [], False),
+        ('mystring', ['yourstring'], False),
+        ('mystring', ['mystring'], True),
+        ('mystring', ['string'], True),
+        ('mystring', ['^string'], False),
+        ('mystring', ['^string', '^my'], True),
+        (
+            '2.attention.query_key_value',
+            ['attention', 'query_key_value'],
+            True,
+        ),
+    ),
+)
+def test_any_match(query: str, patterns: list[str], match: bool) -> None:
+    """Test any_match()."""
+    assert any_match(query, patterns) == match

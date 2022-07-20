@@ -137,10 +137,9 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             inv_dtype (torch.dtype): force data type for storing second-order
                 data (e.g., inverses or eigen decompositions)
                 (default: torch.float32).
-            skip_layers (list): list of module names to ignore when registering
-                layers. Passing the name of parent modules will prevent
-                recursively registering child modules of the parent.
-                Case-insensitive (default: []).
+            skip_layers (list[str]): regex patterns that if matched, will cause
+                the layer to not be registered. The patterns will be applied
+                against the layer's name and class name.
             update_factors_in_hook (bool): If True, running average of factors
                 is updated in the module hook and the async commmunication is
                 started. Otherwise, this will be performed at the start of

@@ -49,10 +49,12 @@ class WorkAssignment(metaclass=ABCMeta):
     @abstractmethod
     def broadcast_gradients(self) -> bool:
         """Return if gradients need to be broadcast."""
+        raise NotImplementedError
 
     @abstractmethod
     def broadcast_inverses(self) -> bool:
         """Return if inverses need to be broadcast."""
+        raise NotImplementedError
 
     @abstractmethod
     def get_layers(self) -> tuple[str, ...]:
@@ -86,6 +88,15 @@ class WorkAssignment(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
+    def factor_group(
+        self,
+        layer: str,
+        factor: str,
+    ) -> dist.ProcessGroup | None:
+        """Communication group for allreducing factors."""
+        raise NotImplementedError
+
+    @abstractmethod
     def grad_worker_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for inverse factor broadcast.
 
@@ -99,8 +110,8 @@ class WorkAssignment(metaclass=ABCMeta):
     def grad_receiver_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for preconditioned gradient broadcast.
 
-        This communication group is used for the broadcasts of the inverses
-        from the inverse worker to the remaining gradient workers for the
+        This communication group is used for the broadcasts of the gradients
+        from the gradient worker to the remaining gradient receivers for the
         layer.
         """
         raise NotImplementedError
@@ -427,6 +438,19 @@ class KAISAAssignment(WorkAssignment):
             & self._grad_receiver_groups[layer].ranks,
         ).pop()
 
+    def factor_group(
+        self,
+        layer: str,
+        factor: str,
+    ) -> dist.ProcessGroup | None:
+        """Communication group for allreducing factors.
+
+        KAISA assumes strong data-parallel training, i.e., each rank in the
+        world will contribute factors computed from its local mini-batch.
+        Thus, this function simply returns the global process group.
+        """
+        return None
+
     def grad_worker_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for inverse factor broadcast.
 
@@ -439,8 +463,8 @@ class KAISAAssignment(WorkAssignment):
     def grad_receiver_group(self, layer: str) -> dist.ProcessGroup | None:
         """Return communication group for preconditioned gradient broadcast.
 
-        This communication group is used for the broadcasts of the inverses
-        from the inverse worker to the remaining gradient workers for the
+        This communication group is used for the broadcasts of the gradients
+        from the gradient worker to the remaining gradient receivers for the
         layer.
         """
         return self._grad_receiver_groups[layer].group

@@ -422,3 +422,14 @@ def test_base_preconditioner_callable_hyperparams() -> None:
         assert p.damping == 5
         assert p.factor_decay == 7
         assert p.kl_clip == 9
+
+
+def test_grad_scale_no_layers() -> None:
+    """Test computing grad scale with no layers has no divide by 0 error."""
+    p = BaseKFACPreconditioner(
+        layers=example_layers(),
+        assignment=LazyAssignment(),
+        tdc=TorchDistributedCommunicator(),
+    )
+    p._layers = {}
+    assert p._compute_grad_scale() == 1.0
