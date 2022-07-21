@@ -26,7 +26,6 @@ repos:
     hooks:
     -   id: flake8
         additional_dependencies: [flake8-bugbear, flake8-docstrings, pep8-naming]
-        args: [--config, setup.cfg]
 -   repo: https://github.com/asottile/setup-cfg-fmt
     rev: v1.20.1
     hooks:

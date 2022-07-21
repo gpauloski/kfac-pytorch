@@ -7,16 +7,17 @@ import os
 import time
 import warnings
 
-import cnn_utils.datasets as datasets
-import cnn_utils.engine as engine
-import cnn_utils.optimizers as optimizers
 import torch
 import torch.distributed as dist
-import torchvision.models as models
+import torchvision.models as models  # type: ignore
 from torch.utils import collect_env
 from torch.utils.tensorboard import SummaryWriter
-from utils import LabelSmoothLoss
-from utils import save_checkpoint
+
+import examples.cnn_utils.datasets as datasets
+import examples.cnn_utils.engine as engine
+import examples.cnn_utils.optimizers as optimizers
+from examples.utils import LabelSmoothLoss
+from examples.utils import save_checkpoint
 
 try:
     from torch.cuda.amp import GradScaler

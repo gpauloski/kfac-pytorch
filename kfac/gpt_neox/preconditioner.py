@@ -27,7 +27,7 @@ from kfac.layers.register import requires_grad
 from kfac.warnings import ExperimentalFeatureWarning
 
 try:
-    from deepspeed.pipe import PipelineModule
+    from deepspeed.pipe import PipelineModule  # type: ignore
 
     deepspeed_import_error = None
 except ImportError as e:  # pragma: no cover
@@ -446,7 +446,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
 
 def register_modules(
     model: torch.nn.Module,
-    model_parallel_group: torch.distributed.ProcessGroup,
+    model_parallel_group: torch.distributed.ProcessGroup | None,
     skip_layers: list[str],
     **layer_kwargs: Any,
 ) -> dict[torch.nn.Module, tuple[str, KFACBaseLayer]]:

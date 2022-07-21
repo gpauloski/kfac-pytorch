@@ -5,21 +5,23 @@ import argparse
 import math
 
 import torch
-from tqdm import tqdm
+from tqdm import tqdm  # type: ignore
 
 import kfac
 from examples.utils import accuracy
 from examples.utils import Metric
+
+SampleT = tuple[torch.Tensor, torch.Tensor]
 
 
 def train(
     epoch: int,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-    preconditioner: kfac.preconditioner.KFACPreconditioner,
+    preconditioner: kfac.preconditioner.KFACPreconditioner | None,
     loss_func: torch.nn.Module,
-    train_sampler: torch.utils.data.distributed.DistributedSampler,
-    train_loader: torch.utils.data.DataLoader,
+    train_sampler: torch.utils.data.distributed.DistributedSampler[SampleT],
+    train_loader: torch.utils.data.DataLoader[SampleT],
     args: argparse.Namespace,
 ) -> None:
     """Train model."""
@@ -66,7 +68,7 @@ def train(
                 else:
                     loss.backward()
             else:
-                with model.no_sync():
+                with model.no_sync():  # type: ignore
                     if scaler is not None:
                         scaler.scale(loss).backward()
                     else:
@@ -89,8 +91,8 @@ def train(
 
                 train_loss.update(step_loss / mini_step)
                 train_accuracy.update(step_accuracy / mini_step)
-                step_loss = 0.0
-                step_accuracy = 0.0
+                step_loss.zero_()
+                step_accuracy.zero_()
 
                 t.set_postfix_str(
                     'loss: {:.4f}, acc: {:.2f}%, lr: {:.4f}'.format(
@@ -116,7 +118,7 @@ def test(
     epoch: int,
     model: torch.nn.Module,
     loss_func: torch.nn.Module,
-    val_loader: torch.utils.data.DataLoader,
+    val_loader: torch.utils.data.DataLoader[SampleT],
     args: argparse.Namespace,
 ) -> None:
     """Test the model."""

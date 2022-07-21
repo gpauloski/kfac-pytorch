@@ -6,8 +6,10 @@ from unittest import mock
 
 import torch
 import torch.distributed as dist
-from deepspeed.pipe import PipelineModule
-from deepspeed.runtime.pipe.topology import PipeModelDataParallelTopology
+from deepspeed.pipe import PipelineModule  # type: ignore
+from deepspeed.runtime.pipe.topology import (  # type: ignore
+    PipeModelDataParallelTopology,  # type: ignore
+)
 
 
 class ColumnParallelLinear(torch.nn.Linear):
@@ -39,7 +41,7 @@ def sequential_model(layers: int, hidden_dim: int) -> torch.nn.Sequential:
     if layers <= 0:
         raise ValueError('Num layers must be greater than 0')
 
-    ls: torch.nn.Module = []
+    ls: list[torch.nn.Module] = []
     ls.append(ColumnParallelLinear(hidden_dim, hidden_dim))
     layers -= 1
     ls.extend(

@@ -70,11 +70,11 @@ class ModuleHelper:
 
     def get_bias_grad(self) -> torch.Tensor:
         """Get the gradient of the bias."""
-        return self.module.bias.grad
+        return cast(torch.Tensor, self.module.bias.grad)
 
     def get_weight_grad(self) -> torch.Tensor:
         """Get the gradient of the weight."""
-        return self.module.weight.grad
+        return cast(torch.Tensor, self.module.weight.grad)
 
     def has_bias(self) -> bool:
         """Check if module has a bias parameter."""
@@ -106,7 +106,7 @@ class LinearModuleHelper(ModuleHelper):
 
         A shape = (in_features + int(has_bias), in_features + int(has_bias))
         """
-        x = self.module.weight.shape[1] + int(self.has_bias())
+        x = self.module.weight.size(1) + int(self.has_bias())  # type: ignore
         return (x, x)
 
     @property
@@ -115,7 +115,10 @@ class LinearModuleHelper(ModuleHelper):
 
         G shape = (out_features, out_features)
         """
-        return (self.module.weight.shape[0], self.module.weight.shape[0])
+        return (
+            self.module.weight.size(0),  # type: ignore
+            self.module.weight.size(0),  # type: ignore
+        )
 
     def get_a_factor(self, a: torch.Tensor) -> torch.Tensor:
         """Compute A factor with the input from the forward pass.
@@ -123,7 +126,7 @@ class LinearModuleHelper(ModuleHelper):
         Args:
             a (torch.Tensor): tensor with shape batch_size * in_dim.
         """
-        a = a.view(-1, a.shape[-1])
+        a = a.view(-1, a.size(-1))
         if self.has_bias():
             a = append_bias_ones(a)
         return get_cov(a)
@@ -134,7 +137,7 @@ class LinearModuleHelper(ModuleHelper):
         Args:
             g (torch.Tensor): tensor with shape batch_size * out_dim.
         """
-        g = g.reshape(-1, g.shape[-1])
+        g = g.reshape(-1, g.size(-1))
         return get_cov(g)
 
 
@@ -152,15 +155,17 @@ class Conv2dModuleHelper(ModuleHelper):
     @property
     def a_factor_shape(self) -> tuple[int, int]:
         """Get shape of A factor."""
-        x = self.module.in_channels * self.module.kernel_size[
-            0
-        ] * self.module.kernel_size[1] + int(self.has_bias())
+        ksize0: int = self.module.kernel_size[0]  # type: ignore
+        ksize1: int = self.module.kernel_size[1]  # type: ignore
+        in_ch: int = self.module.in_channels  # type: ignore
+        x = in_ch * ksize0 * ksize1 + int(self.has_bias())
         return (x, x)
 
     @property
     def g_factor_shape(self) -> tuple[int, int]:
         """Get shape of G factor."""
-        return (self.module.out_channels, self.module.out_channels)
+        out_ch: int = self.module.out_channels  # type: ignore
+        return (out_ch, out_ch)
 
     def get_a_factor(self, a: torch.Tensor) -> torch.Tensor:
         """Compute A factor with the input from the forward pass."""

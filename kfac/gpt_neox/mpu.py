@@ -8,7 +8,7 @@ import torch.distributed as dist
 def gather_from_model_parallel_region(
     tensor: torch.Tensor,
     dst: int,
-    model_parallel_group: dist.ProcessGroup,
+    model_parallel_group: dist.ProcessGroup | None,
     fp32_allreduce: bool = False,
     dim: int = -1,
 ) -> torch.Tensor | None:
@@ -26,6 +26,7 @@ def gather_from_model_parallel_region(
         tensor (torch.Tensor): tensor parition to gather.
         dst (rank): destination rank to gather full tensor on.
         model_parallel_group (ProcessGroup): model parallel process group.
+            If None, model parallel region will be assumed to have size 1.
         fp32_allreduce (bool): if True and tensor is bf16, the tensor will
             be cast to float before communication. Note: this is to match
             the functionality of megatron's
@@ -34,7 +35,11 @@ def gather_from_model_parallel_region(
     Returns:
         Gathered tensor on rank `dst` else None.
     """
-    world_size = dist.get_world_size(model_parallel_group)
+    world_size = (
+        1
+        if model_parallel_group is None
+        else dist.get_world_size(model_parallel_group)
+    )
     # Bypass the function if we are using only 1 GPU.
     if world_size == 1:
         return tensor
@@ -122,4 +127,4 @@ def split_tensor_along_dim(
     if contiguous_split_chunks:
         return tuple(chunk.contiguous() for chunk in tensor_list)
 
-    return tensor_list
+    return tuple(tensor_list)

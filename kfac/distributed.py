@@ -396,7 +396,7 @@ def get_rank(group: dist.ProcessGroup | None = None) -> int:
         return 0
 
 
-def get_world_size(group: dist.Process | None = None) -> int:
+def get_world_size(group: dist.ProcessGroup | None = None) -> int:
     """Get world size.
 
     Args:
@@ -427,7 +427,10 @@ def get_triu(tensor: torch.Tensor) -> torch.Tensor:
     return tensor[idxs[0], idxs[1]]
 
 
-def fill_triu(shape: torch.Size, triu_tensor: torch.Tensor) -> torch.Tensor:
+def fill_triu(
+    shape: tuple[int, ...],
+    triu_tensor: torch.Tensor,
+) -> torch.Tensor:
     """Reconstruct symmetric 2D tensor from flattened upper triangle.
 
     Usage:

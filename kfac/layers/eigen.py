@@ -211,9 +211,18 @@ class KFACEigenLayer(KFACBaseLayer):
                 dtype=self.inv_dtype,
             )
 
-        self.qa = self.tdc.broadcast(self.qa, src=src, group=group)
+        self.qa = self.tdc.broadcast(  # type: ignore
+            self.qa,
+            src=src,
+            group=group,
+        )
         if not self.prediv_eigenvalues:
-            self.da = self.tdc.broadcast(self.da, src=src, group=group)
+            assert self.da is not None
+            self.da = self.tdc.broadcast(  # type: ignore
+                self.da,
+                src=src,
+                group=group,
+            )
 
     def broadcast_g_inv(
         self,
@@ -262,11 +271,25 @@ class KFACEigenLayer(KFACBaseLayer):
                     dtype=self.inv_dtype,
                 )
 
-        self.qg = self.tdc.broadcast(self.qg, src=src, group=group)
+        self.qg = self.tdc.broadcast(  # type: ignore
+            self.qg,
+            src=src,
+            group=group,
+        )
         if not self.prediv_eigenvalues:
-            self.dg = self.tdc.broadcast(self.dg, src=src, group=group)
+            assert self.dg is not None
+            self.dg = self.tdc.broadcast(  # type: ignore
+                self.dg,
+                src=src,
+                group=group,
+            )
         else:
-            self.dgda = self.tdc.broadcast(self.dgda, src=src, group=group)
+            assert self.dgda is not None
+            self.dgda = self.tdc.broadcast(  # type: ignore
+                self.dgda,
+                src=src,
+                group=group,
+            )
 
     def compute_a_inv(self, damping: float = 0.001) -> None:
         """Compute A inverse on assigned rank.
@@ -287,9 +310,11 @@ class KFACEigenLayer(KFACBaseLayer):
                 self.a_factor.to(torch.float32),
             )
         else:
-            self.da, self.qa = torch.linalg.eig(
+            da, qa = torch.linalg.eig(
                 self.a_factor.to(torch.float32),
             )
+            self.da = da.real
+            self.qa = qa.real
         self.qa = cast(torch.Tensor, self.qa).to(self.inv_dtype)
         self.da = cast(torch.Tensor, self.da).to(self.inv_dtype)
         self.da = torch.clamp(self.da, min=0.0)
@@ -306,9 +331,13 @@ class KFACEigenLayer(KFACBaseLayer):
                 self.g_factor.to(torch.float32),
             )
         else:
-            self.dg, self.qg = torch.linalg.eig(
+            dg, qg = torch.linalg.eig(
                 self.g_factor.to(torch.float32),
             )
+            self.dg = dg.real
+            self.qg = qg.real
+        assert self.dg is not None
+        assert self.da is not None
         self.qg = cast(torch.Tensor, self.qg).to(self.inv_dtype)
         self.dg = self.dg.to(self.inv_dtype)
         self.dg = torch.clamp(self.dg, min=0.0)

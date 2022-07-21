@@ -24,7 +24,7 @@ def train(grad_worker_frac: float) -> None:
         torch.distributed.all_reduce(x)
         torch.distributed.all_reduce(y)
 
-    model = TinyModel()
+    model: torch.nn.Module = TinyModel()
     if torch.distributed.is_initialized():
         model = torch.nn.parallel.DistributedDataParallel(model)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)

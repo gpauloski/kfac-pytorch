@@ -78,6 +78,7 @@ def test_allreduce(
             t_res = comm.allreduce(t, symmetric=symmetric)
             if isinstance(t_res, Future):
                 t_res = t_res.wait()
+            assert isinstance(t_res, torch.Tensor)
             assert torch.sum(t_res).item() == torch.numel(t_res) * world_size
         except Exception as e:
             if expect_raises is not None and not isinstance(e, expect_raises):
@@ -117,6 +118,7 @@ def test_broadcast(
             t_res = comm.broadcast(t, src=0, symmetric=symmetric)
             if isinstance(t_res, Future):
                 t_res = t_res.wait()
+            assert isinstance(t_res, torch.Tensor)
             # Rank 0 will broadcast and it should be all zeros
             assert torch.sum(t_res).item() == 0
         except Exception as e:
@@ -229,6 +231,7 @@ def test_allreduce_bucketed(
             for tensor in tensors:
                 if isinstance(tensor, Future):
                     tensor = tensor.wait()
+                assert isinstance(tensor, torch.Tensor)
                 assert torch.sum(tensor).item() == world_size * torch.numel(
                     tensor,
                 )
@@ -301,6 +304,7 @@ def test_allreduce_bucketed_grouped(
         for tensor in tensors:
             if isinstance(tensor, Future):
                 tensor = tensor.wait()
+            assert isinstance(tensor, torch.Tensor)
             assert torch.sum(tensor).item() == group_size * torch.numel(
                 tensor,
             )

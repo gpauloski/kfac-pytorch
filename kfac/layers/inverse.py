@@ -138,7 +138,7 @@ class KFACInverseLayer(KFACBaseLayer):
                 dtype=self.inv_dtype,
             )
 
-        self.a_inv = self.tdc.broadcast(
+        self.a_inv = self.tdc.broadcast(  # type: ignore
             self.a_inv,
             src=src,
             group=group,
@@ -175,7 +175,7 @@ class KFACInverseLayer(KFACBaseLayer):
                 dtype=self.inv_dtype,
             )
 
-        self.g_inv = self.tdc.broadcast(
+        self.g_inv = self.tdc.broadcast(  # type: ignore
             self.g_inv,
             src=src,
             group=group,
