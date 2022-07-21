@@ -52,16 +52,16 @@ __all__ = [
 def get_model(model: str) -> torch.nn.Module:
     """Get PyTorch model by name."""
     if model.lower() == 'resnet20':
-        model = resnet20()
+        model_ = resnet20()
     elif model.lower() == 'resnet32':
-        model = resnet32()
+        model_ = resnet32()
     elif model.lower() == 'resnet44':
-        model = resnet44()
+        model_ = resnet44()
     elif model.lower() == 'resnet56':
-        model = resnet56()
+        model_ = resnet56()
     elif model.lower() == 'resnet110':
-        model = resnet110()
-    return model
+        model_ = resnet110()
+    return model_
 
 
 def _weights_init(m: torch.nn.Module) -> None:
@@ -116,7 +116,7 @@ class BasicBlock(nn.Module):
         )
         self.bn2 = nn.BatchNorm2d(planes)
 
-        self.shortcut = nn.Sequential()
+        self.shortcut: torch.nn.Module = nn.Sequential()
         if stride != 1 or in_planes != planes:
             if option == 'A':
                 """
@@ -156,7 +156,7 @@ class ResNet(nn.Module):
 
     def __init__(
         self,
-        block: type[torch.nn.Module],
+        block: type[BasicBlock],
         num_blocks: list[int],
         num_classes: int = 10,
     ) -> None:
@@ -182,7 +182,7 @@ class ResNet(nn.Module):
 
     def _make_layer(
         self,
-        block: type[torch.nn.Module],
+        block: type[BasicBlock],
         planes: int,
         num_blocks: int,
         stride: int,

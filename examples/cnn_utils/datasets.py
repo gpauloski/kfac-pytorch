@@ -6,17 +6,22 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
-from torchvision import datasets
-from torchvision import transforms
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
+from torch.utils.data.distributed import DistributedSampler
+from torchvision import datasets  # type: ignore
+from torchvision import transforms  # type: ignore
+
+T = tuple[torch.Tensor, torch.Tensor]
 
 
 def get_cifar(
     args: Any,
 ) -> tuple[
-    torch.utils.data.distributed.DistributedSampler,
-    torch.utils.data.DataLoader,
-    torch.utils.data.distributed.DistributedSampler,
-    torch.utils.data.DataLoader,
+    DistributedSampler[T],
+    DataLoader[T],
+    DistributedSampler[T],
+    DataLoader[T],
 ]:
     """Get cifar dataset."""
     transform_train = transforms.Compose(
@@ -66,10 +71,10 @@ def get_cifar(
 def get_imagenet(
     args: Any,
 ) -> tuple[
-    torch.utils.data.distributed.DistributedSampler,
-    torch.utils.data.DataLoader,
-    torch.utils.data.distributed.DistributedSampler,
-    torch.utils.data.DataLoader,
+    DistributedSampler[T],
+    DataLoader[T],
+    DistributedSampler[T],
+    DataLoader[T],
 ]:
     """Get imagenet dataset."""
     train_dataset = datasets.ImageFolder(
@@ -106,13 +111,13 @@ def get_imagenet(
 
 def make_sampler_and_loader(
     args: Any,
-    train_dataset: torch.utils.data.Dataset,
-    val_dataset: torch.utils.data.Dataset,
+    train_dataset: Dataset[T],
+    val_dataset: Dataset[T],
 ) -> tuple[
-    torch.utils.data.distributed.DistributedSampler,
-    torch.utils.data.DataLoader,
-    torch.utils.data.distributed.DistributedSampler,
-    torch.utils.data.DataLoader,
+    DistributedSampler[T],
+    DataLoader[T],
+    DistributedSampler[T],
+    DataLoader[T],
 ]:
     """Create sampler and dataloader for train and val datasets."""
     torch.set_num_threads(4)
@@ -120,27 +125,27 @@ def make_sampler_and_loader(
     kwargs['prefetch_factor'] = 8
     kwargs['persistent_workers'] = True
 
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
+    train_sampler: DistributedSampler[T] = DistributedSampler(
         train_dataset,
         num_replicas=dist.get_world_size(),
         rank=dist.get_rank(),
     )
-    train_loader = torch.utils.data.DataLoader(
+    train_loader: DataLoader[T] = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         sampler=train_sampler,
-        **kwargs,
+        **kwargs,  # type: ignore
     )
-    val_sampler = torch.utils.data.distributed.DistributedSampler(
+    val_sampler: DistributedSampler[T] = DistributedSampler(
         val_dataset,
         num_replicas=dist.get_world_size(),
         rank=dist.get_rank(),
     )
-    val_loader = torch.utils.data.DataLoader(
+    val_loader: DataLoader[T] = DataLoader(
         val_dataset,
         batch_size=args.val_batch_size,
         sampler=val_sampler,
-        **kwargs,
+        **kwargs,  # type: ignore
     )
 
     return train_sampler, train_loader, val_sampler, val_loader

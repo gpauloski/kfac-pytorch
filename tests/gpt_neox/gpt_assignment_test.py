@@ -4,7 +4,9 @@ from __future__ import annotations
 from unittest import mock
 
 import pytest
-from deepspeed.runtime.pipe.topology import PipeModelDataParallelTopology
+from deepspeed.runtime.pipe.topology import (  # type: ignore
+    PipeModelDataParallelTopology,  # type: ignore
+)
 
 from kfac.gpt_neox.assignment import GPTNeoXAssignment
 from kfac.gpt_neox.mpu import get_group_with_rank
@@ -171,8 +173,8 @@ def test_reuse_comm_groups() -> None:
             {},
             local_rank=0,
             topology=topology,
-            data_parallel_group=-2,
-            model_parallel_group=-3,
+            data_parallel_group=-2,  # type: ignore
+            model_parallel_group=-3,  # type: ignore
         )
         assert (
             assignment.pipe_parallel_peer_group
@@ -184,8 +186,8 @@ def test_reuse_comm_groups() -> None:
             {},
             local_rank=0,
             topology=topology,
-            data_parallel_group=-2,
-            model_parallel_group=-3,
+            data_parallel_group=-2,  # type: ignore
+            model_parallel_group=-3,  # type: ignore
         )
         assert (
             assignment.pipe_parallel_peer_group

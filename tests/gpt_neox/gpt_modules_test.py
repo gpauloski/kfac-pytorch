@@ -20,9 +20,9 @@ def test_linear_module(world_size: int, bias: bool) -> None:
         in_shape = 10
         out_shape = 5
 
-        linear = RowParallelLinear(in_shape, out_shape, bias=bias)
+        row_linear = RowParallelLinear(in_shape, out_shape, bias=bias)
         helper = GPTNeoXLinearModuleHelper(
-            linear,
+            row_linear,
             dist.new_group(),
             parallelism='input',
         )
@@ -31,9 +31,9 @@ def test_linear_module(world_size: int, bias: bool) -> None:
         assert helper.a_factor_shape == (a_dim_size, a_dim_size)
         assert helper.g_factor_shape == (out_shape, out_shape)
 
-        linear = ColumnParallelLinear(in_shape, out_shape, bias=bias)
+        col_linear = ColumnParallelLinear(in_shape, out_shape, bias=bias)
         helper = GPTNeoXLinearModuleHelper(
-            linear,
+            col_linear,
             dist.new_group(),
             parallelism='output',
         )

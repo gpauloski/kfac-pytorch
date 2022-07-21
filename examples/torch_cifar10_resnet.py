@@ -6,16 +6,17 @@ import datetime
 import os
 import time
 
-import cnn_utils.cifar_resnet as models
-import cnn_utils.datasets as datasets
-import cnn_utils.engine as engine
-import cnn_utils.optimizers as optimizers
 import torch
 import torch.distributed as dist
 from torch.utils import collect_env
 from torch.utils.tensorboard import SummaryWriter
-from torchinfo import summary
-from utils import save_checkpoint
+from torchinfo import summary  # type: ignore
+
+import examples.cnn_utils.cifar_resnet as models
+import examples.cnn_utils.datasets as datasets
+import examples.cnn_utils.engine as engine
+import examples.cnn_utils.optimizers as optimizers
+from examples.utils import save_checkpoint
 
 try:
     from torch.cuda.amp import GradScaler

@@ -6,7 +6,7 @@ https://pytorch.org/tutorials/beginner/introyt/modelsyt_tutorial.html
 from __future__ import annotations
 
 import torch
-from torch import functional
+from torch.nn import functional
 
 
 class TinyModel(torch.nn.Module):

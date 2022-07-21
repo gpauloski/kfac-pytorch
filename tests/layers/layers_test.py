@@ -307,6 +307,8 @@ def test_kfac_layers(layer_type: type[KFACBaseLayer]) -> None:
     assert isinstance(state_dict['A'], torch.Tensor)
     assert isinstance(state_dict['G'], torch.Tensor)
     layer.load_state_dict(state_dict)
+    assert layer.a_factor is not None
+    assert layer.g_factor is not None
     assert torch.equal(layer.a_factor, state_dict['A'])
     assert torch.equal(layer.g_factor, state_dict['G'])
 

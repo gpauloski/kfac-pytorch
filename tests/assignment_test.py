@@ -533,7 +533,7 @@ def test_kaisa_factor_allreduce_groups() -> None:
             local_rank=rank,
             world_size=4,
             grad_worker_fraction=0.5,
-            group_func=lambda ranks: ranks,
+            group_func=lambda ranks: ranks,  # type: ignore
         )
         for layer in TEST_WORK:
             assert assignment.factor_group(layer, 'A') is None

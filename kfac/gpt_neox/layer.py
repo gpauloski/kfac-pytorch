@@ -262,6 +262,7 @@ class GPTNeoXKFACEigenLayer(KFACEigenLayer):
                 ),
             )
             if self.module.has_bias() and self.parallelism == 'output':
+                assert bias_grad is not None
                 bias_grads = list(
                     split_tensor_along_dim(
                         bias_grad,

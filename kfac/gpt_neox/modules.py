@@ -20,7 +20,7 @@ class GPTNeoXLinearModuleHelper(LinearModuleHelper):
     def __init__(
         self,
         module: torch.nn.Module,
-        model_parallel_group: dist.ProcessGroup,
+        model_parallel_group: dist.ProcessGroup | None,
         parallelism: Literal['input', 'output'],
     ):
         """Init ModuleHelper.
@@ -28,33 +28,39 @@ class GPTNeoXLinearModuleHelper(LinearModuleHelper):
         Args:
             module (torch.nn.Module): module in model to wrap.
             model_parallel_group (ProcessGroup): model parallel distributed
-                process group this rank belongs to.
+                process group this rank belongs to. If None, it is assumed
+                model parallelism size is 1 (i.e., there is no model
+                parallelism).
             parallelism (str): "input" if the layer is split on the input or
                 "output" if split on the output.
         """
         self.module = module
         self.model_parallel_group = model_parallel_group
-        self.model_parallel_world_size = dist.get_world_size(
-            self.model_parallel_group,
+        self.model_parallel_world_size = (
+            1
+            if self.model_parallel_group is None
+            else dist.get_world_size(self.model_parallel_group)
         )
         self.parallelism = parallelism
 
     @property
     def a_factor_shape(self) -> tuple[int, int]:
         """Get shape of A factor."""
+        dim1_size = self.module.weight.size(1)  # type: ignore
         if self.parallelism == 'input':
-            x = (
-                self.module.weight.shape[1] * self.model_parallel_world_size
-            ) + int(self.has_bias())
+            x = (dim1_size * self.model_parallel_world_size) + int(
+                self.has_bias(),
+            )
         else:
-            x = self.module.weight.shape[1] + int(self.has_bias())
+            x = dim1_size + int(self.has_bias())
         return (x, x)
 
     @property
     def g_factor_shape(self) -> tuple[int, int]:
         """Get shape of G factor."""
+        dim0_size = self.module.weight.size(0)  # type: ignore
         if self.parallelism == 'output':
-            x = self.module.weight.shape[0] * self.model_parallel_world_size
+            x = dim0_size * self.model_parallel_world_size
         else:
-            x = self.module.weight.shape[0]
+            x = dim0_size
         return (x, x)

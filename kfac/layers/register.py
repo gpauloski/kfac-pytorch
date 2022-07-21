@@ -37,7 +37,7 @@ def get_module_helper(module: torch.nn.Module) -> ModuleHelper | None:
     if isinstance(module, LINEAR_TYPES):
         return LinearModuleHelper(module)
     elif isinstance(module, CONV2D_TYPES):
-        return Conv2dModuleHelper(module)
+        return Conv2dModuleHelper(module)  # type: ignore
     else:
         return None
 

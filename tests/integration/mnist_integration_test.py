@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST  # type: ignore
 
 from kfac.preconditioner import KFACPreconditioner
 
@@ -67,7 +67,7 @@ class Net(nn.Module):
 
 def train(
     model: torch.nn.Module,
-    train_loader: DataLoader,
+    train_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
     optimizer: optim.Optimizer,
     preconditioner: KFACPreconditioner | None,
 ) -> None:
@@ -84,7 +84,10 @@ def train(
         optimizer.step()
 
 
-def eval(model: torch.nn.Module, test_loader: DataLoader) -> float:
+def eval(
+    model: torch.nn.Module,
+    test_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
+) -> float:
     """Measure accuracy on test dataset."""
     model.eval()
     correct = 0
@@ -93,7 +96,8 @@ def eval(model: torch.nn.Module, test_loader: DataLoader) -> float:
             output = model(data)
             pred = output.argmax(dim=1, keepdim=True)
             correct += pred.eq(target.view_as(pred)).sum().item()
-    return 100 * (correct / len(test_loader.dataset))
+    total_samples = len(test_loader.dataset)  # type: ignore
+    return 100 * (correct / total_samples)
 
 
 def train_and_eval(precondition: bool, epochs: int) -> float:
@@ -103,13 +107,13 @@ def train_and_eval(precondition: bool, epochs: int) -> float:
     train_dataset = FastMNIST('/tmp/MNIST-data', train=True, download=True)
     test_dataset = FastMNIST('/tmp/MNIST-data', train=False, download=True)
 
-    train_loader = DataLoader(
+    train_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]] = DataLoader(
         train_dataset,
         batch_size=64,
         shuffle=True,
         num_workers=0,
     )
-    test_loader = DataLoader(
+    test_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]] = DataLoader(
         test_dataset,
         batch_size=1000,
         shuffle=False,

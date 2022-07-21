@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 import warnings
 from typing import Callable
+from typing import cast
+from typing import List
 
 import torch
 import torch.distributed as dist
@@ -277,14 +279,18 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             }
             for name, kfac_layer in kfac_layers.values()
         }
+
+        new_group = cast(
+            Callable[[List[int]], dist.ProcessGroup],
+            dist.new_group,
+        )
+        mock_new_group: Callable[[list[int]], None] = lambda x: None
         assignment = KAISAAssignment(
             work,
             local_rank=get_rank(),
             world_size=get_world_size(),
             grad_worker_fraction=self.grad_worker_fraction,
-            group_func=dist.new_group
-            if dist.is_initialized()
-            else lambda x: None,
+            group_func=new_group if dist.is_initialized() else mock_new_group,
             colocate_factors=self.colocate_factors,
         )
         logger.log(loglevel, f'KFAC layer assignments: {assignment}')

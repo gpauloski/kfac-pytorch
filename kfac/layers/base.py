@@ -244,7 +244,11 @@ class KFACBaseLayer:
                 )
             self.grad = torch.empty_like(self.module.get_grad())
 
-        self.grad = self.tdc.broadcast(self.grad, src=src, group=group)
+        self.grad = self.tdc.broadcast(  # type: ignore
+            self.grad,
+            src=src,
+            group=group,
+        )
 
     def compute_a_inv(self, damping: float = 0.001) -> None:
         """Compute A inverse on assigned rank.
@@ -295,7 +299,7 @@ class KFACBaseLayer:
             raise AssertionError(
                 f'Unknown allreduce_method={self.allreduce_method}',
             )
-        self.a_factor = allreduce(
+        self.a_factor = allreduce(  # type: ignore
             self.a_factor,
             average=True,
             symmetric=self.symmetric_factors and self.symmetry_aware,
@@ -323,7 +327,7 @@ class KFACBaseLayer:
             raise AssertionError(
                 f'Unknown allreduce_method={self.allreduce_method}',
             )
-        self.g_factor = allreduce(
+        self.g_factor = allreduce(  # type: ignore
             self.g_factor,
             average=True,
             symmetric=self.symmetric_factors and self.symmetry_aware,
