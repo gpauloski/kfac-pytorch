@@ -20,12 +20,11 @@ jobs:
         with:
           python-version: 3.9
 
-      - name: Install Dependencies
-        # TODO: this installs more than we actually need currently
-        run: python -mpip install --upgrade -r requirements-dev.txt
-
       - name: Install KFAC
         run: python -mpip install .
+
+      - name: Install Dependencies
+        run: python -mpip install --upgrade torchvision
 
       - name: Run MNIST Integration Test
         run: python tests/integration/mnist_integration_test.py
