@@ -167,7 +167,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.95)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        factor=0.1,
+        patience=2,
+        min_lr=1e-4,
+    )
 
     for epoch in range(args.epochs):
         datasets.train.sampler.set_epoch(epoch)
@@ -179,13 +184,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             epoch=epoch,
             epochs=args.epochs,
         )
-        evaluate(
+        eval_loss = evaluate(
             model,
             criterion=criterion,
             dataloader=datasets.val.loader,
             prefix='Validation',
         )
-        scheduler.step()
+        scheduler.step(eval_loss)
 
     evaluate(
         model,

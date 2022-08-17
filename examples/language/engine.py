@@ -16,7 +16,7 @@ def train(
     dataloader: torch.utils.data.DataLoader,
     epoch: int,
     epochs: int,
-) -> None:
+) -> float:
     """Perform one training epoch."""
     model.train()
     train_loss = Metric('train_loss')
@@ -51,13 +51,15 @@ def train(
             train_loss.update(loss)
 
             t.set_postfix_str(
-                'loss: {:.2f}, ppl: {:.2f}, lr: {:4f}'.format(
+                'loss: {:.2f}, ppl: {:.2f}, lr: {:.1E}'.format(
                     train_loss.avg,
                     torch.exp(train_loss.avg),
                     optimizer.param_groups[0]['lr'],
                 ),
             )
             t.update(1)
+
+    return train_loss.avg.item()
 
 
 def evaluate(
@@ -66,7 +68,7 @@ def evaluate(
     criterion: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
     prefix: str,
-) -> None:
+) -> float:
     """Evaluate model."""
     model.eval()
     eval_loss = Metric('eval_loss')
@@ -102,3 +104,5 @@ def evaluate(
                 ),
                 refresh=False,
             )
+
+    return eval_loss.avg.item()
