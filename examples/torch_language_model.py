@@ -6,17 +6,22 @@ https://pytorch.org/tutorials/beginner/transformer_tutorial.html
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
+import time
 from typing import Sequence
 
 import torch
 from torch.utils import collect_env
 
+import kfac
 from examples.language.dataset import get_dataset
 from examples.language.engine import evaluate
 from examples.language.engine import train
 from examples.language.transformer import TransformerModel
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -115,6 +120,57 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help='training seed',
     )
 
+    kfac_group = parser.add_argument_group('KFAC Parameters')
+    kfac_group.add_argument(
+        '--kfac',
+        action='store_true',
+        default=False,
+        help='enable KFAC preconditioning',
+    )
+    kfac_group.add_argument(
+        '--inv-update-steps',
+        type=int,
+        default=10,
+        help='iters between updating second-order information',
+    )
+    kfac_group.add_argument(
+        '--factor-update-steps',
+        type=int,
+        default=1,
+        help='iters between update kronecker factors',
+    )
+    kfac_group.add_argument(
+        '--factor-decay',
+        type=float,
+        default=0.95,
+        help='alpha value for factor accumulation',
+    )
+    kfac_group.add_argument(
+        '--damping',
+        type=float,
+        default=0.003,
+        help='damping factor',
+    )
+    kfac_group.add_argument(
+        '--kl-clip',
+        type=float,
+        default=0.001,
+        help='KL clip',
+    )
+    kfac_group.add_argument(
+        '--skip-layers',
+        nargs='+',
+        type=str,
+        default=['embedding', 'decoder', 'self_attn'],
+        help='layers to skip KFAC registration for',
+    )
+    kfac_group.add_argument(
+        '--strategy',
+        choices=['MEM_OPT', 'HYBRID_OPT', 'COMM_OPT'],
+        default='COMM_OPT',
+        help='distribution strategy for KFAC computations',
+    )
+
     args = parser.parse_args(argv)
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -133,13 +189,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         init_method='env://',
     )
 
+    logging.basicConfig(
+        format='[%(asctime)s] %(levelname)-5s (%(name)s): %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        level=logging.INFO
+        if torch.distributed.get_rank() == 0
+        else logging.ERROR,
+        stream=sys.stdout,
+    )
+
     if args.cuda:
         torch.cuda.set_device(args.local_rank)
         torch.cuda.manual_seed(args.seed)
 
     if torch.distributed.get_rank() == 0:
-        print('Collecting env info...')
-        print(collect_env.get_pretty_env_info())
+        logger.info('Collecting env info...')
+        logger.info(collect_env.get_pretty_env_info())
 
     datasets, vocab = get_dataset(
         args.dataset,
@@ -174,14 +239,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_lr=1e-4,
     )
 
+    logger.info(f'TRANSFORMER MODEL:\n{model}')
+    preconditioner: kfac.preconditioner.KFACPreconditioner | None = None
+    if args.kfac:
+        strategy = kfac.enums.DistributedStrategy[args.strategy.upper()]
+        preconditioner = kfac.preconditioner.KFACPreconditioner(
+            model,
+            factor_update_steps=args.factor_update_steps,
+            inv_update_steps=args.inv_update_steps,
+            damping=args.damping,
+            factor_decay=args.factor_decay,
+            kl_clip=args.kl_clip,
+            lr=lambda x: optimizer.param_groups[0]['lr'],
+            grad_worker_fraction=strategy,
+            skip_layers=args.skip_layers,
+            loglevel=logging.INFO,
+        )
+        if torch.distributed.get_rank() == 0:
+            logger.info(f'PRECONDITIONER CONFIG:\n{preconditioner}')
+
+    start = time.perf_counter()
     for epoch in range(args.epochs):
         datasets.train.sampler.set_epoch(epoch)
         train(
             model,
             criterion=criterion,
             optimizer=optimizer,
+            preconditioner=preconditioner,
             dataloader=datasets.train.loader,
-            epoch=epoch,
+            epoch=epoch + 1,
             epochs=args.epochs,
         )
         eval_loss = evaluate(
@@ -191,6 +277,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             prefix='Validation',
         )
         scheduler.step(eval_loss)
+    end = time.perf_counter()
+    logger.info(f'Training completed in {end-start:.2f} seconds.')
 
     evaluate(
         model,

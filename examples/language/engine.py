@@ -4,6 +4,7 @@ from __future__ import annotations
 import torch
 from tqdm import tqdm
 
+import kfac
 from examples.language.transformer import gen_square_subsequent_mask
 from examples.utils import Metric
 
@@ -13,6 +14,7 @@ def train(
     *,
     criterion: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    preconditioner: kfac.base_preconditioner.BaseKFACPreconditioner | None,
     dataloader: torch.utils.data.DataLoader,
     epoch: int,
     epochs: int,
@@ -45,6 +47,9 @@ def train(
             loss = criterion(output_flat, target)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+
+            if preconditioner is not None:
+                preconditioner.step()
             optimizer.step()
 
             loss = loss.detach()
