@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Callable
 from typing import Literal
 from typing import NamedTuple
+from typing import Union
 
 import torch
 from torch.utils.data import DataLoader
@@ -17,12 +18,15 @@ from torchtext.datasets import WikiText2
 from torchtext.vocab import build_vocab_from_iterator
 from torchtext.vocab import Vocab
 
+DType = tuple[torch.Tensor, torch.Tensor]
+IndicesType = Union[list[int], torch.Tensor]
+
 
 class LoaderSampler(NamedTuple):
     """Tuple of a dataloader and the corresponding datasampler."""
 
-    loader: DataLoader
-    sampler: DistributedSampler
+    loader: DataLoader[DType]
+    sampler: DistributedSampler[IndicesType]
 
 
 class Datasets(NamedTuple):
@@ -33,7 +37,7 @@ class Datasets(NamedTuple):
     test: LoaderSampler
 
 
-class _Dataset(Dataset):
+class _Dataset(Dataset[DType]):
     def __init__(self, data: torch.Tensor, seq_len: int) -> None:
         self._data = data
         self._seq_len = seq_len
@@ -41,7 +45,7 @@ class _Dataset(Dataset):
     def __len__(self) -> int:
         return len(self._data) // self._seq_len
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> DType:
         start = self._seq_len * idx
         end = self._seq_len * (idx + 1)
         data = self._data[start:end]
@@ -52,7 +56,7 @@ class _Dataset(Dataset):
 def download_dataset(
     dataset: Literal['penntreebank', 'wikitext2', 'wikitext103'],
     data_dir: str,
-) -> tuple[IterableDataset, IterableDataset, IterableDataset]:
+) -> tuple[IterableDataset[str], IterableDataset[str], IterableDataset[str]]:
     """Get a torchtext language modeling dataset.
 
     Args:
@@ -78,7 +82,7 @@ def download_dataset(
 
 
 def encode_and_flatten(
-    raw_text_iter: IterableDataset,
+    raw_text_iter: IterableDataset[str],
     tokenizer: Callable[[str], list[str]],
     vocab: Vocab,
 ) -> torch.Tensor:
@@ -131,9 +135,10 @@ def get_dataset(
     val_data = encode_and_flatten(val_iter, tokenizer, vocab)
     test_data = encode_and_flatten(test_iter, tokenizer, vocab)
 
-    train_dataset = _Dataset(train_data, seq_len=seq_len)
-    val_dataset = _Dataset(val_data, seq_len=seq_len)
-    test_dataset = _Dataset(test_data, seq_len=seq_len)
+    datasets = [
+        _Dataset(data, seq_len=seq_len)
+        for data in (train_data, val_data, test_data)
+    ]
 
     num_replicas = (
         torch.distributed.get_world_size()
@@ -142,12 +147,12 @@ def get_dataset(
     )
     rank = torch.distributed.get_rank() if rank is None else rank
 
-    train_sampler, val_sampler, test_sampler = (
+    samplers: list[DistributedSampler[IndicesType]] = [
         DistributedSampler(dataset, num_replicas=num_replicas, rank=rank)
-        for dataset in (train_dataset, val_dataset, test_dataset)
-    )
+        for dataset in datasets
+    ]
 
-    train_loader, val_loader, test_loader = (
+    loaders: list[DataLoader[DType]] = [
         DataLoader(
             dataset,
             batch_size=batch_size,
@@ -156,17 +161,14 @@ def get_dataset(
             num_workers=4 if cuda else 0,
             pin_memory=cuda,
         )
-        for dataset, sampler in zip(
-            (train_dataset, val_dataset, test_dataset),
-            (train_sampler, val_sampler, test_sampler),
-        )
-    )
+        for dataset, sampler in zip(datasets, samplers)
+    ]
 
     return (
         Datasets(
-            train=LoaderSampler(train_loader, train_sampler),
-            val=LoaderSampler(val_loader, val_sampler),
-            test=LoaderSampler(test_loader, test_sampler),
+            train=LoaderSampler(loaders[0], samplers[0]),
+            val=LoaderSampler(loaders[1], samplers[1]),
+            test=LoaderSampler(loaders[2], samplers[2]),
         ),
         vocab,
     )

@@ -121,7 +121,7 @@ class PositionalEncoding(nn.Module):
                 about the relative or absolute position of the tokens in the
                 sequence.
         """
-        x = x + self.pe[: x.size(0)]
+        x = x + self.pe[: x.size(0)]  # type: ignore
         return self.dropout(x)
 
 

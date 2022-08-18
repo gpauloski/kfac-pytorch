@@ -13,5 +13,6 @@ pytest
 pytest-cov
 torchvision
 tox
+types-tqdm
 typing_extensions; python_version < "3.8"
 virtualenv

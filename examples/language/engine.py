@@ -8,6 +8,8 @@ import kfac
 from examples.language.transformer import gen_square_subsequent_mask
 from examples.utils import Metric
 
+DType = tuple[torch.Tensor, torch.Tensor]
+
 
 def train(
     model: torch.nn.Module,
@@ -15,7 +17,7 @@ def train(
     criterion: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     preconditioner: kfac.base_preconditioner.BaseKFACPreconditioner | None,
-    dataloader: torch.utils.data.DataLoader,
+    dataloader: torch.utils.data.DataLoader[DType],
     epoch: int,
     epochs: int,
 ) -> float:
@@ -33,7 +35,8 @@ def train(
         for data, target in dataloader:
             if src_mask is None:
                 seq_len = data.size(0)
-                src_mask = gen_square_subsequent_mask(seq_len).to(model.device)
+                device = next(model.parameters()).device
+                src_mask = gen_square_subsequent_mask(seq_len).to(device)
 
             optimizer.zero_grad()
 
@@ -71,7 +74,7 @@ def evaluate(
     model: torch.nn.Module,
     *,
     criterion: torch.nn.Module,
-    dataloader: torch.utils.data.DataLoader,
+    dataloader: torch.utils.data.DataLoader[DType],
     prefix: str,
 ) -> float:
     """Evaluate model."""
@@ -88,7 +91,8 @@ def evaluate(
         for data, target in dataloader:
             if src_mask is None:
                 seq_len = data.size(0)
-                src_mask = gen_square_subsequent_mask(seq_len).to(model.device)
+                device = next(model.parameters()).device
+                src_mask = gen_square_subsequent_mask(seq_len).to(device)
 
             data = data.to(model.device)
             target = target.to(model.device).reshape(-1)

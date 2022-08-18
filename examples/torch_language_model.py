@@ -216,7 +216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         world_size=torch.distributed.get_world_size(),
     )
 
-    model = TransformerModel(
+    model: torch.nn.Module = TransformerModel(
         ntoken=len(vocab),
         d_model=args.embedding_dim,
         nhead=args.attention_heads,
