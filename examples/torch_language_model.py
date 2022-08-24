@@ -35,19 +35,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     model_group = parser.add_argument_group('Model Parameters')
     model_group.add_argument(
         '--embedding-dim',
-        default=200,
+        default=256,
         type=int,
         help='embedding dimension size',
     )
     model_group.add_argument(
         '--hidden-dim',
-        default=200,
+        default=256,
         type=int,
         help='hidden dimension size',
     )
     model_group.add_argument(
         '--attention-heads',
-        default=2,
+        default=4,
         type=int,
         help='number of attention heads',
     )
@@ -67,6 +67,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     data_group = parser.add_argument_group('Data Parameters')
     data_group.add_argument(
         '--dataset',
+        default='penntreebank',
         choices=['penntreebank', 'wikitext2', 'wikitext103'],
         help='dataset to train language model on',
     )
@@ -77,7 +78,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     data_group.add_argument(
         '--seq-len',
-        default=35,
+        default=64,
         type=int,
         help='number of tokens in each training sample',
     )
@@ -91,13 +92,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     training_group = parser.add_argument_group('Training Parameters')
     training_group.add_argument(
         '--epochs',
-        default=3,
+        default=20,
         type=int,
         help='training epochs',
     )
     training_group.add_argument(
         '--lr',
-        default=5.0,
+        default=1.0,
         type=float,
         help='initial learning rate',
     )
@@ -205,6 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if torch.distributed.get_rank() == 0:
         logger.info('Collecting env info...')
         logger.info(collect_env.get_pretty_env_info())
+        logger.info(f'Training arguments:\n{args}')
 
     datasets, vocab = get_dataset(
         args.dataset,
@@ -239,7 +241,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_lr=1e-4,
     )
 
-    logger.info(f'TRANSFORMER MODEL:\n{model}')
+    logger.info(f'Transformer model:\n{model}')
     preconditioner: kfac.preconditioner.KFACPreconditioner | None = None
     if args.kfac:
         strategy = kfac.enums.DistributedStrategy[args.strategy.upper()]
@@ -256,7 +258,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             loglevel=logging.INFO,
         )
         if torch.distributed.get_rank() == 0:
-            logger.info(f'PRECONDITIONER CONFIG:\n{preconditioner}')
+            logger.info(f'Preconditioner config:\n{preconditioner}')
 
     start = time.perf_counter()
     for epoch in range(args.epochs):
