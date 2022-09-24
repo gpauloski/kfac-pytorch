@@ -1,4 +1,6 @@
 tensorboard
+torchdata
 torchinfo==1.5.2
+torchtext
 torchvision
 tqdm

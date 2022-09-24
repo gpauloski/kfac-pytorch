@@ -13,9 +13,9 @@ import torchvision.models as models  # type: ignore
 from torch.utils import collect_env
 from torch.utils.tensorboard import SummaryWriter
 
-import examples.cnn_utils.datasets as datasets
-import examples.cnn_utils.engine as engine
-import examples.cnn_utils.optimizers as optimizers
+import examples.vision.datasets as datasets
+import examples.vision.engine as engine
+import examples.vision.optimizers as optimizers
 from examples.utils import LabelSmoothLoss
 from examples.utils import save_checkpoint
 

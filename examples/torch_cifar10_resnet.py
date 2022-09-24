@@ -12,10 +12,10 @@ from torch.utils import collect_env
 from torch.utils.tensorboard import SummaryWriter
 from torchinfo import summary  # type: ignore
 
-import examples.cnn_utils.cifar_resnet as models
-import examples.cnn_utils.datasets as datasets
-import examples.cnn_utils.engine as engine
-import examples.cnn_utils.optimizers as optimizers
+import examples.vision.cifar_resnet as models
+import examples.vision.datasets as datasets
+import examples.vision.engine as engine
+import examples.vision.optimizers as optimizers
 from examples.utils import save_checkpoint
 
 try:
