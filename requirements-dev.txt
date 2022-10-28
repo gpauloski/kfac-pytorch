@@ -11,7 +11,7 @@ pre-commit
 protobuf==3.20.2
 pytest
 pytest-cov
-torchvision
+torchvision>=0.9.0; python_version < "3.11"
 tox
 types-tqdm
 typing_extensions; python_version < "3.8"
