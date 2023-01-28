@@ -7,7 +7,7 @@
 
 K-FAC, Kronecker-factored Approximate Curvature, is a second-order optimization method based on an efficient approximation of the Fisher information matrix (see the [original paper](https://arxiv.org/abs/1503.05671)).
 This repository provides a PyTorch implementation of K-FAC as a preconditioner to standard PyTorch optimizers with support for single-device or distributed training.
-The distributed strategy is implemented using KAISA, a **K-FAC**-enabled, **A**daptable, **I**mproved, and **S**c**A**lable second-order optimizer framework, where the placement of the second-order computations and gradient preconditioning is controlled by the *gradient worker fraction* parameter (see the [paper](https://arxiv.org/abs/2107.01739) for more details).
+The distributed strategy is implemented using KAISA, a K-FAC-enabled, Adaptable, Improved, and Scalable second-order optimizer framework, where the placement of the second-order computations and gradient preconditioning is controlled by the *gradient worker fraction* parameter (see the [paper](https://arxiv.org/abs/2107.01739) for more details).
 KAISA has been shown to reduce time-to-convergence in [PyTorch distributed training](https://pytorch.org/tutorials/intermediate/ddp_tutorial.html) applications such as ResNet-50, Mask R-CNN, and BERT.
 
 ## Publications
@@ -41,7 +41,7 @@ $ pip install .  # Use -e to install in development mode
 
 ## Usage
 
-K-FAC requires minimial code to incorporate with existing training scripts.
+K-FAC requires minimal code to incorporate with existing training scripts.
 See the [K-FAC docstring](kfac/preconditioner.py) for a detailed list of K-FAC parameters.
 
 ```Python
@@ -77,9 +77,9 @@ Example scripts for training ResNet models on Cifar10 and ImageNet-1k are provid
 [tox](https://tox.wiki/en/latest/index.html) and [pre-commit](https://pre-commit.com) are used for development.
 Pre-commit enforces the code formatting, linting, and type-checking in this repository.
 
-To get started with local development:
+To get started with local development (note: Python 3.11 is supported but some testing dependencies are not available):
 ```
-$ tox --devenv venv
+$ tox --devenv venv -e py310
 $ . venv/bin/activate
 $ pre-commit install
 ```

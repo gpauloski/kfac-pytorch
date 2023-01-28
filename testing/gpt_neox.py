@@ -1,4 +1,4 @@
-"""Testing utilties for GPT NeoX code."""
+"""Testing utilities for GPT NeoX code."""
 from __future__ import annotations
 
 from typing import Any

@@ -10,7 +10,7 @@ class LazyAssignment(WorkAssignment):
     """Lazy assignment where every worker is an inverse worker.
 
     Used in unit tests force a KFACPreconditioner to execute all options
-    in the distibuted control flow.
+    in the distributed control flow.
     """
 
     def __init__(self, rank: int = 0, broadcast: bool = False) -> None:

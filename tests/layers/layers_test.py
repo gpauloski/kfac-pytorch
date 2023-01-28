@@ -206,6 +206,11 @@ def test_preconditioning_step(
         # Stage 7: update gradient
         layer.update_grad()
 
+        assert weight_grad is not None
+        assert module.weight.grad is not None
+        assert bias_grad is not None
+        assert module.bias.grad is not None
+
         # Make sure gradient changed due to preconditioning
         assert not torch.equal(weight_grad, module.weight.grad)
         assert not torch.equal(bias_grad, module.bias.grad)

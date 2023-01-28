@@ -1,7 +1,7 @@
 """Unit Tests for testing/distributed.py.
 
-Taken from: https://github.com/EleutherAI/DeeperSpeed/blob/eb7f5cff36678625d23db8a8fe78b4a93e5d2c75/tests/unit/test_dist.py  # noqa
-"""
+Taken from: https://github.com/EleutherAI/DeeperSpeed/blob/eb7f5cff36678625d23db8a8fe78b4a93e5d2c75/tests/unit/test_dist.py
+"""  # noqa: E501
 from __future__ import annotations
 
 import pytest

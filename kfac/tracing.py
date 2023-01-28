@@ -87,7 +87,7 @@ def trace(
         """Decorator for function execution time tracing."""
 
         def func_timer(*args: list[Any], **kwargs: dict[str, Any]) -> Any:
-            """Time and executre function."""
+            """Time and execute function."""
             if sync:
                 torch.distributed.barrier()
             t = time.time()

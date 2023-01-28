@@ -318,6 +318,12 @@ def test_base_preconditioner_e2e(
                 grad_weight_linear2 = model.linear2.weight.grad
                 grad_bias_linear2 = model.linear2.bias.grad
                 preconditioner.step()
+
+                assert grad_weight_linear2 is not None
+                assert model.linear2.weight.grad is not None
+                assert grad_bias_linear2 is not None
+                assert model.linear2.bias.grad is not None
+
                 # Verify gradient was preconditioned
                 assert not torch.equal(
                     grad_weight_linear2,

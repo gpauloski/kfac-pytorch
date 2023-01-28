@@ -47,15 +47,15 @@ class LabelSmoothLoss(torch.nn.Module):
 
     def forward(
         self,
-        input: torch.Tensor,
+        input_: torch.Tensor,
         target: torch.Tensor,
     ) -> torch.Tensor:
         """Forward pass."""
-        log_prob = log_softmax(input, dim=-1)
+        log_prob = log_softmax(input_, dim=-1)
         weight = (
-            input.new_ones(input.size())
+            input_.new_ones(input_.size())
             * self.smoothing
-            / (input.size(-1) - 1.0)
+            / (input_.size(-1) - 1.0)
         )
         weight.scatter_(-1, target.unsqueeze(-1), (1.0 - self.smoothing))
         loss = (-weight * log_prob).sum(dim=-1).mean()

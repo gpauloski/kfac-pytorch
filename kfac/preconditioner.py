@@ -27,6 +27,10 @@ from kfac.layers.register import register_modules
 logger = logging.getLogger(__name__)
 
 
+def _mock_new_group(x: list[int]) -> None:
+    return None
+
+
 class KFACPreconditioner(BaseKFACPreconditioner):
     """KFAC Distributed Gradient Preconditioner.
 
@@ -111,7 +115,7 @@ class KFACPreconditioner(BaseKFACPreconditioner):
                 `AssignmentStrategy` for more details
                 (default: AssignmentStrategy.COMPUTE).
             colocate_factors (bool): assign both factors for a single layer to
-                the same worker. Reccomended when num_layers < world_size
+                the same worker. Recommended when num_layers < world_size
                 (default: True).
             compute_method (ComputeMethod, str): See `ComputeMethod` for more
                 details (default: ComputeMethod.EIGEN).
@@ -143,7 +147,7 @@ class KFACPreconditioner(BaseKFACPreconditioner):
                 the layer to not be registered. The patterns will be applied
                 against the layer's name and class name.
             update_factors_in_hook (bool): If True, running average of factors
-                is updated in the module hook and the async commmunication is
+                is updated in the module hook and the async communication is
                 started. Otherwise, this will be performed at the start of
                 step() (default: True).
             loglevel (int): logging level (default: logging.DEBUG).
@@ -284,13 +288,13 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             Callable[[List[int]], dist.ProcessGroup],
             dist.new_group,
         )
-        mock_new_group: Callable[[list[int]], None] = lambda x: None
+
         assignment = KAISAAssignment(
             work,
             local_rank=get_rank(),
             world_size=get_world_size(),
             grad_worker_fraction=self.grad_worker_fraction,
-            group_func=new_group if dist.is_initialized() else mock_new_group,
+            group_func=new_group if dist.is_initialized() else _mock_new_group,
             colocate_factors=self.colocate_factors,
         )
         logger.log(loglevel, f'KFAC layer assignments: {assignment}')

@@ -4,9 +4,7 @@ from __future__ import annotations
 from unittest import mock
 
 import pytest
-from deepspeed.runtime.pipe.topology import (  # type: ignore
-    PipeModelDataParallelTopology,  # type: ignore
-)
+from deepspeed.runtime.pipe.topology import PipeModelDataParallelTopology
 
 from kfac.gpt_neox.assignment import GPTNeoXAssignment
 from kfac.gpt_neox.mpu import get_group_with_rank
@@ -166,7 +164,7 @@ def test_gpt_neox_assignment_load_balancing(
 
 
 def test_reuse_comm_groups() -> None:
-    """Test that we reuse exisiting comm groups when possible."""
+    """Test that we reuse existing comm groups when possible."""
     with mock.patch('torch.distributed.new_group', return_value=-1):
         topology = PipeModelDataParallelTopology(2, 1, 2)
         assignment = GPTNeoXAssignment(

@@ -27,7 +27,7 @@ def distributed_test(
     manner. This decorator manages the spawning and joining of processes,
     initialization of torch.distributed, and catching of errors.
 
-    This function is copied from: https://github.com/EleutherAI/DeeperSpeed/blob/24026e5bb37c528a222b8635c46256b1e1825d2e/tests/unit/common.py#L16  # noqa
+    This function is copied from: https://github.com/EleutherAI/DeeperSpeed/blob/24026e5bb37c528a222b8635c46256b1e1825d2e/tests/unit/common.py#L16
 
     Example:
         >>> @distributed_test(worker_size=[2,3])
@@ -39,7 +39,7 @@ def distributed_test(
     Args:
         world_size (int, list[int]): number of ranks to spawn. Can be a list to
             spawn to run tests multiple times.
-    """
+    """  # noqa: E501
 
     def dist_wrap(run_func: FuncT) -> FuncT:
         """Second-level decorator that actually wraps the func."""

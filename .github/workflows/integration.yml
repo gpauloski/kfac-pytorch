@@ -2,23 +2,38 @@ name: integration
 
 on:
   push:
-    branches: [main]
+    branches: [main, test-me-*]
     tags:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   integration:
+    timeout-minutes: 15
 
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository Content
+      - name: Checkout
         uses: actions/checkout@v3
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+
+      - name: Get pip cache dir
+        id: pip-cache-dir
+        run: echo "PIP_CACHE_DIR=$(pip cache dir)" >> $GITHUB_ENV
+
+      - name: Use pip cache
+        id: pip-cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: integration-ubuntu-latest-pip-3.10-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            integration-ubuntu-latest-pip-3.10
 
       - name: Install KFAC
         run: python -mpip install .
