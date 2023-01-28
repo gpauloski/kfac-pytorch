@@ -1,7 +1,7 @@
 """MNIST integration test.
 
-Source: https://github.com/pytorch/examples/blob/0cb38ebb1b6e50426464b3485435c0c6affc2b65/mnist/main.py  # noqa: E501
-"""
+Source: https://github.com/pytorch/examples/blob/0cb38ebb1b6e50426464b3485435c0c6affc2b65/mnist/main.py
+"""  # noqa: E501
 from __future__ import annotations
 
 import sys
@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 # As of 28 Oct 2022, torchvision does not support Python 3.11
 # https://github.com/pytorch/vision/issues/6842
 if sys.version_info < (3, 11):  # pragma: no branch
-    from torchvision.datasets import MNIST  # type: ignore
+    from torchvision.datasets import MNIST
 else:
     MNIST = object
 
@@ -91,7 +91,7 @@ def train(
         optimizer.step()
 
 
-def eval(
+def evaluate(
     model: torch.nn.Module,
     test_loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
 ) -> float:
@@ -107,7 +107,7 @@ def eval(
     return 100 * (correct / total_samples)
 
 
-def train_and_eval(precondition: bool, epochs: int) -> float:
+def train_and_evaluate(precondition: bool, epochs: int) -> float:
     """Train and test."""
     torch.manual_seed(42)
 
@@ -145,7 +145,7 @@ def train_and_eval(precondition: bool, epochs: int) -> float:
     for epoch in range(1, epochs + 1):
         start = time.perf_counter()
         train(model, train_loader, optimizer, preconditioner)
-        accuracy = eval(model, test_loader)
+        accuracy = evaluate(model, test_loader)
         scheduler.step()
         end = time.perf_counter()
         print(
@@ -166,9 +166,9 @@ def main() -> bool:
     start = time.perf_counter()
     print('Starting MNIST integration test...')
     print('Training without KFAC:')
-    adadelta_acc = train_and_eval(False, 5)
+    adadelta_acc = train_and_evaluate(False, 5)
     print('Training with KFAC:')
-    kfac_acc = train_and_eval(True, 5)
+    kfac_acc = train_and_evaluate(True, 5)
     failure = kfac_acc <= adadelta_acc
     runtime = time.perf_counter() - start
     print(f'Integration test runtime: {runtime:.2f} seconds.')

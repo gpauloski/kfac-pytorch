@@ -132,21 +132,21 @@ class GPTNeoXKFACEigenLayer(KFACEigenLayer):
 
     def save_layer_input(
         self,
-        input: list[torch.Tensor],
+        input_: list[torch.Tensor],
     ) -> None:  # pragma: no cover
         """Override to gather input to primary rank."""
         if self.primary_rank is None:
             raise RuntimeError('primary rank has not been set yet.')
         if self.parallelism == 'input':
             a = gather_from_model_parallel_region(
-                input[0],
+                input_[0],
                 dst=self.primary_rank,
                 model_parallel_group=self.model_parallel_group,
             )
             if a is not None:
                 super().save_layer_input([a])
         else:
-            super().save_layer_input(input)
+            super().save_layer_input(input_)
 
     def save_layer_grad_output(
         self,

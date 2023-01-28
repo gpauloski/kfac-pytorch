@@ -73,7 +73,7 @@ class BaseKFACPreconditioner:
             accumulation_steps (int): number of forward/backward passes
                 between optimization steps (default: 1).
             update_factors_in_hook (bool): If True, running average of factors
-                is updated in the module hook and the async commmunication is
+                is updated in the module hook and the async communication is
                 started. Otherwise, this will be performed at the start of
                 step() (default: True).
             defaults (dict): dictionary of default values to include in the
@@ -315,7 +315,7 @@ class BaseKFACPreconditioner:
 
         Note:
             Gradients must be averaged across ranks before calling `step()`.
-            This condition is guarenteed to be true if using the
+            This condition is guaranteed to be true if using the
             `DistributedDataParallel` model wrapper as gradients are
             communicated during `loss.backward()`.
         """
@@ -436,14 +436,14 @@ class BaseKFACPreconditioner:
     def _save_input(
         self,
         module: torch.nn.Module,
-        input: list[torch.Tensor],
+        input_: list[torch.Tensor],
     ) -> None:
         """Hook for saving the input during the forward pass of a module."""
         if not module.training:
             return
         if self.steps % self.factor_update_steps == 0:
             name, layer = self._layers[module]
-            layer.save_layer_input(input)
+            layer.save_layer_input(input_)
             # Update mini_step here because forward pass should always
             # happen before backward pass
             self._mini_steps[name] += 1

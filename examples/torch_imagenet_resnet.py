@@ -9,7 +9,7 @@ import warnings
 
 import torch
 import torch.distributed as dist
-import torchvision.models as models  # type: ignore
+import torchvision.models as models
 from torch.utils import collect_env
 from torch.utils.tensorboard import SummaryWriter
 

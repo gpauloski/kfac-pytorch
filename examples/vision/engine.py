@@ -5,7 +5,7 @@ import argparse
 import math
 
 import torch
-from tqdm import tqdm  # type: ignore
+from tqdm import tqdm
 
 import kfac
 from examples.utils import accuracy

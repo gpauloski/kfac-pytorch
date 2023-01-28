@@ -10,7 +10,7 @@ import torch
 import torch.distributed as dist
 from torch.utils import collect_env
 from torch.utils.tensorboard import SummaryWriter
-from torchinfo import summary  # type: ignore
+from torchinfo import summary
 
 import examples.vision.cifar_resnet as models
 import examples.vision.datasets as datasets

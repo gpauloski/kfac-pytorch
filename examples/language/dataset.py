@@ -13,8 +13,8 @@ from torch.utils.data.dataset import IterableDataset
 from torch.utils.data.distributed import DistributedSampler
 from torchtext.data.utils import get_tokenizer
 from torchtext.datasets import PennTreebank
-from torchtext.datasets import WikiText103
 from torchtext.datasets import WikiText2
+from torchtext.datasets import WikiText103
 from torchtext.vocab import build_vocab_from_iterator
 from torchtext.vocab import Vocab
 
@@ -112,7 +112,7 @@ def get_dataset(
         seq_len (int): number of tokens in a training sequence.
         batch_size (int): batch size.
         cuda (bool): set as True if training with CUDA.
-        rank (int): optional rank of this worker for initalizing the
+        rank (int): optional rank of this worker for initializing the
             distributed sampler.
         world_size (int): optional world size if using distributed training.
 

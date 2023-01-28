@@ -143,7 +143,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
                 recursively registering child modules of the parent.
                 Case-insensitive (default: []).
             update_factors_in_hook (bool): If True, running average of factors
-                is updated in the module hook and the async commmunication is
+                is updated in the module hook and the async communication is
                 started. Otherwise, this will be performed at the start of
                 step() (default: True).
             loglevel (int): logging level (default: logging.DEBUG).

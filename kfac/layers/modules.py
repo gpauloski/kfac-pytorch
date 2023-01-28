@@ -54,7 +54,7 @@ class ModuleHelper:
         raise NotImplementedError
 
     def get_grad(self) -> torch.Tensor:
-        """Get formated gradients (weight and bias) of module.
+        """Get formatted gradients (weight and bias) of module.
 
         Returns:
             gradient of shape If bias != None,
@@ -192,10 +192,10 @@ class Conv2dModuleHelper(ModuleHelper):
         return get_cov(g)
 
     def get_grad(self) -> torch.Tensor:
-        """Get formated gradients (weight and bias) of module."""
+        """Get formmated gradients (weight and bias) of module."""
         grad = cast(
             torch.Tensor,
-            self.module.weight.grad.view(
+            self.module.weight.grad.view(  # type: ignore
                 self.module.weight.grad.size(0),  # type: ignore
                 -1,
             ),

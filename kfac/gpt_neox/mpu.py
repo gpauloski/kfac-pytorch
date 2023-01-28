@@ -19,11 +19,11 @@ def gather_from_model_parallel_region(
         is an `all gather`.
 
     Note:
-        The concatentation is done along the last axis. I.e., this is the
+        The concatenation is done along the last axis. I.e., this is the
         inverse operation of mpu.scatter_to_model_parallel_region().
 
     Args:
-        tensor (torch.Tensor): tensor parition to gather.
+        tensor (torch.Tensor): tensor partition to gather.
         dst (rank): destination rank to gather full tensor on.
         model_parallel_group (ProcessGroup): model parallel process group.
             If None, model parallel region will be assumed to have size 1.
@@ -31,6 +31,7 @@ def gather_from_model_parallel_region(
             be cast to float before communication. Note: this is to match
             the functionality of megatron's
             gather_from_model_parallel_region().
+        dim (int): dimension along which to concatenate tensors.
 
     Returns:
         Gathered tensor on rank `dst` else None.
@@ -101,17 +102,18 @@ def split_tensor_along_dim(
 ) -> tuple[torch.Tensor, ...]:
     """Split a tensor along its last dimension.
 
-    Source: https://github.com/EleutherAI/gpt-neox/blob/d7af1e7a8e3a816610b7d169456f81ca62d34ff7/megatron/mpu/utils.py  # noqa: 501
+    Source: https://github.com/EleutherAI/gpt-neox/blob/d7af1e7a8e3a816610b7d169456f81ca62d34ff7/megatron/mpu/utils.py
 
     Args:
         tensor (torch.Tensor): input tensor
         num_partitions (int): number of partitions to split the tensor
+        dim (int): dimension along which to split the tensor.
         contiguous_split_chunks (bool): If True, make each chunk contiguous
             in memory.
 
     Returns:
         tuple of tensors
-    """
+    """  # noqa: E501
     dim_size = tensor.size()[dim]
 
     if dim_size % num_partitions != 0:

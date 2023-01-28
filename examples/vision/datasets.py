@@ -9,8 +9,8 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 from torch.utils.data.distributed import DistributedSampler
-from torchvision import datasets  # type: ignore
-from torchvision import transforms  # type: ignore
+from torchvision import datasets
+from torchvision import transforms
 
 T = tuple[torch.Tensor, torch.Tensor]
 
@@ -121,7 +121,9 @@ def make_sampler_and_loader(
 ]:
     """Create sampler and dataloader for train and val datasets."""
     torch.set_num_threads(4)
-    kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
+    kwargs: dict[str, Any] = (
+        {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
+    )
     kwargs['prefetch_factor'] = 8
     kwargs['persistent_workers'] = True
 
@@ -134,7 +136,7 @@ def make_sampler_and_loader(
         train_dataset,
         batch_size=args.batch_size,
         sampler=train_sampler,
-        **kwargs,  # type: ignore
+        **kwargs,
     )
     val_sampler: DistributedSampler[T] = DistributedSampler(
         val_dataset,
@@ -145,7 +147,7 @@ def make_sampler_and_loader(
         val_dataset,
         batch_size=args.val_batch_size,
         sampler=val_sampler,
-        **kwargs,  # type: ignore
+        **kwargs,
     )
 
     return train_sampler, train_loader, val_sampler, val_loader
