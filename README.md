@@ -77,9 +77,9 @@ Example scripts for training ResNet models on Cifar10 and ImageNet-1k are provid
 [tox](https://tox.wiki/en/latest/index.html) and [pre-commit](https://pre-commit.com) are used for development.
 Pre-commit enforces the code formatting, linting, and type-checking in this repository.
 
-To get started with local development:
+To get started with local development (note: Python 3.11 is supported but some testing dependencies are not available):
 ```
-$ tox --devenv venv
+$ tox --devenv venv -e py310
 $ . venv/bin/activate
 $ pre-commit install
 ```
