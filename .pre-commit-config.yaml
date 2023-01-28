@@ -1,52 +1,35 @@
 ci:
-    autofix_prs: false
-
+  autofix_prs: false
 repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
+  - repo: 'https://github.com/pre-commit/pre-commit-hooks'
     rev: v4.4.0
     hooks:
-    -   id: mixed-line-ending
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-added-large-files
-    -   id: check-docstring-first
-    -   id: check-yaml
-    -   id: check-merge-conflict
-    -   id: debug-statements
-    -   id: name-tests-test
-    -   id: requirements-txt-fixer
-    -   id: double-quote-string-fixer
--   repo: https://github.com/psf/black
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+      - id: check-docstring-first
+      - id: check-json
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: name-tests-test
+      - id: double-quote-string-fixer
+  - repo: 'https://github.com/psf/black'
     rev: 22.12.0
     hooks:
-    -   id: black
-        args: [--line-length=79, --skip-string-normalization]
--   repo: https://github.com/PyCQA/flake8
-    rev: 6.0.0
+      - id: black
+  - repo: 'https://github.com/codespell-project/codespell'
+    rev: v2.2.2
     hooks:
-    -   id: flake8
-        additional_dependencies: [flake8-bugbear, flake8-docstrings, pep8-naming]
--   repo: https://github.com/asottile/setup-cfg-fmt
-    rev: v2.2.0
+      - id: codespell
+  - repo: 'https://github.com/charliermarsh/ruff-pre-commit'
+    rev: v0.0.236
     hooks:
-    -   id: setup-cfg-fmt
--   repo: https://github.com/asottile/reorder_python_imports
-    rev: v3.9.0
-    hooks:
-    -   id: reorder-python-imports
-        args: [--py37-plus, --add-import, 'from __future__ import annotations']
--   repo: https://github.com/asottile/add-trailing-comma
-    rev: v2.4.0
-    hooks:
-    -   id: add-trailing-comma
-        args: [--py36-plus]
--   repo: https://github.com/asottile/pyupgrade
-    rev: v3.3.1
-    hooks:
-    -   id: pyupgrade
-        args: [--py37-plus]
--   repo: https://github.com/pre-commit/mirrors-mypy
+      - id: ruff
+        args:
+          - '--fix'
+  - repo: 'https://github.com/pre-commit/mirrors-mypy'
     rev: v0.991
     hooks:
-    -   id: mypy
+      - id: mypy
         additional_dependencies: [types-tqdm]
