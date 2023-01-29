@@ -20,7 +20,8 @@ classifiers = [
 ]
 dependencies = [
     "torch>=1.8",
-    "typing_extensions; python_version < '3.8'",
+    "typing_extensions ; python_version < '3.8'",
+    "importlib-metadata ; python_version < '3.8'",
 ]
 
 [project.urls]
