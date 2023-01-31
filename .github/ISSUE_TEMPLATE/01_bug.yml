@@ -22,7 +22,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: What version of commit are you using?
+      label: What commit are you using?
       description: >
         Current commit hash.
       placeholder: Output of $(git rev-parse HEAD)
