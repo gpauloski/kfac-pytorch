@@ -68,7 +68,7 @@ concurrency = ["multiprocessing", "thread"]
 parallel = true
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.7"
 check_untyped_defs = true
 disallow_any_generics = true
 disallow_incomplete_defs = true
