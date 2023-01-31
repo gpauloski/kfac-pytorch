@@ -1,6 +1,8 @@
 """Training and eval functions for the language modeling example."""
 from __future__ import annotations
 
+from typing import Tuple
+
 import torch
 from tqdm import tqdm
 
@@ -8,7 +10,7 @@ import kfac
 from examples.language.transformer import gen_square_subsequent_mask
 from examples.utils import Metric
 
-DType = tuple[torch.Tensor, torch.Tensor]
+DType = Tuple[torch.Tensor, torch.Tensor]
 
 
 def train(

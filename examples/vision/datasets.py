@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from typing import Tuple
 
 import torch
 import torch.distributed as dist
@@ -12,7 +13,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets
 from torchvision import transforms
 
-T = tuple[torch.Tensor, torch.Tensor]
+T = Tuple[torch.Tensor, torch.Tensor]
 
 
 def get_cifar(

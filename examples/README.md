@@ -13,6 +13,8 @@ $ pip install -e .
 $ pip install -r examples/requirements.txt
 ```
 
+Python >=3.9 is recommended.
+
 ## Usage
 
 Note: these examples use the `torchrun` launcher which is only available in
