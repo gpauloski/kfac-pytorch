@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import math
+from typing import Tuple
 
 import torch
 from tqdm import tqdm
@@ -11,7 +12,7 @@ import kfac
 from examples.utils import accuracy
 from examples.utils import Metric
 
-SampleT = tuple[torch.Tensor, torch.Tensor]
+SampleT = Tuple[torch.Tensor, torch.Tensor]
 
 
 def train(
