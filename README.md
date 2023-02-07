@@ -83,6 +83,7 @@ $ tox --devenv venv -e py310
 $ . venv/bin/activate
 $ pre-commit install
 ```
+Note that the `tox` recipes install CPU-only PyTorch as GPUs are not available in CI.
 
 To verify code passes pre-commit, run:
 ```
