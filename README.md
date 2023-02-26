@@ -39,6 +39,8 @@ $ cd kfac_pytorch
 $ pip install .  # Use -e to install in development mode
 ```
 
+If [NVIDIA Apex](https://github.com/NVIDIA/apex) is installed with C extensions, the optimized `flatten` and `unflatten` operations will be used during collective communication operations.
+
 ## Usage
 
 K-FAC requires minimal code to incorporate with existing training scripts.
