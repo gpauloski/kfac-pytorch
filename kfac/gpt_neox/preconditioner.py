@@ -154,6 +154,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
         warnings.warn(
             'KFAC support for GPT-NeoX training is experimental.',
             ExperimentalFeatureWarning,
+            stacklevel=2,
         )
 
         if not isinstance(model, PipelineModule):
@@ -398,6 +399,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
             warnings.warn(
                 f'factor_checkpoint_dir={self.factor_checkpoint_dir} '
                 'is not a directory. Skipping KFAC checkpoint load.',
+                stacklevel=2,
             )
             return
 

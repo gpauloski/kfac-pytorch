@@ -105,6 +105,7 @@ class BaseKFACPreconditioner:
             warnings.warn(
                 'It is suggested that inv_update_steps be an integer multiple '
                 'of factor_update_steps',
+                stacklevel=2,
             )
 
         self._accumulation_steps = accumulation_steps
@@ -289,6 +290,7 @@ class BaseKFACPreconditioner:
                 'Layer factors are not included in the state_dict so '
                 'inverses cannot be computed. Skipping inverse '
                 'computation.',
+                stacklevel=2,
             )
             compute_inverses = False  # Cannot be computed if no layers
         if compute_inverses:

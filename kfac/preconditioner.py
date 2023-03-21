@@ -207,6 +207,7 @@ class KFACPreconditioner(BaseKFACPreconditioner):
             warnings.warn(
                 'grad_worker_frac=1/world_size (MEM_OPT) requires '
                 'colocate_factors=True. Enabling colocate_factors.',
+                stacklevel=2,
             )
             colocate_factors = True
 
