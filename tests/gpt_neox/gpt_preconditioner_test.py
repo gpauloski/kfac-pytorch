@@ -9,6 +9,7 @@ from contextlib import redirect_stdout
 from typing import Any
 from unittest import mock
 
+import deepspeed
 import pytest
 import torch
 
@@ -37,6 +38,9 @@ def test_gpt_neox_kfac_preconditioner(
     def check() -> None:
         num_layers = 6
         model = sequential_model(layers=num_layers, hidden_dim=32)
+
+        deepspeed.init_distributed()
+
         # This one should not be registered because it is not
         # a Column/RowParallelLinear
         model.append(torch.nn.Linear(32, 32))
@@ -71,6 +75,8 @@ def test_input_validation() -> None:
     def check() -> None:
         model = sequential_model(1, 1)
 
+        deepspeed.init_distributed()
+
         # Trashing stdout/stderr because get_pipeline_module prints stuff
         with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
@@ -99,6 +105,8 @@ def test_state_dict() -> None:
     def check() -> None:
         num_layers = 6
         model = sequential_model(layers=num_layers, hidden_dim=32)
+
+        deepspeed.init_distributed()
 
         # Trashing stdout/stderr because get_pipeline_module prints stuff
         with redirect_stdout(None), redirect_stderr(None):
@@ -146,6 +154,8 @@ def test_state_dict_save_factor_to_file_error() -> None:
     def check() -> None:
         model = sequential_model(layers=1, hidden_dim=32)
 
+        deepspeed.init_distributed()
+
         # Trashing stdout/stderr because get_pipeline_module prints stuff
         with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
@@ -169,6 +179,8 @@ def test_load_factors_from_dir_warning(tmp_path: pathlib.Path) -> None:
     def check() -> None:
         model = sequential_model(layers=1, hidden_dim=32)
 
+        deepspeed.init_distributed()
+
         # Trashing stdout/stderr because get_pipeline_module prints stuff
         with redirect_stdout(None), redirect_stderr(None):
             logging.disable(10000)
@@ -191,6 +203,8 @@ def test_state_dict_save_factors_to_file(tmp_path: pathlib.Path) -> None:
     def check() -> None:
         num_layers = 6
         model = sequential_model(layers=num_layers, hidden_dim=32)
+
+        deepspeed.init_distributed()
 
         # Trashing stdout/stderr because get_pipeline_module prints stuff
         with redirect_stdout(None), redirect_stderr(None):
