@@ -10,7 +10,7 @@ authors = [
 ]
 description = "Distributed K-FAC Preconditioner for PyTorch."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = {file = "LICENSE"}
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -20,8 +20,6 @@ classifiers = [
 ]
 dependencies = [
     "torch>=1.8",
-    "typing_extensions ; python_version < '3.8'",
-    "importlib-metadata ; python_version < '3.8'",
 ]
 
 [project.urls]
@@ -48,7 +46,7 @@ dev = [
 
 [tool.black]
 line-length = 79
-target-version = ["py37"]
+target-version = ["py38"]
 skip-string-normalization = true
 
 [tool.codespell]
@@ -68,7 +66,7 @@ concurrency = ["multiprocessing", "thread"]
 parallel = true
 
 [tool.mypy]
-python_version = "3.7"
+python_version = "3.8"
 check_untyped_defs = true
 disallow_any_generics = true
 disallow_incomplete_defs = true
@@ -95,7 +93,7 @@ allow_untyped_defs = true
 select = ["E", "F", "A", "B", "I", "N", "D", "T10", "COM"]
 # Ignore D202 because issue with inner function and black will fix it anyways
 extend-ignore = ["D202", "D401"]
-target-version = "py37"
+target-version = "py38"
 
 [tool.ruff.isort]
 force-single-line = true
