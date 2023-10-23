@@ -15,7 +15,7 @@ repos:
       - id: name-tests-test
       - id: double-quote-string-fixer
   - repo: 'https://github.com/psf/black'
-    rev: 23.9.1
+    rev: 23.10.0
     hooks:
       - id: black
   - repo: 'https://github.com/codespell-project/codespell'
@@ -23,13 +23,13 @@ repos:
     hooks:
       - id: codespell
   - repo: 'https://github.com/charliermarsh/ruff-pre-commit'
-    rev: v0.0.292
+    rev: v0.1.1
     hooks:
       - id: ruff
         args:
           - '--fix'
   - repo: 'https://github.com/pre-commit/mirrors-mypy'
-    rev: v1.6.0
+    rev: v1.6.1
     hooks:
       - id: mypy
         additional_dependencies: [types-tqdm]
