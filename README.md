@@ -12,7 +12,7 @@ KAISA has been shown to reduce time-to-convergence in [PyTorch distributed train
 
 ## Publications
 
-- J. Gregory Pauloski, Lei Huang, Weijia Xu, Kyle Chard, Ian T. Foster, and Zhao Zhang. 2022. Deep Neural Network Training with Distributed K-FAC. To appear in Transactions on Parallel and Distributed Systems (TPDS).
+- J. G. Pauloski, L. Huang, W. Xu, K. Chard, I. T. Foster and Z. Zhang, "[Deep Neural Network Training With Distributed K-FAC](https://ieeexplore.ieee.org/document/9739867)," in IEEE Transactions on Parallel and Distributed Systems, vol. 33, no. 12, pp. 3616-3627, 1 Dec. 2022, doi: 10.1109/TPDS.2022.3161187.
 - J. Gregory Pauloski, Qi Huang, Lei Huang, Shivaram Venkataraman, Kyle Chard, Ian Foster, and Zhao Zhang. 2021. [KAISA: An Adaptive Second-order Optimizer Framework for Deep Neural Networks](https://dl.acm.org/doi/10.1145/3458817.3476152). International Conference for High Performance Computing, Networking, Storage and Analysis (SC '21). Association for Computing Machinery, New York, NY, USA, Article 13, 1–14.
 - J. Gregory Pauloski, Zhao Zhang, Lei Huang, Weijia Xu, and Ian T. Foster. 2020. [Convolutional Neural Network Training with Distributed K-FAC](https://dl.acm.org/doi/10.5555/3433701.3433826). International Conference for High Performance Computing, Networking, Storage and Analysis (SC ‘20). IEEE Press, Article 94, 1–14.
 
