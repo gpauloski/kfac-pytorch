@@ -28,7 +28,7 @@ jobs:
 
       - name: Use pip cache
         id: pip-cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ env.PIP_CACHE_DIR }}
           key: integration-ubuntu-latest-pip-3.10-${{ hashFiles('pyproject.toml') }}
