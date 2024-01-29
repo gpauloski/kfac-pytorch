@@ -27,7 +27,6 @@ repository = "https://github.com/gpauloski/kfac_pytorch"
 
 [project.optional-dependencies]
 dev = [
-    "black",
     "covdefaults>=2.2",
     "coverage",
     "mypy",
@@ -43,11 +42,6 @@ dev = [
     "types-tqdm",
     "virtualenv",
 ]
-
-[tool.black]
-line-length = 79
-target-version = ["py38"]
-skip-string-normalization = true
 
 [tool.codespell]
 skip = """
@@ -93,6 +87,7 @@ allow_untyped_defs = true
 select = ["E", "F", "A", "B", "I", "N", "D", "T10", "COM"]
 # Ignore D202 because issue with inner function and black will fix it anyways
 extend-ignore = ["D202", "D401"]
+line-length = 79
 target-version = "py38"
 
 [tool.ruff.isort]
@@ -108,6 +103,13 @@ required-imports = ["from __future__ import annotations"]
 
 [tool.ruff.pydocstyle]
 convention = "google"
+
+[tool.ruff.flake8-quotes]
+inline-quotes = "single"
+
+[tool.ruff.format]
+indent-style = "space"
+quote-style = "single"
 
 [tool.setuptools.packages.find]
 exclude = ["tests*", "testing*"]

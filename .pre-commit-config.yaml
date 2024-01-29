@@ -13,11 +13,6 @@ repos:
       - id: check-yaml
       - id: check-merge-conflict
       - id: name-tests-test
-      - id: double-quote-string-fixer
-  - repo: 'https://github.com/psf/black'
-    rev: 23.12.1
-    hooks:
-      - id: black
   - repo: 'https://github.com/codespell-project/codespell'
     rev: v2.2.6
     hooks:
@@ -28,6 +23,7 @@ repos:
       - id: ruff
         args:
           - '--fix'
+      - id: ruff-format
   - repo: 'https://github.com/pre-commit/mirrors-mypy'
     rev: v1.8.0
     hooks:
