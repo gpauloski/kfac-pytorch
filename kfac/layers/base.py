@@ -1,4 +1,5 @@
 """Base KFAC layer implementation."""
+
 from __future__ import annotations
 
 from typing import Callable
@@ -166,20 +167,26 @@ class KFACBaseLayer:
     def memory_usage(self) -> dict[str, int]:
         """Returns memory usage of variables in this layer for this worker."""
         return {
-            'a_factors': self.a_factor.nelement()
-            * self.a_factor.element_size()
-            if self.a_factor is not None
-            else 0,
-            'g_factors': self.g_factor.nelement()
-            * self.g_factor.element_size()
-            if self.g_factor is not None
-            else 0,
-            'a_batch': self._a_batch.nelement() * self._a_batch.element_size()
-            if self._a_batch is not None
-            else 0,
-            'g_batch': self._g_batch.nelement() * self._g_batch.element_size()
-            if self._g_batch is not None
-            else 0,
+            'a_factors': (
+                self.a_factor.nelement() * self.a_factor.element_size()
+                if self.a_factor is not None
+                else 0
+            ),
+            'g_factors': (
+                self.g_factor.nelement() * self.g_factor.element_size()
+                if self.g_factor is not None
+                else 0
+            ),
+            'a_batch': (
+                self._a_batch.nelement() * self._a_batch.element_size()
+                if self._a_batch is not None
+                else 0
+            ),
+            'g_batch': (
+                self._g_batch.nelement() * self._g_batch.element_size()
+                if self._g_batch is not None
+                else 0
+            ),
         }
 
     def broadcast_a_inv(

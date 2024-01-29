@@ -1,4 +1,5 @@
 """Utilities for getting optimizers for computer vision examples."""
+
 from __future__ import annotations
 
 import argparse
@@ -63,9 +64,11 @@ def get_optimizer(
             accumulation_steps=args.batches_per_allreduce,
             allreduce_bucket_cap_mb=25,
             colocate_factors=args.kfac_colocate_factors,
-            compute_method=kfac.enums.ComputeMethod.INVERSE
-            if args.kfac_inv_method
-            else kfac.enums.ComputeMethod.EIGEN,
+            compute_method=(
+                kfac.enums.ComputeMethod.INVERSE
+                if args.kfac_inv_method
+                else kfac.enums.ComputeMethod.EIGEN
+            ),
             grad_worker_fraction=grad_worker_fraction,
             grad_scaler=args.grad_scaler if 'grad_scaler' in args else None,
             skip_layers=args.kfac_skip_layers,

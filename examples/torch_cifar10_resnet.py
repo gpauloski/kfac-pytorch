@@ -1,4 +1,5 @@
 """Cifar10 and ResNet training script."""
+
 from __future__ import annotations
 
 import argparse

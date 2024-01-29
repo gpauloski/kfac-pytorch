@@ -3,6 +3,7 @@
 Based on the PyTorch example and modified for distributed training with KFAC:
 https://pytorch.org/tutorials/beginner/transformer_tutorial.html
 """
+
 from __future__ import annotations
 
 import argparse
@@ -193,9 +194,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(
         format='[%(asctime)s] %(levelname)-5s (%(name)s): %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
-        level=logging.INFO
-        if torch.distributed.get_rank() == 0
-        else logging.ERROR,
+        level=(
+            logging.INFO
+            if torch.distributed.get_rank() == 0
+            else logging.ERROR
+        ),
         stream=sys.stdout,
     )
 

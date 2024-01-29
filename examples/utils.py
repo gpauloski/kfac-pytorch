@@ -1,4 +1,5 @@
 """Training utilities."""
+
 from __future__ import annotations
 
 from typing import Callable
@@ -27,12 +28,12 @@ def save_checkpoint(
     state = {
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict(),
-        'preconditioner': preconditioner.state_dict()
-        if preconditioner is not None
-        else None,
-        'lr_scheduler': lr_scheduler.state_dict()
-        if lr_scheduler is not None
-        else None,
+        'preconditioner': (
+            preconditioner.state_dict() if preconditioner is not None else None
+        ),
+        'lr_scheduler': (
+            lr_scheduler.state_dict() if lr_scheduler is not None else None
+        ),
     }
     torch.save(state, filepath)
 

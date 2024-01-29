@@ -1,4 +1,5 @@
 """Unit tests for implementations of KFACBaseLayer."""
+
 from __future__ import annotations
 
 from typing import Any

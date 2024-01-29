@@ -1,4 +1,5 @@
 """Training and eval functions for the language modeling example."""
+
 from __future__ import annotations
 
 from typing import Tuple

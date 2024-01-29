@@ -1,4 +1,5 @@
 """Custom GPT NeoX Eigen Layer."""
+
 from __future__ import annotations
 
 import sys
@@ -30,9 +31,9 @@ class GPTNeoXKFACEigenLayer(KFACEigenLayer):
         model_parallel_group: torch.distributed.ProcessGroup | None,
         # Use -1 to indicate unset because None is a valid ProcessGroup
         data_parallel_group: torch.distributed.ProcessGroup | None | int = -1,
-        pipe_parallel_peer_group: torch.distributed.ProcessGroup
-        | None
-        | int = -1,
+        pipe_parallel_peer_group: (
+            torch.distributed.ProcessGroup | None | int
+        ) = -1,
         primary_rank: int | None = None,
         **kwargs: Any,
     ) -> None:

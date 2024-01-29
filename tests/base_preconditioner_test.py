@@ -1,4 +1,5 @@
 """Unit Tests for kfac/base_preconditioner.py."""
+
 from __future__ import annotations
 
 from collections import defaultdict

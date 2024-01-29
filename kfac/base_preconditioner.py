@@ -1,4 +1,5 @@
 """Base KFAC preconditioner."""
+
 from __future__ import annotations
 
 import logging
