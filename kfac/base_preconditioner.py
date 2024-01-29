@@ -276,8 +276,7 @@ class BaseKFACPreconditioner:
         if 'layers' in state_dict:
             if len(state_dict['layers']) != len(self._layers):
                 raise ValueError(
-                    'loaded state dict contains a different '
-                    'number of layers',
+                    'loaded state dict contains a different number of layers',
                 )
             # This is O(n^2) with respect to number of registered KFAC
             # layers but models typically aren't larger than O(100) layers

@@ -188,8 +188,7 @@ class KFACPreconditioner(BaseKFACPreconditioner):
                 grad_worker_fraction = 1.0 / size
             if size % max(1, round(size * grad_worker_fraction)) != 0:
                 raise ValueError(
-                    'grad_worker_fraction must produce groups of '
-                    'equal size',
+                    'grad_worker_fraction must produce groups of equal size',
                 )
             if grad_worker_fraction == 1:
                 grad_worker_fraction = 1.0  # ensure float
