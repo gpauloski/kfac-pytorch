@@ -60,9 +60,8 @@ def train(
 
             loss = loss / args.batches_per_allreduce
 
-            if (
-                mini_step % args.batches_per_allreduce == 0
-                or batch_idx + 1 == len(train_loader)
+            if mini_step % args.batches_per_allreduce == 0 or (
+                batch_idx + 1 == len(train_loader)
             ):
                 if scaler is not None:
                     scaler.scale(loss).backward()
@@ -75,9 +74,8 @@ def train(
                     else:
                         loss.backward()
 
-            if (
-                mini_step % args.batches_per_allreduce == 0
-                or batch_idx + 1 == len(train_loader)
+            if mini_step % args.batches_per_allreduce == 0 or (
+                batch_idx + 1 == len(train_loader)
             ):
                 if preconditioner is not None:
                     if scaler is not None:
