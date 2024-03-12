@@ -1,4 +1,5 @@
 """Decorator for running tests in simulated distributed environments."""
+
 from __future__ import annotations
 
 import multiprocessing

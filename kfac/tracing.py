@@ -1,4 +1,5 @@
 """Utilities for tracing function execution time."""
+
 from __future__ import annotations
 
 import logging

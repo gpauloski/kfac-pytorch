@@ -1,4 +1,5 @@
 """End-to-end training test for KFACPreconditoner."""
+
 from __future__ import annotations
 
 from multiprocessing import Process

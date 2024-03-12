@@ -1,4 +1,5 @@
 """Unit tests for kfac/layers/modules.py."""
+
 from __future__ import annotations
 
 import pytest

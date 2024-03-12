@@ -1,4 +1,5 @@
 """Utilities for registering PyTorch modules to KFAC layers."""
+
 from __future__ import annotations
 
 import re

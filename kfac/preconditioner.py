@@ -1,4 +1,5 @@
 """Implementation of the KAISA preconditioner."""
+
 from __future__ import annotations
 
 import logging
@@ -245,9 +246,9 @@ class KFACPreconditioner(BaseKFACPreconditioner):
         layer_type: type[KFACBaseLayer]
         if self.compute_method == ComputeMethod.EIGEN:
             layer_type = KFACEigenLayer
-            layer_kwargs[
-                'prediv_eigenvalues'
-            ] = self.compute_eigenvalue_outer_product
+            layer_kwargs['prediv_eigenvalues'] = (
+                self.compute_eigenvalue_outer_product
+            )
         elif self.compute_method == ComputeMethod.INVERSE:
             layer_type = KFACInverseLayer
         else:

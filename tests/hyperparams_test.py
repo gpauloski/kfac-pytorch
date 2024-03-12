@@ -1,4 +1,5 @@
 """Unit tests for kfac/hyperparams.py."""
+
 from __future__ import annotations
 
 import pytest

@@ -1,4 +1,5 @@
 """Work assignment interface and implementations."""
+
 from __future__ import annotations
 
 from abc import ABCMeta
