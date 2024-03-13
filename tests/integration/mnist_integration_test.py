@@ -2,6 +2,7 @@
 
 Source: https://github.com/pytorch/examples/blob/0cb38ebb1b6e50426464b3485435c0c6affc2b65/mnist/main.py
 """  # noqa: E501
+
 from __future__ import annotations
 
 import sys

@@ -3,6 +3,7 @@
 Based on the PyTorch example and modified for distributed training with KFAC:
 https://pytorch.org/tutorials/beginner/transformer_tutorial.html
 """
+
 from __future__ import annotations
 
 import argparse

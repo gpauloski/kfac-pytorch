@@ -1,4 +1,5 @@
 """Train and Eval functions for computer vision examples."""
+
 from __future__ import annotations
 
 import argparse

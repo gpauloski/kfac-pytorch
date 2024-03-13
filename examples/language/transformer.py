@@ -3,6 +3,7 @@
 Based on Attention is All You Need and
 https://pytorch.org/tutorials/beginner/transformer_tutorial.html.
 """
+
 from __future__ import annotations
 
 import math

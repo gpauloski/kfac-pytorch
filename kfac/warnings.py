@@ -1,4 +1,5 @@
 """KFAC Warnings."""
+
 from __future__ import annotations
 
 
