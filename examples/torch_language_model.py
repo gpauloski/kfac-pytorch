@@ -281,7 +281,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         scheduler.step(eval_loss)
     end = time.perf_counter()
-    logger.info(f'Training completed in {end-start:.2f} seconds.')
+    logger.info(f'Training completed in {end - start:.2f} seconds.')
 
     evaluate(
         model,
