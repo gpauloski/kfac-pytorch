@@ -151,7 +151,7 @@ def train_and_evaluate(precondition: bool, epochs: int) -> float:
         end = time.perf_counter()
         print(
             f'Epoch {epoch}: accuracy={accuracy:.2f}%, '
-            f'time={end-start:.2f} seconds',
+            f'time={end - start:.2f} seconds',
         )
 
     return accuracy
