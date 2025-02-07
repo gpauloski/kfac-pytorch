@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
-    "torch>=1.8",
+    "torch>=2",
 ]
 
 [project.urls]
