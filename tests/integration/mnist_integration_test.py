@@ -5,7 +5,6 @@ Source: https://github.com/pytorch/examples/blob/0cb38ebb1b6e50426464b3485435c0c
 
 from __future__ import annotations
 
-import sys
 import time
 from typing import Any
 
@@ -13,13 +12,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-
-# As of 28 Oct 2022, torchvision does not support Python 3.11
-# https://github.com/pytorch/vision/issues/6842
-if sys.version_info < (3, 11):  # pragma: no branch
-    from torchvision.datasets import MNIST
-else:
-    MNIST = object
+from torchvision.datasets import MNIST
 
 from kfac.preconditioner import KFACPreconditioner
 
