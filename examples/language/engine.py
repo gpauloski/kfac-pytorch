@@ -85,12 +85,15 @@ def evaluate(
     eval_loss = Metric('eval_loss')
     src_mask: torch.Tensor | None = None
 
-    with torch.no_grad(), tqdm(
-        total=len(dataloader),
-        bar_format='{l_bar}{bar:8}{r_bar}',
-        desc=prefix[:11].ljust(11, ' '),
-        disable=torch.distributed.get_rank() > 0,
-    ) as t:
+    with (
+        torch.no_grad(),
+        tqdm(
+            total=len(dataloader),
+            bar_format='{l_bar}{bar:8}{r_bar}',
+            desc=prefix[:11].ljust(11, ' '),
+            disable=torch.distributed.get_rank() > 0,
+        ) as t,
+    ):
         for data, target in dataloader:
             if src_mask is None:
                 seq_len = data.size(0)
