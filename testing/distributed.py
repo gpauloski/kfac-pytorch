@@ -5,8 +5,8 @@ from __future__ import annotations
 import multiprocessing
 import os
 import time
+from collections.abc import Callable
 from typing import Any
-from typing import Callable
 from typing import cast
 from typing import TypeVar
 

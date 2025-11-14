@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Callable
+from collections.abc import Callable
 from typing import cast
-from typing import List
 
 import torch
 import torch.distributed as dist
@@ -286,7 +285,7 @@ class KFACPreconditioner(BaseKFACPreconditioner):
         }
 
         new_group = cast(
-            Callable[[List[int]], dist.ProcessGroup],
+            Callable[[list[int]], dist.ProcessGroup],
             dist.new_group,
         )
 

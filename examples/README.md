@@ -13,21 +13,15 @@ $ pip install -e .
 $ pip install -r examples/requirements.txt
 ```
 
-Python >=3.9 is recommended.
-
 ## Usage
 
-Note: these examples use the `torchrun` launcher which is only available in
-PyTorch 1.10 and later. For PyTorch 1.9, use `python -m torch.distributed.run`
-and for PyTorch 1.8, use `python -m torch.distributed.launch`.
-
-#### Single Node, Multi-GPU
+### Single Node, Multi-GPU
 ```
 $ torchrun --standalone --nnodes 1 --nproc_per_node=[NGPUS] \
       examples/torch_{...}.py [ARGS]
 ```
 
-#### Multi-Node, Multi-GPU
+### Multi-Node, Multi-GPU
 On each node, run:
 ```
 $ torchrun --nnodes=[NNODES] --nproc_per_node=[NGPUS] --rdzv_backend=c10d --rdzv_endpoint=[HOSTADDR] \

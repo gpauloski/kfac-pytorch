@@ -81,7 +81,11 @@ def test_get_flattened_modules(
 ) -> None:
     """Test get_flattened_modules."""
     modules = get_flattened_modules(module)
-    for (name, module), (exp_name, exp_type) in zip(modules, expected):
+    for (name, module), (exp_name, exp_type) in zip(
+        modules,
+        expected,
+        strict=True,
+    ):
         assert name == exp_name
         assert isinstance(module, exp_type)
 
