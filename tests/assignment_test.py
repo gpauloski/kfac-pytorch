@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sized
 from typing import Any
 from typing import cast
-from typing import Sized
 
 import pytest
 

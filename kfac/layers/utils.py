@@ -45,7 +45,7 @@ def get_cov(
     if b is not None and a.shape != b.shape:
         raise ValueError(
             'Input tensors must have same shape. Got tensors of '
-            'shape {} and {}.'.format(a.shape, b.shape),
+            f'shape {a.shape} and {b.shape}.',
         )
 
     if scale is None:

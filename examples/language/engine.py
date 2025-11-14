@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Tuple
-
 import torch
 from tqdm import tqdm
 
@@ -11,7 +9,7 @@ import kfac
 from examples.language.transformer import gen_square_subsequent_mask
 from examples.utils import Metric
 
-DType = Tuple[torch.Tensor, torch.Tensor]
+DType = tuple[torch.Tensor, torch.Tensor]
 
 
 def train(
@@ -113,10 +111,8 @@ def evaluate(
 
             t.update(1)
             t.set_postfix_str(
-                'loss: {:.2f}, ppl: {:.2f}'.format(
-                    eval_loss.avg,
-                    torch.exp(eval_loss.avg),
-                ),
+                f'loss: {eval_loss.avg:.2f}, '
+                f'ppl: {torch.exp(eval_loss.avg):.2f}',
                 refresh=False,
             )
 

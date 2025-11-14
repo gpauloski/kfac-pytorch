@@ -25,7 +25,7 @@ except ImportError:
 
 
 Future = (torch._C.Future, torch.futures.Future)
-FutureType = Union[torch._C.Future, torch.futures.Future]
+FutureType = Union[torch._C.Future, torch.futures.Future]  # noqa: UP007
 
 
 class NonSquareTensorError(Exception):
@@ -106,7 +106,11 @@ class AllreduceTensorBucket:
 
         def _callback(future: FutureType) -> None:  # pragma: no cover
             tensors = unflatten(future.value(), self._tensors)
-            for sub_tensor, sub_future in zip(tensors, self._futures):
+            for sub_tensor, sub_future in zip(
+                tensors,
+                self._futures,
+                strict=True,
+            ):
                 sub_future.set_result(sub_tensor)
             # No longer need to hold strong references to items in these lists
             self._tensors.clear()

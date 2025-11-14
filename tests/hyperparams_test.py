@@ -23,7 +23,7 @@ def test_exp_decay_factor_averaging_non_decreasing() -> None:
     """Test exp_decay_factor_averaging() produces non decreasing values."""
     func = exp_decay_factor_averaging()
     values = [func(step) for step in range(1000)]
-    assert all(a <= b for a, b in zip(values, values[1:]))
+    assert all(a <= b for a, b in zip(values, values[1:], strict=False))
 
 
 @pytest.mark.parametrize(

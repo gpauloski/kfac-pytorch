@@ -2,17 +2,9 @@
 
 from __future__ import annotations
 
-import sys
-from typing import Callable
-from typing import List
+from collections.abc import Callable
+from typing import Literal
 from typing import NamedTuple
-from typing import Tuple
-from typing import Union
-
-if sys.version_info >= (3, 9):  # pragma: >=3.9 cover
-    from typing import Literal
-else:  # pragma: <3.9 cover
-    from typing_extensions import Literal
 
 import torch
 from torch.utils.data import DataLoader
@@ -26,8 +18,8 @@ from torchtext.datasets import WikiText103
 from torchtext.vocab import build_vocab_from_iterator
 from torchtext.vocab import Vocab
 
-DType = Tuple[torch.Tensor, torch.Tensor]
-IndicesType = Union[List[int], torch.Tensor]
+DType = tuple[torch.Tensor, torch.Tensor]
+IndicesType = list[int] | torch.Tensor
 
 
 class LoaderSampler(NamedTuple):
@@ -169,7 +161,7 @@ def get_dataset(
             num_workers=4 if cuda else 0,
             pin_memory=cuda,
         )
-        for dataset, sampler in zip(datasets, samplers)
+        for dataset, sampler in zip(datasets, samplers, strict=True)
     ]
 
     return (

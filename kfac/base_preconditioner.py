@@ -6,8 +6,8 @@ import logging
 import math
 import warnings
 from collections import defaultdict
+from collections.abc import Callable
 from typing import Any
-from typing import Callable
 
 import torch
 

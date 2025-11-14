@@ -29,7 +29,7 @@ Source: https://raw.githubusercontent.com/akamaster/pytorch_resnet_cifar10
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn

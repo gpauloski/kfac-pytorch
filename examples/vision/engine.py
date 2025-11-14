@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import math
-from typing import Tuple
 
 import torch
 from tqdm import tqdm
@@ -13,7 +12,7 @@ import kfac
 from examples.utils import accuracy
 from examples.utils import Metric
 
-SampleT = Tuple[torch.Tensor, torch.Tensor]
+SampleT = tuple[torch.Tensor, torch.Tensor]
 
 
 def train(
@@ -143,10 +142,8 @@ def test(
                 t.update(1)
                 if i + 1 == len(val_loader):
                     t.set_postfix_str(
-                        '\b\b val_loss: {:.4f}, val_acc: {:.2f}%'.format(
-                            val_loss.avg,
-                            100 * val_accuracy.avg,
-                        ),
+                        f'\b\b val_loss: {val_loss.avg:.4f}, '
+                        f'val_acc: {100 * val_accuracy.avg:.2f}%',
                         refresh=False,
                     )
 

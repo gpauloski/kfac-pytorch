@@ -94,7 +94,7 @@ $ pre-commit run --all-files
 
 Tox can also be used to run the test suite:
 ```
-$ tox -e py39  # run all tests in Python 3.9
+$ tox -e py314  # run all tests in Python 3.14
 ```
 
 ## Citations and References

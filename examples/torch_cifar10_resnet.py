@@ -386,11 +386,8 @@ def main() -> None:
             )
 
     if args.verbose:
-        print(
-            '\nTraining time: {}'.format(
-                datetime.timedelta(seconds=time.time() - start),
-            ),
-        )
+        duration = datetime.timedelta(seconds=time.time() - start)
+        print(f'\nTraining time: {duration}')
 
 
 if __name__ == '__main__':
