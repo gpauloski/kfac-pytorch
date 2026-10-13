@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 from deepspeed.pipe import PipelineModule  # type: ignore
 from deepspeed.runtime.pipe.topology import (  # type: ignore
-    PipeModelDataParallelTopology,  # type: ignore
+    PipeModelDataParallelTopology,
 )
 
 
