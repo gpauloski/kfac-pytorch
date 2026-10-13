@@ -9,7 +9,7 @@ from kfac.gpt_neox.mpu import get_group_with_rank
 
 try:
     from deepspeed.runtime.pipe.topology import (  # type: ignore
-        PipeModelDataParallelTopology,  # type: ignore
+        PipeModelDataParallelTopology,
     )
 
     deepspeed_import_error = None
