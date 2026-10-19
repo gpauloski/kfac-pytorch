@@ -8,9 +8,7 @@ from unittest import mock
 import torch
 import torch.distributed as dist
 from deepspeed.pipe import PipelineModule  # type: ignore
-from deepspeed.runtime.pipe.topology import (  # type: ignore
-    PipeModelDataParallelTopology,
-)
+from deepspeed.runtime.pipe.topology import PipeModelDataParallelTopology  # type: ignore
 
 
 class ColumnParallelLinear(torch.nn.Linear):
