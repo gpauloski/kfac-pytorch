@@ -418,7 +418,7 @@ class GPTNeoXKFACPreconditioner(BaseKFACPreconditioner):
                         f'loading KFAC factors for {name} on rank '
                         f'{get_rank()}',
                     )
-                    state_dict = torch.load(filepath)
+                    state_dict = torch.load(filepath, weights_only=True)
                     layer.load_state_dict(state_dict)
                     if compute_inverses:
                         layer.compute_a_inv(damping=self.damping)
